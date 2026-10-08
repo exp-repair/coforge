@@ -191,6 +191,18 @@ export async function submitWeeklyReportCollectPlan(
     userId: input.userId,
     runId: run.id,
   });
+  const runnable = detailed.slots.filter((slot) => slot.status === "running");
+  if (runnable.length === 0) {
+    const catalog = new RecordCatalog(db);
+    await catalog.postAssistantCollectComment({
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      subjectType: "report",
+      subjectId: input.reportId,
+      body: "采集没有开始：所选电脑的运行时不在线。请让电脑上的 CoForge 保持连接后再提交。",
+    });
+    return detailed;
+  }
 
   const owner = await db.user.findUnique({
     where: { id: input.userId },
@@ -203,7 +215,7 @@ export async function submitWeeklyReportCollectPlan(
   if (!owner) throw new AppError("NOT_FOUND");
 
   try {
-    for (const slot of detailed.slots) {
+    for (const slot of runnable) {
       const opened = await conversations.memberForUser(
         input.workspaceId,
         input.userId,
