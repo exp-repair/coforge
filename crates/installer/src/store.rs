@@ -70,6 +70,11 @@ impl VersionStore {
         }
     }
 
+    /// The install root this store's versions live under.
+    pub fn install_root(&self) -> &Path {
+        &self.install_root
+    }
+
     /// The release target (`linux-x64`, `windows-arm64`, ...) whose files this store holds.
     pub fn target(&self) -> &str {
         &self.target
@@ -77,6 +82,11 @@ impl VersionStore {
 
     pub fn version_directory(&self, version: &str) -> PathBuf {
         self.install_root.join("versions").join(version)
+    }
+
+    /// The version's `coforge-computer` executable, named as this store's target names it.
+    pub fn computer_path(&self, version: &str) -> PathBuf {
+        self.version_directory(version).join(self.computer_name())
     }
 
     /// Whether `versions/<v>` exists. A directory that exists is verified, and one that fails

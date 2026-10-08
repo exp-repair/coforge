@@ -7,7 +7,8 @@ default_feed_url="https://releases.coforge.cn"
 # ./packages/computer/src/release-channel.ts hardens by inlining the feed URL at build time - an
 # attacker able to set this variable in the invoking shell can equally set PATH or https_proxy to
 # reach the same result, so there is no additional boundary to enforce here. See
-# docs/release/per-user-installation.md.
+# docs/release/per-user-installation.md. It only chooses where this script's installer comes from:
+# coforge-installer installs from its own compiled-in feed.
 feed_url=${COFORGE_RELEASE_FEED_URL:-$default_feed_url}
 feed_url=${feed_url%/}
 
@@ -115,7 +116,7 @@ case "$target" in
 esac
 case "$prepare_phase" in
   all) ;;
-  manifest|artifact) [ -n "$prepare_directory" ] || { echo "install.sh: preparation phase requires a directory" >&2; exit 2; } ;;
+  manifest|artifact|installer) [ -n "$prepare_directory" ] || { echo "install.sh: preparation phase requires a directory" >&2; exit 2; } ;;
   *) echo "install.sh: invalid preparation phase" >&2; exit 2 ;;
 esac
 
@@ -188,42 +189,84 @@ max_binary_bytes=536870912
 max_wasm_bytes=16777216
 
 [ "$quiet_header" -eq 1 ] || step "Detected platform: $platform"
-if [ "$version" = "latest" ]; then
-  [ "$quiet_header" -eq 1 ] || step "Finding the latest CoForge Computer version"
-  fetch --max-filesize "$max_pointer_bytes" --output "$temporary_directory/latest" "$feed_url/latest"
-  latest_pointer=$(tr -d '[:space:]' < "$temporary_directory/latest")
-  rm "$temporary_directory/latest"
-  if [ "$latest_pointer" = latest ] || ! is_valid_version "$latest_pointer"; then
-    echo "install.sh: the latest pointer did not return a valid version" >&2
-    exit 1
+# --prepare-directory and --resolve-only are the Computer's own calls (release/installation-source.ts
+# and release/installer-launch.ts). A plain bootstrap skips this block and installs through
+# coforge-installer below.
+if [ -n "$prepare_directory" ] || [ "$resolve_only" -eq 1 ]; then
+  if [ "$version" = "latest" ]; then
+    [ "$quiet_header" -eq 1 ] || step "Finding the latest CoForge Computer version"
+    fetch --max-filesize "$max_pointer_bytes" --output "$temporary_directory/latest" "$feed_url/latest"
+    latest_pointer=$(tr -d '[:space:]' < "$temporary_directory/latest")
+    rm "$temporary_directory/latest"
+    if [ "$latest_pointer" = latest ] || ! is_valid_version "$latest_pointer"; then
+      echo "install.sh: the latest pointer did not return a valid version" >&2
+      exit 1
+    fi
+    version=$latest_pointer
   fi
-  version=$latest_pointer
+
+  [ "$quiet_header" -eq 1 ] || step "Resolved version: $version"
+  if [ "$resolve_only" -eq 1 ]; then
+    printf '%s\n' "$version"
+    exit 0
+  fi
+
+  # The `installer` phase fetches one object of the installer feed (`<feed>/installer/...`, so the
+  # caller passes that as the feed URL): this target's coforge-installer gzip and nothing else. Its
+  # name is derived from the target here, never taken from a caller, and the caller verifies size
+  # and checksum against the installer manifest it fetched with the `manifest` phase.
+  if [ "$prepare_phase" = installer ]; then
+    case "$target" in
+      windows-*) installer_gzip=coforge-installer.exe.gz ;;
+      *) installer_gzip=coforge-installer.gz ;;
+    esac
+    step "Downloading CoForge installer"
+    fetch_binary --max-filesize "$max_binary_bytes" --output "$temporary_directory/$installer_gzip" "$feed_url/$version/$target/$installer_gzip"
+    exit 0
+  fi
+
+  if [ "$prepare_phase" != artifact ]; then
+    fetch --max-filesize "$max_manifest_bytes" --output "$temporary_directory/manifest.json" "$feed_url/$version/manifest.json"
+  fi
+  [ "$prepare_phase" != manifest ] || exit 0
+  compressed_path="$temporary_directory/coforge-computer.gz"
+  step "Downloading CoForge Computer"
+  fetch_binary --max-filesize "$max_binary_bytes" --output "$compressed_path" "$feed_url/$version/$target/coforge-computer.gz"
+  # Pi's image library is part of the Computer download step and gets no progress line of its own;
+  # only a failed fetch mentions it.
+  fetch --max-filesize "$max_wasm_bytes" --output "$temporary_directory/photon_rs_bg.wasm" "$feed_url/$version/photon_rs_bg.wasm"
+  printf '%s\n' "$version" > "$temporary_directory/version"
+  if [ -n "$prepare_directory" ]; then
+    exit 0
+  fi
+
 fi
 
-[ "$quiet_header" -eq 1 ] || step "Resolved version: $version"
-if [ "$resolve_only" -eq 1 ]; then
-  printf '%s\n' "$version"
-  exit 0
+# Bootstrap: the installer feed (<feed>/installer) names its current version in one pointer, and
+# each target has one installer gzip and a sidecar checksum. The installer resolves the Computer
+# version itself, so this script fetches no Computer object.
+step "Finding the CoForge installer"
+installer_pointer_path="$temporary_directory/installer-latest"
+fetch --max-filesize "$max_pointer_bytes" --output "$installer_pointer_path" "$feed_url/installer/latest"
+installer_version=$(tr -d '[:space:]' < "$installer_pointer_path")
+rm "$installer_pointer_path"
+if [ "$installer_version" = latest ] || ! is_valid_version "$installer_version"; then
+  echo "install.sh: the installer pointer did not return a valid version" >&2
+  exit 1
 fi
 
-if [ "$prepare_phase" != artifact ]; then
-  fetch --max-filesize "$max_manifest_bytes" --output "$temporary_directory/manifest.json" "$feed_url/$version/manifest.json"
-fi
-[ "$prepare_phase" != manifest ] || exit 0
-compressed_path="$temporary_directory/coforge-computer.gz"
-step "Downloading CoForge Computer"
-fetch_binary --max-filesize "$max_binary_bytes" --output "$compressed_path" "$feed_url/$version/$target/coforge-computer.gz"
-# Pi's image library is part of the Computer download step and gets no progress line of its own;
-# only a failed fetch mentions it.
-fetch --max-filesize "$max_wasm_bytes" --output "$temporary_directory/photon_rs_bg.wasm" "$feed_url/$version/photon_rs_bg.wasm"
-printf '%s\n' "$version" > "$temporary_directory/version"
-if [ -n "$prepare_directory" ]; then
-  exit 0
-fi
+case "$target" in
+  windows-*) installer_gzip=coforge-installer.exe.gz; installer_binary=coforge-installer.exe ;;
+  *) installer_gzip=coforge-installer.gz; installer_binary=coforge-installer ;;
+esac
+installer_url="$feed_url/installer/$installer_version/$target"
 
-# Bootstrap checks the sidecar before executing code; the local installer parses the manifest.
-sidecar_path="$temporary_directory/coforge-computer.sha256"
-fetch --max-filesize "$max_pointer_bytes" --output "$sidecar_path" "$feed_url/$version/$target/coforge-computer.sha256"
+step "Downloading CoForge installer"
+fetch_binary --max-filesize "$max_binary_bytes" --output "$temporary_directory/$installer_gzip" "$installer_url/$installer_gzip"
+
+# Bootstrap checks the sidecar before executing code.
+sidecar_path="$temporary_directory/coforge-installer.sha256"
+fetch --max-filesize "$max_pointer_bytes" --output "$sidecar_path" "$installer_url/coforge-installer.sha256"
 expected_sha256=$(tr -d '[:space:]' < "$sidecar_path")
 case "$expected_sha256" in
   *[!a-f0-9]*) expected_sha256= ;;
@@ -233,36 +276,41 @@ if [ -z "$expected_sha256" ] || [ "${#expected_sha256}" -ne 64 ]; then
   exit 1
 fi
 
-computer_path="$temporary_directory/coforge-computer"
+installer_path="$temporary_directory/$installer_binary"
 # Limit the output both while expanding and after completion. POSIX ulimit -f is measured
 # in 512-byte blocks, so this matches max_binary_bytes without trusting gzip metadata.
-(ulimit -f 1048576; gzip -dc "$compressed_path" > "$computer_path") || {
-  echo "install.sh: compressed binary could not be decompressed safely" >&2
+(ulimit -f 1048576; gzip -dc "$temporary_directory/$installer_gzip" > "$installer_path") || {
+  echo "install.sh: compressed installer could not be decompressed safely" >&2
   exit 1
 }
-[ "$(wc -c < "$computer_path" | tr -d '[:space:]')" -le "$max_binary_bytes" ] || {
-  echo "install.sh: decompressed binary exceeds the size limit" >&2
+[ "$(wc -c < "$installer_path" | tr -d '[:space:]')" -le "$max_binary_bytes" ] || {
+  echo "install.sh: decompressed installer exceeds the size limit" >&2
   exit 1
 }
 
 if command -v sha256sum >/dev/null 2>&1; then
-  actual_sha256=$(sha256sum "$computer_path" | awk '{print $1}')
+  actual_sha256=$(sha256sum "$installer_path" | awk '{print $1}')
 elif command -v shasum >/dev/null 2>&1; then
-  actual_sha256=$(shasum -a 256 "$computer_path" | awk '{print $1}')
+  actual_sha256=$(shasum -a 256 "$installer_path" | awk '{print $1}')
 else
-  actual_sha256=$(openssl dgst -sha256 "$computer_path" | awk '{print $NF}')
+  actual_sha256=$(openssl dgst -sha256 "$installer_path" | awk '{print $NF}')
 fi
 [ "$actual_sha256" = "$expected_sha256" ] || {
-  echo "install.sh: downloaded binary failed its checksum check" >&2
+  echo "install.sh: downloaded installer failed its checksum check" >&2
   exit 1
 }
 
-chmod 700 "$computer_path"
-# A plain (non-exec) invocation runs the binary as a child process, so the EXIT trap above still
-# fires once it returns and the temporary directory - including the ~138 MB binary - is removed.
-# `exec` would replace this shell with the child and skip the trap entirely, leaking that binary
-# into $TMPDIR on every single install.
-"$computer_path" __install-local --version "$version" --directory "$temporary_directory"
+chmod 700 "$installer_path"
+# A plain (non-exec) invocation runs the installer as a child process, so the EXIT trap above still
+# fires once it returns and the temporary directory is removed. `exec` would skip that trap.
+installer_status=0
+"$installer_path" install --version "$version" || installer_status=$?
+[ "$installer_status" -eq 0 ] || exit "$installer_status"
+
+# The installer resolves "latest" itself and this script never learns the concrete version, so the
+# messages below name the version only when the caller asked for one.
+computer_label="CoForge Computer"
+[ "$version" = latest ] || computer_label="CoForge Computer $version"
 
 # This must resolve the shim directory by exactly the rule
 # packages/computer/src/paths.ts:resolveComputerBinaryDirectory applies, because the binary
@@ -281,7 +329,7 @@ esac
 # all the "already on PATH, just run it" path - would then name a command that does not exist, so
 # confirm the shim really landed where this script believes it did before claiming anything.
 if [ ! -x "$bin_directory/coforge-computer" ]; then
-  echo "install.sh: CoForge Computer $version was installed, but no shim appeared at" >&2
+  echo "install.sh: $computer_label was installed, but no shim appeared at" >&2
   echo "install.sh: $bin_directory/coforge-computer - that version predates this installer." >&2
   echo "install.sh: re-run this installer once a newer CoForge Computer version is published." >&2
   exit 1
@@ -307,7 +355,7 @@ fi
 case ":${PATH:-}:" in
   *":$bin_directory:"*)
     step "$bin_directory is already on PATH"
-    done_step "CoForge Computer $version installed and ready to use"
+    done_step "$computer_label installed and ready to use"
     printf '%b\n' "Next: ${accent}coforge-computer setup --workspace <slug>${reset}" >&2
     exit 0
     ;;
@@ -350,7 +398,7 @@ esac
 
 if [ -n "$shell_configuration" ]; then
   if ! append_path_line "$shell_configuration" "$shell_path_line"; then
-    echo "install.sh: CoForge Computer $version was installed, but PATH could not be saved to $shell_configuration" >&2
+    echo "install.sh: $computer_label was installed, but PATH could not be saved to $shell_configuration" >&2
     echo "install.sh: add this line manually: $shell_path_line" >&2
     exit 1
   fi
@@ -364,7 +412,7 @@ if [ -n "$shell_configuration" ]; then
       fi
     done
     if ! append_path_line "$login_configuration" "$shell_path_line"; then
-      echo "install.sh: CoForge Computer $version was installed, but PATH could not be saved to $login_configuration" >&2
+      echo "install.sh: $computer_label was installed, but PATH could not be saved to $login_configuration" >&2
       exit 1
     fi
   fi
@@ -374,6 +422,6 @@ else
   session_command="export PATH=\"$bin_directory:\$PATH\""
 fi
 
-done_step "CoForge Computer $version installed"
+done_step "$computer_label installed"
 printf '%b\n' "Current terminal: ${accent}$session_command${reset}" >&2
 printf '%s\n' "Next: \"$bin_directory/coforge-computer\" setup --workspace <slug>" >&2

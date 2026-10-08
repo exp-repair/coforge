@@ -34,8 +34,6 @@ export const LOCAL_RPC_METHODS = {
   STOP: "daemon:stop",
   RESTART: "daemon:restart",
   SNAPSHOT: "daemon:snapshot",
-  PAUSE: "daemon:pause",
-  RESUME: "daemon:resume",
   UPGRADE: "daemon:upgrade",
   UPGRADE_ACKNOWLEDGE: "daemon:upgrade_ack",
   HOLD: "daemon:hold",
@@ -807,16 +805,16 @@ export type DaemonHoldRequest = {
   protocolMajor: number;
   requestId: string;
   expectedServerUrl: string;
+  /** Required by a hold, which the daemon refuses without one. A release names none. */
   reason?: RunnerHoldReason;
 };
 
 /**
- * Why a runner hold was asked for. A hold precedes a deliberate stop, so a Workspace daemon that
- * shuts down while held names the matching reason in its shutdown notice.
+ * Why a runner hold was asked for. A hold precedes a deliberate restart, so a Workspace daemon that
+ * shuts down while held names the matching reason in its shutdown notice. A Computer upgrade is not
+ * a hold: the installer's recovery journal is what names it.
  */
 export const RUNNER_HOLD_REASONS = {
-  /** A Computer upgrade; also what a hold that names no reason means. */
-  UPGRADE: "upgrade",
   /** The Coordinator restarting one Workspace daemon. */
   WORKSPACE_RESTART: "restart",
   /** `coforge-computer restart` restarting the whole Coordinator. */

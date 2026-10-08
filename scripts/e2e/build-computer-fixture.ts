@@ -11,7 +11,10 @@ const server = Bun.env.COFORGE_E2E_WEB_URL;
 if (!server) throw new Error("COFORGE_E2E_WEB_URL is required");
 const endpoint =
   Bun.env.COFORGE_E2E_CENTRIFUGO_ENDPOINT ?? "ws://127.0.0.1:8000/connection/websocket";
-const version = `0.0.0-e2e.${Date.now()}`;
+// Optional overrides for the Linux installer E2E (scripts/e2e/installer-linux.sh): a fixed
+// version, a loopback release feed compiled in, and a separate package directory per release.
+const version = Bun.env.COFORGE_E2E_VERSION ?? `0.0.0-e2e.${Date.now()}`;
+const releaseFeed = Bun.env.COFORGE_E2E_RELEASE_FEED_URL ?? "https://releases-staging.coforge.cn";
 const binDirectory = resolve(root, ".amp/e2e/bin");
 await mkdir(binDirectory, { recursive: true });
 // Bun's Windows compile appends `.exe` when the outfile has no extension; name the
@@ -39,7 +42,7 @@ const binaryPath = resolve(
           // backslash paths that would miss a `/`-only filter and leave staging URLs baked in.
           build.onLoad({ filter: /(?:^|[\\/])computer[\\/]src[\\/]release-channel\.ts$/ }, () => ({
             contents: `export const COFORGE_SERVER_URL = ${JSON.stringify(server)};
-            export const COFORGE_RELEASE_FEED_URL = "https://releases-staging.coforge.cn";`,
+            export const COFORGE_RELEASE_FEED_URL = ${JSON.stringify(releaseFeed)};`,
             loader: "ts",
           }));
           build.onLoad(
@@ -59,7 +62,7 @@ const binaryPath = resolve(
 
 // A host-platform test package, not a publishable six-platform release. Feed it
 // through the same verified local-package installer used by bootstrap.
-const directory = resolve(root, ".amp/e2e/native-package");
+const directory = resolve(root, Bun.env.COFORGE_E2E_PACKAGE_DIR ?? ".amp/e2e/native-package");
 await mkdir(directory, { recursive: true });
 const bytes = new Uint8Array(await Bun.file(binaryPath).arrayBuffer());
 const gzip = Bun.gzipSync(bytes);

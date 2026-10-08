@@ -54,6 +54,20 @@ impl Platform {
     }
 }
 
+/// The release target of this build (`darwin-arm64`, `linux-x64`, ...), the directory name the
+/// release feed files it under. `None` for a platform the feed does not publish.
+pub fn release_target() -> Option<&'static str> {
+    Some(match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "darwin-arm64",
+        ("macos", "x86_64") => "darwin-x64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("linux", "x86_64") => "linux-x64",
+        ("windows", "aarch64") => "windows-arm64",
+        ("windows", "x86_64") => "windows-x64",
+        _ => return None,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallPaths {
     /// `versions/`, `active`, `active.json`, the lock, and receipts.

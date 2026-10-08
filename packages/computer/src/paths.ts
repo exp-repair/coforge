@@ -31,14 +31,6 @@ export function resolveComputerStateDirectory(input: {
   return joinUserDirectory(input, "daemon");
 }
 
-export function resolveComputerInstallDirectory(input: {
-  platform: NodeJS.Platform;
-  homeDirectory: string;
-  environment: PathEnvironment;
-}): string {
-  return joinUserDirectory(input, "computer", "install");
-}
-
 /**
  * Resolves the directory holding the `coforge-computer` shim - the single installed path that
  * must enter the user's PATH. Unlike every other Computer directory it deliberately does not sit

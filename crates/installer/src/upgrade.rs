@@ -1,0 +1,523 @@
+//! The upgrade transaction: `coforge-computer upgrade` from the machine lock to its receipt.
+//!
+//! The installer owns this transaction. Busy Agents are not held: the supervisor is stopped the way
+//! its service manager stops it, so there is no launch hold to pause or resume. There is no
+//! `rollback` operation: a rollback is only the second half of a failed upgrade.
+//!
+//! Nothing changes until the candidate is verified and the running supervisor is known to be
+//! healthy and under a service manager. The journal is written before the first process stops, and
+//! cleared only once the machine is on a known good version. A failed rollback keeps the journal,
+//! which refuses every other operation until `recover` settles it (`recover.rs`).
+
+use std::path::PathBuf;
+
+use crate::active::{ActiveError, read_active};
+use crate::contract::{
+    ActiveState, EXIT_FAILED, EXIT_HELD, EXIT_UNRESOLVED, LifecycleStatus, ReceiptOutcome,
+    RuntimeState, UpgradeReceipt,
+};
+use crate::journal::{Journal, Transaction};
+use crate::lock::{LockError, MachineMutationLock};
+use crate::prepare::prepare_version;
+use crate::processes::VerifiedCaller;
+use crate::receipts::{Begin, ReceiptStore};
+use crate::service::{ServiceError, ServiceState};
+use crate::switch::{ActiveSwitch, Plan, Ports, Target, refusal_inside_service};
+use crate::update_error::UpdateError;
+
+/// The SDK's code for a candidate whose bytes do not describe the version it claims
+/// (`upgrade-error-codes.json`).
+const INTEGRITY_CODE: &str = "UPDATE_INTEGRITY_FAILED";
+
+pub struct UpgradeRequest<'a> {
+    pub request_id: &'a str,
+    /// `latest` or a version, as the request named it (it is part of the request's identity).
+    pub selection: &'a str,
+    /// The `upgrade` command that launched this installer, which must not be stopped.
+    pub caller: Option<VerifiedCaller>,
+}
+
+/// How a request ended: a receipt, or a refusal that wrote none.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Receipt(Box<UpgradeReceipt>),
+    NoReceipt { exit: u8, message: String },
+}
+
+use Outcome::NoReceipt;
+
+/// Runs one upgrade request. Once the request is recorded, every outcome is a receipt written
+/// under the lock; `stage` receives the human stage lines in order.
+pub fn upgrade(
+    ports: &Ports<'_>,
+    request: &UpgradeRequest<'_>,
+    stage: &mut dyn FnMut(&str),
+) -> Outcome {
+    let lock = match MachineMutationLock::acquire(ports.install_root) {
+        Ok(lock) => lock,
+        Err(error) => return lock_refusal(&error),
+    };
+    let journal = Journal::new(ports.install_root);
+    match journal.read() {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return NoReceipt {
+                exit: EXIT_UNRESOLVED,
+                message: "an earlier upgrade did not finish. Run `coforge-computer recover` \
+                          first. Nothing was changed."
+                    .to_owned(),
+            };
+        }
+        Err(error) => {
+            return NoReceipt {
+                exit: EXIT_UNRESOLVED,
+                message: format!(
+                    "the recovery journal {} cannot be read: {error}. Nothing was changed; run \
+                     `coforge-computer recover` once it is readable.",
+                    journal.path().display()
+                ),
+            };
+        }
+    }
+    let receipts = ReceiptStore::new(ports.install_root);
+    match receipts.begin(&lock, request.request_id, request.selection) {
+        Ok(Begin::Fresh) => {}
+        Ok(Begin::Replay(receipt)) => return Outcome::Receipt(receipt),
+        Ok(Begin::Conflict(message)) => {
+            return NoReceipt {
+                exit: EXIT_HELD,
+                message: format!("{message}. Nothing was changed."),
+            };
+        }
+        Err(error) => {
+            return NoReceipt {
+                exit: EXIT_FAILED,
+                message: format!(
+                    "the upgrade request could not be recorded: {error}. Nothing was changed."
+                ),
+            };
+        }
+    }
+    let mut run = Run {
+        ports,
+        lock: &lock,
+        receipts: &receipts,
+        journal: &journal,
+        request_id: request.request_id,
+        switch: ActiveSwitch::new(ports, stage, request.caller),
+    };
+    run.execute(request.selection)
+}
+
+fn lock_refusal(error: &LockError) -> Outcome {
+    match error {
+        LockError::Busy => NoReceipt {
+            exit: EXIT_HELD,
+            message: "another install, upgrade, or recovery is running. Nothing was changed."
+                .to_owned(),
+        },
+        other => NoReceipt {
+            exit: EXIT_FAILED,
+            message: format!("{other}. Nothing was changed."),
+        },
+    }
+}
+
+/// A failure before the transaction changed anything: its receipt is `failed`, carrying the SDK
+/// code that names it when one does.
+struct Refusal {
+    error: String,
+    code: Option<&'static str>,
+}
+
+fn refuse(error: impl Into<String>) -> Refusal {
+    Refusal {
+        error: error.into(),
+        code: None,
+    }
+}
+
+impl From<UpdateError> for Refusal {
+    fn from(error: UpdateError) -> Self {
+        Self {
+            error: error.to_string(),
+            code: error.code(),
+        }
+    }
+}
+
+impl From<ActiveError> for Refusal {
+    fn from(error: ActiveError) -> Self {
+        Self {
+            error: error.to_string(),
+            code: error.code(),
+        }
+    }
+}
+
+/// The version `active.json` named before the upgrade, and what its supervisor was doing.
+struct Installed {
+    version: String,
+    previous: Option<String>,
+    supervisor_running: bool,
+    /// The supervisor's id before the switch: a restarted one must have another.
+    supervisor_id: Option<String>,
+    runtimes: Vec<RuntimeState>,
+}
+
+impl Installed {
+    fn running_runtimes(&self) -> usize {
+        self.runtimes
+            .iter()
+            .filter(|runtime| runtime.running)
+            .count()
+    }
+}
+
+/// The version being replaced (if any) and the candidate, once both are verified.
+struct Prepared {
+    from: Option<Installed>,
+    to: String,
+}
+
+/// One upgrade from the journal onward.
+struct Run<'r, 'p> {
+    ports: &'r Ports<'p>,
+    lock: &'r MachineMutationLock,
+    receipts: &'r ReceiptStore,
+    journal: &'r Journal,
+    request_id: &'r str,
+    switch: ActiveSwitch<'r, 'p>,
+}
+
+impl Run<'_, '_> {
+    fn execute(&mut self, selection: &str) -> Outcome {
+        let prepared = match self.prepare(selection) {
+            Ok(prepared) => prepared,
+            Err(refusal) => return self.refused(refusal),
+        };
+        let transaction = journal_entry(self.request_id, &prepared);
+        if let Err(error) = self.journal.record(self.lock, &transaction) {
+            return self.refused(refuse(format!(
+                "the recovery journal could not be written: {error}"
+            )));
+        }
+        match self.switch_to(&prepared) {
+            Ok(()) => self.succeeded(prepared),
+            Err(candidate) => self.roll_back(prepared, candidate),
+        }
+    }
+
+    /// Everything before the first change: the active version is intact and healthy, its
+    /// supervisor is service-managed, and the candidate verifies.
+    fn prepare(&mut self, selection: &str) -> Result<Prepared, Refusal> {
+        if let Some(message) = refusal_inside_service(
+            self.ports.service,
+            "The upgrade",
+            "coforge-computer upgrade",
+        )
+        .map_err(refuse)?
+        {
+            return Err(refuse(message));
+        }
+        let active = read_active(self.ports.install_root)?;
+        if let Some(active) = &active {
+            self.ports.store.verify_installed(&active.current)?;
+        }
+        self.switch
+            .say(&format!("Preparing CoForge Computer {selection}"));
+        // The active version was verified above under this lock; a same-version upgrade must not
+        // hash it again.
+        let verified = active.as_ref().map(|active| active.current.as_str());
+        let to = prepare_version(
+            self.lock,
+            self.ports.release,
+            self.ports.store,
+            selection,
+            verified,
+        )?
+        .version;
+        let probe = self
+            .ports
+            .lifecycle
+            .protocol(&self.ports.store.computer_path(&to))
+            .map_err(|error| Refusal {
+                error: error.to_string(),
+                code: Some(INTEGRITY_CODE),
+            })?;
+        if probe.version != to {
+            return Err(Refusal {
+                error: format!(
+                    "the new Computer executable reports version {}, not {to}",
+                    probe.version
+                ),
+                code: Some(INTEGRITY_CODE),
+            });
+        }
+        let from = match active {
+            None => None,
+            Some(active) => Some(self.inspect(active)?),
+        };
+        if from
+            .as_ref()
+            .is_some_and(|installed| installed.supervisor_running)
+        {
+            self.require_managed_supervisor()?;
+        }
+        Ok(Prepared { from, to })
+    }
+
+    /// The active version's status, which must be healthy before anything stops.
+    fn inspect(&self, active: ActiveState) -> Result<Installed, Refusal> {
+        let status = self
+            .ports
+            .lifecycle
+            .status(&self.ports.store.computer_path(&active.current))
+            .map_err(|error| refuse(error.to_string()))?;
+        if !status.healthy {
+            return Err(refuse(unhealthy_message(&status)));
+        }
+        Ok(Installed {
+            version: active.current,
+            previous: active.previous,
+            supervisor_running: status.supervisor.running,
+            supervisor_id: status.supervisor.id.clone(),
+            runtimes: status
+                .bindings
+                .iter()
+                .map(|binding| RuntimeState {
+                    binding_id: binding.binding_id.clone(),
+                    running: binding.running,
+                })
+                .collect(),
+        })
+    }
+
+    /// A supervisor running outside the service manager (a foreground Computer) cannot be
+    /// restarted by the installer, so the upgrade is refused before it stops anything.
+    fn require_managed_supervisor(&self) -> Result<(), Refusal> {
+        match self.ports.service.state() {
+            Err(error) => Err(refuse(error.to_string())),
+            Ok(ServiceState::NotInstalled) => {
+                let error = ServiceError::NotInstalled {
+                    service: self.ports.service.display_name(),
+                };
+                Err(refuse(format!(
+                    "Cannot upgrade a foreground externally supervised Computer while it is \
+                     running: {error} Stop it through its external supervisor before upgrading, \
+                     or install the supported user service with `coforge-computer start`."
+                )))
+            }
+            Ok(_) => Ok(()),
+        }
+    }
+
+    fn switch_to(&mut self, prepared: &Prepared) -> Result<(), String> {
+        let from = prepared.from.as_ref();
+        let stop: Vec<PathBuf> = from
+            .map(|installed| vec![self.ports.store.computer_path(&installed.version)])
+            .unwrap_or_default();
+        let plan = Plan {
+            supervisor_running: from.is_some_and(|installed| installed.supervisor_running),
+            running_runtimes: from.map(Installed::running_runtimes),
+            stop: &stop,
+            replaces: from
+                .filter(|installed| installed.supervisor_running)
+                .map(|installed| &installed.supervisor_id),
+        };
+        let previous = previous_after(from, &prepared.to);
+        self.switch.switch(
+            &Target {
+                version: &prepared.to,
+                previous: previous.as_deref(),
+            },
+            &plan,
+        )
+    }
+
+    fn succeeded(&mut self, prepared: Prepared) -> Outcome {
+        let runtimes = prepared
+            .from
+            .as_ref()
+            .map(|installed| (installed.supervisor_running, installed.runtimes.clone()));
+        let outcome = ReceiptOutcome::Succeeded {
+            version: prepared.to.clone(),
+        };
+        match self.record(outcome, runtimes) {
+            Ok(receipt) => {
+                self.clear_journal();
+                Outcome::Receipt(Box::new(receipt))
+            }
+            Err(detail) => NoReceipt {
+                exit: EXIT_UNRESOLVED,
+                message: format!(
+                    "{} is active, but its receipt could not be written: {detail}. The upgrade \
+                     is not settled: run `coforge-computer recover`, which keeps it when it works.",
+                    prepared.to
+                ),
+            },
+        }
+    }
+
+    /// Restores the previous version after a failed switch. With none to restore, the failure is
+    /// kept unresolved with its journal.
+    fn roll_back(&mut self, prepared: Prepared, candidate: String) -> Outcome {
+        let Some(from) = prepared.from else {
+            return self.unresolved(ReceiptOutcome::Unresolved {
+                error: candidate,
+                rollback_failed: false,
+            });
+        };
+        self.switch.say(&format!(
+            "Upgrade failed: {candidate}; restoring {}",
+            from.version
+        ));
+        let stop = vec![self.ports.store.computer_path(&prepared.to)];
+        let plan = Plan {
+            supervisor_running: from.supervisor_running,
+            running_runtimes: Some(from.running_runtimes()),
+            stop: &stop,
+            replaces: None,
+        };
+        let target = Target {
+            version: &from.version,
+            previous: from.previous.as_deref(),
+        };
+        match self.switch.switch(&target, &plan) {
+            Ok(()) => {
+                let outcome = ReceiptOutcome::RolledBack {
+                    error: candidate,
+                    restored_version: from.version.clone(),
+                };
+                match self.record(outcome, None) {
+                    Ok(receipt) => {
+                        self.clear_journal();
+                        Outcome::Receipt(Box::new(receipt))
+                    }
+                    Err(detail) => NoReceipt {
+                        exit: EXIT_UNRESOLVED,
+                        message: format!(
+                            "{} was restored, but its receipt could not be written: {detail}. Run \
+                             `coforge-computer recover`.",
+                            from.version
+                        ),
+                    },
+                }
+            }
+            Err(rollback) => self.unresolved(ReceiptOutcome::Unresolved {
+                error: format!("{candidate}; rollback failed: {rollback}"),
+                rollback_failed: true,
+            }),
+        }
+    }
+
+    /// A failure before the change: its receipt is written, and nothing else.
+    fn refused(&mut self, refusal: Refusal) -> Outcome {
+        let outcome = ReceiptOutcome::Failed {
+            error: refusal.error.clone(),
+            error_code: refusal.code.map(str::to_owned),
+        };
+        match self.record(outcome, None) {
+            Ok(receipt) => Outcome::Receipt(Box::new(receipt)),
+            Err(detail) => NoReceipt {
+                exit: EXIT_FAILED,
+                message: format!("{}; no receipt was written: {detail}", refusal.error),
+            },
+        }
+    }
+
+    /// An outcome that leaves the journal in place for `recover`.
+    fn unresolved(&mut self, outcome: ReceiptOutcome) -> Outcome {
+        match self.record(outcome, None) {
+            Ok(receipt) => Outcome::Receipt(Box::new(receipt)),
+            Err(detail) => NoReceipt {
+                exit: EXIT_UNRESOLVED,
+                message: format!(
+                    "the upgrade is unresolved and its receipt could not be written: {detail}. \
+                     Run `coforge-computer recover`."
+                ),
+            },
+        }
+    }
+
+    /// Builds and commits the receipt under the lock. `runtimes` is what a success reports about
+    /// the supervisor it replaced, when there was one.
+    fn record(
+        &self,
+        outcome: ReceiptOutcome,
+        runtimes: Option<(bool, Vec<RuntimeState>)>,
+    ) -> Result<UpgradeReceipt, String> {
+        let mut receipt = UpgradeReceipt::new(self.request_id, outcome, self.switch.dead())
+            .map_err(|error| error.to_string())?;
+        if let Some((supervisor_running, states)) = runtimes {
+            receipt = receipt.with_runtimes(supervisor_running, states);
+        }
+        self.receipts
+            .commit(self.lock, &receipt)
+            .map_err(|error| error.to_string())?;
+        Ok(receipt)
+    }
+
+    /// The receipt is the truth now, so a journal that will not go is a warning for the next run.
+    fn clear_journal(&mut self) {
+        if let Err(error) = self.journal.clear(self.lock) {
+            self.switch.say(&format!(
+                "warning: the recovery journal could not be removed: {error}; run `coforge-computer recover`"
+            ));
+        }
+    }
+}
+
+fn journal_entry(request_id: &str, prepared: &Prepared) -> Transaction {
+    Transaction {
+        request_id: request_id.to_owned(),
+        from: prepared
+            .from
+            .as_ref()
+            .map(|installed| installed.version.clone()),
+        from_previous: prepared
+            .from
+            .as_ref()
+            .and_then(|installed| installed.previous.clone()),
+        to: prepared.to.clone(),
+        supervisor_running: prepared
+            .from
+            .as_ref()
+            .is_some_and(|installed| installed.supervisor_running),
+    }
+}
+
+/// The previous version after switching to `target`: the version that was active, unless
+/// `target` is that version, which keeps the one before it.
+fn previous_after(from: Option<&Installed>, target: &str) -> Option<String> {
+    let from = from?;
+    if from.version == target {
+        from.previous.clone()
+    } else {
+        Some(from.version.clone())
+    }
+}
+
+/// The refusal message when the running Computer reports itself unhealthy.
+fn unhealthy_message(status: &LifecycleStatus) -> String {
+    let problems: Vec<&str> = status
+        .problems
+        .iter()
+        .map(|problem| problem.message.as_str())
+        .collect();
+    let text = if problems.is_empty() {
+        "the installed Computer reports an unhealthy runtime set".to_owned()
+    } else {
+        problems.join(" ")
+    };
+    if status.supervisor.running {
+        format!("Workspace runtime set is unhealthy: {text}")
+    } else {
+        text
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod fakes;
+#[cfg(test)]
+mod tests;

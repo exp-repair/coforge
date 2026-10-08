@@ -37,6 +37,7 @@ import {
   type ReleaseTree,
 } from "./build-release";
 import { compileTargetArtifacts, isReleaseTarget, type ReleaseTarget } from "./compile-targets";
+import { assertInstallerCoversRelease, productInstallerProtocol } from "./installer-feed";
 import { resolvePhotonWasmBytes } from "./photon-wasm";
 
 /* -------------------------------------------------------------------------------------------- */
@@ -283,6 +284,20 @@ export function manifestObjectKey(version: string): string {
   return `${version}/manifest.json`;
 }
 
+/** Where one feed keeps its two special objects: the mutable pointer and each version's completion
+ * marker. Everything else a publication uploads is named by the tree it is given. The product feed
+ * is the default; the installer feed (installer-feed.ts) lives under its own prefix in the same
+ * bucket and goes through the very same upload, verify and pointer flow. */
+export interface FeedLayout {
+  latestKey: string;
+  manifestKey(version: string): string;
+}
+
+export const PRODUCT_FEED: FeedLayout = {
+  latestKey: LATEST_OBJECT_KEY,
+  manifestKey: manifestObjectKey,
+};
+
 /** Resolves true when the object exists, false on a 404, and throws on anything else - an
  * ambiguous status (403, 5xx) must not be read as "absent", or the caller would overwrite a
  * published version on a transient error. */
@@ -296,6 +311,21 @@ async function objectExists(client: OSS, objectKey: string): Promise<boolean> {
   }
 }
 
+/** The bytes of an object, or undefined when it is absent (a 404). Any other failure throws: an
+ * ambiguous status (403, 5xx) must not be read as "absent". */
+export async function readObjectIfPresent(
+  client: OSS,
+  objectKey: string,
+): Promise<Uint8Array | undefined> {
+  try {
+    const result = await client.get(objectKey);
+    return new Uint8Array(result.content as Buffer);
+  } catch (error) {
+    if (isMissingObject(error)) return undefined;
+    throw ossError("read", objectKey, error);
+  }
+}
+
 /** Refuses to republish a version that already completed. Published versions are immutable: the
  * feed's CDN caches `<version>/*` for 365 days (docs/operations/aliyun-oss-cdn/staging-record.md), so a second
  * publish under the same version would leave different bytes on different edge nodes for up to a
@@ -304,9 +334,9 @@ async function objectExists(client: OSS, objectKey: string): Promise<boolean> {
  * is still allowed; only a completed version is protected. */
 export async function assertVersionIsUnpublished(
   version: string,
-  options: { client: OSS },
+  options: { client: OSS; feed?: FeedLayout },
 ): Promise<void> {
-  const key = manifestObjectKey(version);
+  const key = (options.feed ?? PRODUCT_FEED).manifestKey(version);
   if (await objectExists(options.client, key)) {
     throw new Error(
       `Release version ${version} is already published (${key} exists). Published versions are ` +
@@ -354,6 +384,8 @@ export interface UploadOptions {
    * last, never pointing at an incomplete version. The finalize job moves it once every platform's
    * objects are up. */
   activate?: boolean;
+  /** Which feed's pointer and completion marker this publication uses; the product feed by default. */
+  feed?: FeedLayout;
 }
 
 export interface UploadResult {
@@ -369,11 +401,15 @@ export interface UploadResult {
  * What every phase of a publication shares: the OSS client, the feed origin it probes, and the
  * progress line sink. Threading this one object keeps the phases below to their own arguments.
  */
-type UploadContext = {
+type FeedContext = {
   client: OSS;
   connection: OssConnection;
   fetchImpl: typeof fetch;
   log: (line: string) => void;
+  feed: FeedLayout;
+};
+
+type UploadContext = FeedContext & {
   outputDirectory: string;
   requestTimeoutMs?: number;
 };
@@ -404,8 +440,9 @@ type UploadPlan = {
 function planUpload(
   tree: ReleaseTree,
   options: Pick<UploadOptions, "activate" | "allowExisting">,
+  feed: FeedLayout,
 ): UploadPlan {
-  const manifestKey = manifestObjectKey(tree.version);
+  const manifestKey = feed.manifestKey(tree.version);
   if (tree.files.filter((file) => file === manifestKey).length !== 1) {
     throw new Error(`Release tree does not contain exactly one ${manifestKey} to upload last`);
   }
@@ -460,7 +497,7 @@ async function verifyUploadedBytes(
  * Phase 3: the public origin must refuse an anonymous GET — the bytes are reachable only through the
  * signed CDN URL. `redirect: "manual"` separates a real refusal from a redirect to a public copy.
  */
-async function verifyPrivateOrigin(context: UploadContext, key: string): Promise<void> {
+async function verifyPrivateOrigin(context: FeedContext, key: string): Promise<void> {
   try {
     const response = await context.fetchImpl(objectOrigin(context.connection, key), {
       method: "GET",
@@ -478,11 +515,12 @@ async function verifyPrivateOrigin(context: UploadContext, key: string): Promise
 }
 
 /** Phase 4: move `latest`, and put the previous selector back if the move cannot be verified. */
-async function activateLatest(context: UploadContext, version: string): Promise<void> {
-  const previous = (await objectExists(context.client, LATEST_OBJECT_KEY))
-    ? await getObject(context.client, LATEST_OBJECT_KEY)
+async function activateLatest(context: FeedContext, version: string): Promise<void> {
+  const latestKey = context.feed.latestKey;
+  const previous = (await objectExists(context.client, latestKey))
+    ? await getObject(context.client, latestKey)
     : null;
-  if (previous) await verifyPrivateOrigin(context, LATEST_OBJECT_KEY);
+  if (previous) await verifyPrivateOrigin(context, latestKey);
   context.log(
     previous
       ? `previous latest sha256=${new Bun.CryptoHasher("sha256").update(previous).digest("hex")}`
@@ -490,10 +528,10 @@ async function activateLatest(context: UploadContext, version: string): Promise<
   );
 
   const writeLatest = async (bytes: Uint8Array): Promise<void> => {
-    await putObject(context.client, LATEST_OBJECT_KEY, bytes);
-    const readback = await getObject(context.client, LATEST_OBJECT_KEY);
+    await putObject(context.client, latestKey, bytes);
+    const readback = await getObject(context.client, latestKey);
     if (!bytesEqual(bytes, readback)) throw new Error("OSS latest read-back mismatch");
-    await verifyPrivateOrigin(context, LATEST_OBJECT_KEY);
+    await verifyPrivateOrigin(context, latestKey);
   };
 
   try {
@@ -504,11 +542,11 @@ async function activateLatest(context: UploadContext, version: string): Promise<
         await writeLatest(previous);
       } else {
         try {
-          await context.client.delete(LATEST_OBJECT_KEY);
+          await context.client.delete(latestKey);
         } catch (error) {
-          throw ossError("delete", LATEST_OBJECT_KEY, error);
+          throw ossError("delete", latestKey, error);
         }
-        if (await objectExists(context.client, LATEST_OBJECT_KEY)) {
+        if (await objectExists(context.client, latestKey)) {
           throw new Error("could not restore empty selector");
         }
       }
@@ -526,20 +564,22 @@ export async function uploadReleaseTree(
   tree: ReleaseTree,
   options: UploadOptions,
 ): Promise<UploadResult> {
+  const feed = options.feed ?? PRODUCT_FEED;
   const context: UploadContext = {
     client: options.client,
     connection: options.connection,
     fetchImpl: options.fetchImpl ?? fetch,
     log: options.log ?? ((): void => undefined),
+    feed,
     outputDirectory,
     ...(options.requestTimeoutMs !== undefined
       ? { requestTimeoutMs: options.requestTimeoutMs }
       : {}),
   };
-  const plan = planUpload(tree, options);
+  const plan = planUpload(tree, options, feed);
   // A finalize pass is publishing a version the feed has already seen, so it must not assert.
   if (!plan.allowExisting)
-    await assertVersionIsUnpublished(tree.version, { client: context.client });
+    await assertVersionIsUnpublished(tree.version, { client: context.client, feed });
 
   await uploadObjects(context, plan);
   await verifyUploadedBytes(context, plan.files);
@@ -551,11 +591,37 @@ export async function uploadReleaseTree(
     context.log(
       `uploaded ${plan.files.length} objects; manifest and latest left to the finalize job`,
     );
-    return { uploaded: [...plan.files], latestKey: LATEST_OBJECT_KEY };
+    return { uploaded: [...plan.files], latestKey: feed.latestKey };
   }
 
   await activateLatest(context, tree.version);
-  return { uploaded: [...tree.files], latestKey: LATEST_OBJECT_KEY };
+  return { uploaded: [...tree.files], latestKey: feed.latestKey };
+}
+
+/**
+ * Moves a feed's pointer to a version that is already up, and nothing else: the same save, write,
+ * read back and restore flow as the last step of a publication. Which versions may be pointed at
+ * is the caller's rule (the installer feed refuses one without a complete manifest), and moving
+ * backwards is as valid as moving forwards.
+ */
+export async function movePointer(options: {
+  client: OSS;
+  connection: OssConnection;
+  version: string;
+  feed?: FeedLayout;
+  fetchImpl?: typeof fetch;
+  log?: (line: string) => void;
+}): Promise<void> {
+  await activateLatest(
+    {
+      client: options.client,
+      connection: options.connection,
+      fetchImpl: options.fetchImpl ?? fetch,
+      log: options.log ?? ((): void => undefined),
+      feed: options.feed ?? PRODUCT_FEED,
+    },
+    options.version,
+  );
 }
 
 /* -------------------------------------------------------------------------------------------- */
@@ -603,6 +669,8 @@ export type ResolvePhotonWasmFn = typeof resolvePhotonWasmBytes;
 
 export interface PublishDependencies {
   compile?: CompileFn;
+  /** Assembles the version tree; defaults to `buildReleaseTree`. */
+  buildTree?: typeof buildReleaseTree;
   fetchImpl?: typeof fetch;
   log?: (line: string) => void;
   /** Static credentials for tests; a real publish resolves them from the Alibaba Cloud default
@@ -682,7 +750,7 @@ export async function runPublish(
       artifacts,
     };
     const treeDirectory = join(workDirectory, "tree");
-    const tree = await buildReleaseTree(inputs, treeDirectory);
+    const tree = await (deps.buildTree ?? buildReleaseTree)(inputs, treeDirectory);
 
     if (options.dryRun || client === null) {
       log("dry run: no network calls made. Objects that would be published:");
@@ -694,6 +762,21 @@ export async function runPublish(
         files: tree.files,
         latestKey: LATEST_OBJECT_KEY,
       };
+    }
+
+    // Whoever is going to move `latest` first proves the installer can install this release. It is
+    // asked before any object goes up, so a refusal leaves no half-published version behind: the
+    // same version is publishable again the moment an installer that speaks its protocol is up.
+    if (options.activate !== false) {
+      log(
+        await assertInstallerCoversRelease({
+          releaseVersion: tree.version,
+          requiredProtocol: productInstallerProtocol(
+            await readFile(join(treeDirectory, manifestObjectKey(tree.version))),
+          ),
+          readObject: (key) => readObjectIfPresent(client, key),
+        }),
+      );
     }
 
     const result = await uploadReleaseTree(treeDirectory, tree, {

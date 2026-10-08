@@ -557,6 +557,18 @@ mod release {
             format!("/{}/photon_rs_bg.wasm", self.version)
         }
 
+        /// The release laid out as a local package directory (`--from-directory`): the manifest,
+        /// the target's gzip, and the image library, side by side with their feed names.
+        pub(crate) fn write_directory(&self, directory: &std::path::Path) {
+            std::fs::write(
+                directory.join("manifest.json"),
+                format!("{:#}\n", self.manifest()),
+            )
+            .unwrap();
+            std::fs::write(directory.join("coforge-computer.gz"), &self.computer_gzip).unwrap();
+            std::fs::write(directory.join("photon_rs_bg.wasm"), &self.photon_wasm).unwrap();
+        }
+
         /// Every object of the release, plus a `latest` pointer naming it.
         pub(crate) fn routes(&self) -> BTreeMap<String, Response> {
             BTreeMap::from([

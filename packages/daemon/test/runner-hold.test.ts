@@ -7,6 +7,7 @@ import { DaemonRuntime, type WorkspaceConfig } from "#src/daemon-runtime/runtime
 import type { AgentRuntimeConfig, AgentSession } from "#src/code-agent/contract";
 import { InMemoryDaemonCredentialStore } from "#src/credentials/credential-store";
 import {
+  RUNNER_HOLD_REASONS,
   AGENT_ACTIVITY_DETAIL_KIND,
   type AgentActivityDetailKind,
 } from "@lrm/coforge-sdk/internal";
@@ -121,7 +122,7 @@ async function harness() {
 test("a held delivery is queued and never acknowledged, and release resumes it", async () => {
   const { runtime, acknowledgements, delivery } = await harness();
 
-  runtime.holdRunners("upgrade");
+  runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   await delivery(1);
 
   // Not acked is the whole point: the server's AgentMessageDelivery.receivedAt stays null, so the
@@ -137,7 +138,7 @@ test("a held delivery is queued and never acknowledged, and release resumes it",
 test("deliveries queued behind a hold resume in arrival order", async () => {
   const { runtime, acknowledgements, delivery } = await harness();
 
-  runtime.holdRunners("upgrade");
+  runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   await delivery(1);
   await delivery(2);
   await delivery(3);
@@ -153,8 +154,8 @@ test("hold is idempotent and re-reports the busy set on every call", async () =>
   const { runtime, emit } = await harness();
 
   emit(AGENT_ACTIVITY_DETAIL_KIND.TOOL_STARTED);
-  const first = runtime.holdRunners("upgrade");
-  const second = runtime.holdRunners("upgrade");
+  const first = runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
+  const second = runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
 
   expect(runtime.runnerHeld).toBe(true);
   expect(first).toHaveLength(1);
@@ -182,7 +183,7 @@ test("the busy query follows BUSY and TERMINAL activity detail kinds", async () 
 
 test("a hold refuses a brand-new Agent launch", async () => {
   const { runtime } = await harness();
-  runtime.holdRunners("upgrade");
+  runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   await expect(runtime.startAgent("agent-b", config)).rejects.toThrow(/Agent launches are held/);
   await runtime.stop();
 });

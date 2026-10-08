@@ -39,9 +39,38 @@ The module map is in [`src/AGENTS.md`](src/AGENTS.md), next to the modules it de
 - `paths.rs` must equal Bun's `node:path` byte for byte; tests compare `to_str()`,
   never `PathBuf`, which equates by component.
 
-The `fetch` subcommand is the download primitive exposed for tests and so the
-release build links the whole HTTPS/TLS/gzip stack. It is not a product command
-(install, upgrade, repair, status, recover); `install` replaces it.
+## Command line
+
+- `coforge-installer install --version <latest|X.Y.Z> [--from-directory <dir>]`: the first install.
+  The same transaction as `upgrade`, with a generated request id.
+- `coforge-installer upgrade --request-id <uuid> --version <latest|X.Y.Z> [--caller-pid <pid>]
+  [--from-directory <dir>]`: one request. The id must satisfy `contract::is_request_id`; a replay of
+  a finished id prints the same outcome. `--caller-pid` is the `upgrade` command that launched this
+  installer, verified as its parent and never stopped.
+- `--from-directory <dir>` (install and upgrade) takes the release from a local directory instead of
+  the feed: `manifest.json`, `coforge-computer.gz` (this target's gzip), and `photon_rs_bg.wasm`, flat
+  in one directory, the layout of the Computer's local package. It needs a concrete version, never
+  `latest` (usage error, exit 1). Every check the feed path makes applies. It is for local builds
+  (`scripts/`), not for users.
+- `coforge-installer recover [--caller-pid <pid>]`: settles an unfinished upgrade (the journal).
+  `--caller-pid` is the `coforge-computer recover` process that launched this installer and waits
+  for it, verified and never stopped, as for `upgrade`.
+- `coforge-installer status [--json]`: read-only, no lock. `--json` field names are documented in
+  `src/status.rs`.
+- `--version` prints the crate version.
+
+Output: each stage line is `==> <stage>` on stdout, flushed as it happens. A succeeded install or
+upgrade ends with `CoForge Computer <version> is active.`. A refusal or a failed receipt's message
+goes to stderr as `coforge-installer: <message>`.
+
+Exit status (`contract.rs`): 0 succeeded, 1 failed (a receipt, or a usage error that wrote
+nothing), 2 held (another run holds the lock, or the request id belongs to something else), 3
+unresolved (run `coforge-computer recover`, or a rollback failed).
+
+The release feed is compiled in: `COFORGE_RELEASE_FEED_URL` is read at build time only (default
+`https://releases.coforge.cn`, the production feed; `src/compiled_feed.rs`). A build whose feed is
+plain `http://` must name `127.0.0.1` or `localhost` (end-to-end tests only); any other plain-HTTP
+feed is refused at startup. No command takes a feed.
 
 ## Toolchain
 
@@ -105,6 +134,7 @@ mise exec -- cargo about generate --locked --fail --output-file THIRD_PARTY_NOTI
 - `linux-x64` alone also runs `cargo fmt --check`, cargo-deny, cargo-audit, and
   cargo-about, and uploads `THIRD_PARTY_NOTICES.txt` as the
   `coforge-installer-third-party-notices` artifact.
+- Released by `release-installer-staging.yml`; see `docs/release/installer-feed.md`.
 
 ## Rules and gotchas
 
@@ -126,6 +156,9 @@ mise exec -- cargo about generate --locked --fail --output-file THIRD_PARTY_NOTI
 - The license allow list in `deny.toml` is the gate. Adding a license to it is a
   licensing decision for Frank, not a CI fix. Keep `about.toml`'s `accepted`
   list in step with it.
+- `install`, `upgrade`, and `recover` refuse to run inside `coforge-daemon.service` while it runs
+  (the caller's cgroup names the unit): stopping the service would stop the installer. The refusal
+  tells the person to run the command from a normal terminal, and changes nothing.
 - `THIRD_PARTY_NOTICES.txt` is generated, never committed. The template must
   not print `source_path`: it is an absolute path on the build machine.
 - No new lint, test, or advisory exemptions (`#[allow]`, `deny.toml` `ignore`
@@ -133,6 +166,17 @@ mise exec -- cargo about generate --locked --fail --output-file THIRD_PARTY_NOTI
 - `src/idle_timeout.rs` uses ureq's `unversioned` transport API (no semver guarantee), so
   ureq stays pinned in `Cargo.lock`. Bump it on purpose, starting there; the stall test in
   `src/fetch/tests.rs` catches an update that compiles but no longer bounds the wait.
+- HTTPS verifies servers with the operating system's trust store, as the Computer does:
+  ureq's `platform-verifier` feature (`rustls-platform-verifier`) with
+  `RootCerts::PlatformVerifier`, on ureq's stable `rustls` feature (ring provider). The
+  `rustls` feature also compiles `webpki-roots`, unused: that is expected, and it keeps the
+  CDLA-Permissive-2.0 allowance in `deny.toml` matched. Never set the provider or root certs
+  any other way (no `unversioned_rustls_crypto_provider`, no `native-tls`).
+- Plain HTTP exists only as `fetch::Transport::LoopbackHttp`, chosen by `compiled_feed` for a
+  loopback feed and by tests. The production agent is `Transport::Https`, with `https_only`.
+- `schannel` (Windows, through `rustls-native-certs`) is pinned to 0.1.23 in `Cargo.lock`:
+  0.1.24 and later need windows-sys 0.59 or 0.61, and `multiple-versions = "deny"` rejects a
+  second windows-sys beside ring's 0.52. Move it with `junction` and windows-sys, never alone.
 - `ureq` runs with default features off: its `gzip` feature would decode
   `Content-Encoding` transparently, and the manifest checksum covers the exact
   wire bytes.

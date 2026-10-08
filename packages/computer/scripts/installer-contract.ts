@@ -17,27 +17,25 @@ import {
   COORDINATOR_SERVICE,
   PROCESS_LOCK_CONTENTION_CODES,
   PROCESS_LOCK_STATEMENTS,
-  UPGRADE_RECEIPT_MAX_BYTES,
+  resolveComputerInstallDirectory,
 } from "@lrm/coforge-daemon";
 import {
   isValidReleaseVersion,
   UPGRADE_ERROR_CODE,
   UPGRADE_ERROR_CODE_PATTERN,
 } from "@lrm/coforge-sdk/internal";
-import { z } from "zod";
-
-import {
-  resolveComputerBinaryDirectory,
-  resolveComputerInstallDirectory,
-  resolveComputerStateDirectory,
-} from "#src/paths";
-import { DEFAULT_RELEASE_FEED_URL, OFFICIAL_RELEASE_ENVIRONMENTS } from "#src/release-channel";
 import {
   INSTALLER_EXIT_CODE,
-  INSTALLER_PROTOCOL,
-  INSTALLER_RECEIPT_PROTOCOL,
-  InstallerManifestSchema,
   InstallerReceiptSchema,
+  UPGRADE_RECEIPT_MAX_BYTES,
+} from "@lrm/coforge-sdk/internal/upgrade-receipt";
+import { z } from "zod";
+
+import { resolveComputerBinaryDirectory, resolveComputerStateDirectory } from "#src/paths";
+import { DEFAULT_RELEASE_FEED_URL, OFFICIAL_RELEASE_ENVIRONMENTS } from "#src/release-channel";
+import {
+  INSTALLER_PROTOCOL,
+  InstallerManifestSchema,
   LIFECYCLE_ERROR_CODE,
   LIFECYCLE_EXIT_CODE,
   LIFECYCLE_PROTOCOL,
@@ -201,7 +199,6 @@ export function renderInstallerContract(): Map<string, string> {
   const windowsInstallRoot = resolveComputerInstallDirectory({
     platform: "win32",
     homeDirectory: HOMES.win32,
-    environment: {},
   });
   const requestScoped = (name: string) => name.replace(EXAMPLE_REQUEST_ID, "{request_id}");
   const files: [string, string][] = [
@@ -239,7 +236,7 @@ export function renderInstallerContract(): Map<string, string> {
         },
       }),
     ],
-    // Version store (updater.ts).
+    // Version store (crates/installer/src/store.rs; the schema is updater.ts).
     ["active.schema.json", jsonSchema(ActiveStateSchema)],
     [
       "active.v1.json",
@@ -298,7 +295,7 @@ export function renderInstallerContract(): Map<string, string> {
         },
       }),
     ],
-    // Upgrade receipts (upgrade-coordinator.ts, installer-contract.ts). Every allowed row of the
+    // Upgrade receipts (@lrm/coforge-sdk/internal/upgrade-receipt). Every allowed row of the
     // status/exit-code table `InstallerReceiptSchema` documents is in `receipt-cases.json`, with the
     // combinations it refuses; four rows are also written out as goldens. `installer-codes.json`
     // holds what the receipts and exit statuses share.
@@ -322,15 +319,15 @@ export function renderInstallerContract(): Map<string, string> {
         }),
       }),
     ],
-    // Exit statuses and the receipt size a reader accepts (installer-contract.ts, the Daemon's
-    // computer-upgrade-receipts.ts).
+    // Exit statuses and the receipt size a reader accepts (the SDK's upgrade-receipt module, read
+    // by the Daemon's upgrade-receipt-file.ts).
     [
       "installer-codes.json",
       json({ exit_codes: INSTALLER_EXIT_CODE, max_receipt_bytes: UPGRADE_RECEIPT_MAX_BYTES }),
     ],
     // The Coordinator writes supervisor.lock/owner as its bare process ID.
     ["supervisor-lock-owner.txt", "4242"],
-    // Machine mutation lock (updater.ts, @lrm/coforge-daemon process-lock.ts).
+    // Machine mutation lock (crates/installer/src/lock.rs; @lrm/coforge-daemon process-lock.ts).
     [
       "lock.json",
       json({

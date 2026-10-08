@@ -11,7 +11,8 @@
 
     1. Generate protobuf
     2. Build the E2E Computer fixture (Computer + Daemon in one exe)
-    3. __install-local into ~/.coforge
+    3. Build coforge-installer from this checkout and run
+       `install --from-directory` on the fixture package, into ~/.coforge
     4. Restart the "CoForge Daemon" user Scheduled Task via schtasks XML
        (LogonTrigger + LeastPrivilege; works without elevation)
 
@@ -153,20 +154,10 @@ function Clear-StaleSupervisorLock {
   }
 }
 
-function Clear-StrandedLaunchHold {
-  $hold = Join-Path $env:USERPROFILE ".coforge\daemon\launch-hold"
-  if (-not (Test-Path -LiteralPath $hold)) { return }
-  # A prior failed __install-local leaves this UUID without a durable upgrade receipt.
-  # The next install's resume then fails on older Coordinators ("no recoverable upgrade owner").
-  Write-Host "==> Clearing stranded launch-hold from a previous incomplete upgrade"
-  Remove-Item -Force -LiteralPath $hold -ErrorAction SilentlyContinue
-  return $true
-}
-
 function Clear-StaleUpgradeResults {
   # Completed remote/local upgrade receipts accumulate. Windows Coordinator startup used to
   # schtasks /Delete each one serially (~1s each) before opening local RPC, blowing the ~10s
-  # handshake budget. Prune them before __install-local so even an older binary can start.
+  # handshake budget. Prune them before the install so even an older binary can start.
   $dir = Join-Path $env:USERPROFILE ".coforge\computer\install\upgrade-results"
   if (-not (Test-Path -LiteralPath $dir)) { return $false }
   $files = @(Get-ChildItem -LiteralPath $dir -Filter "*.result.json" -ErrorAction SilentlyContinue)
@@ -180,7 +171,7 @@ function Clear-StaleUpgradeResults {
 
 function Stop-LocalCoforgeDaemonTree {
   # schtasks /End is not enough on Windows: the Coordinator PID often survives and keeps
-  # supervisor.lock, so the next __install-local fails with process-tree shutdown timeout.
+  # supervisor.lock, so the next install can fail to start its own Coordinator.
   $task = "CoForge Daemon"
   Write-Host "==> Force-stopping local CoForge Daemon tree before install"
   schtasks /End /TN $task 2>$null | Out-Null
@@ -288,7 +279,6 @@ function Ensure-HealthySupervisorBeforeInstall {
   Clear-StaleSupervisorLock
   $null = Clear-WorkspaceHealthLatches
   $null = Clear-StaleUpgradeResults
-  $clearedHold = [bool](Clear-StrandedLaunchHold)
   $active = Join-Path $env:USERPROFILE ".coforge\computer\install\active\coforge-computer.exe"
   if (-not (Test-Path -LiteralPath $active)) {
     throw @"
@@ -297,9 +287,8 @@ $Name`: enabled Workspace bindings exist but no active Computer binary is instal
 "@
   }
 
-  # Stranded launch-hold means the live Coordinator may still be #paused in memory.
-  # -Start alone reuses that process; force End so the next Run loads a clean Coordinator.
-  $needRecover = $clearedHold -or -not (Test-SupervisorRpcHealthy -Exe $active)
+  # -Start alone reuses a live Coordinator process; force End so the next Run loads a clean one.
+  $needRecover = -not (Test-SupervisorRpcHealthy -Exe $active)
   if ($needRecover) {
     Write-Host "==> Recovering Computer supervisor before upgrade..."
     Stop-LocalCoforgeDaemonTree
@@ -466,6 +455,27 @@ function Install-AndRunDaemonTask {
   throw "Scheduled Task started but __daemon did not appear within 20s. Check '$state' logs."
 }
 
+function Invoke-Cargo {
+  param(
+    [Parameter(Mandatory = $true)][string]$Directory,
+    [Parameter(Mandatory = $true)][string[]]$Arguments
+  )
+  Push-Location $Directory
+  try {
+    $mise = Get-Command mise -ErrorAction SilentlyContinue
+    if ($mise) {
+      & mise exec -- cargo @Arguments | Out-Host
+    } else {
+      & cargo @Arguments | Out-Host
+    }
+    if ($LASTEXITCODE -ne 0) {
+      throw "cargo $($Arguments -join ' ') failed (exit $LASTEXITCODE)"
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
 function Build-AndInstallFixture {
   $webUrl = if ($env:COFORGE_E2E_WEB_URL) { $env:COFORGE_E2E_WEB_URL } else { Get-DefaultWebUrl }
   $centrifugo = if ($env:COFORGE_E2E_CENTRIFUGO_ENDPOINT) {
@@ -515,23 +525,28 @@ $Name`: Web backend is not reachable at $webUrl
     }
 
     $version = (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).version
-    # Drop leftover upgrade receipts / holds before the Coordinator is asked to upgrade itself.
+    # Drop leftover upgrade receipts before the Coordinator is asked to upgrade itself.
     $null = Clear-StaleUpgradeResults
-    $null = Clear-StrandedLaunchHold
     $null = Clear-WorkspaceHealthLatches
-    # __install-local upgrades through the Coordinator when bindings exist; a dead
+    # The installer upgrades through the Coordinator when bindings exist; a dead
     # supervisor.lock or stopped task fails with "no healthy supervisor".
     Ensure-HealthySupervisorBeforeInstall -Task $TaskName
+    $installerBin = Join-Path $Root "target\release\coforge-installer.exe"
+    Write-Host "==> Building coforge-installer from this checkout"
+    Invoke-Cargo -Directory (Join-Path $Root "crates\installer") -Arguments @("build", "--locked", "--release")
+    if (-not (Test-Path -LiteralPath $installerBin)) {
+      throw "$Name`: cargo build did not produce $installerBin"
+    }
     Write-Host "==> Installing local package version $version"
-    # __install-local prints progress on stdout; Out-Host keeps it visible without
+    # The installer prints progress on stdout; Out-Host keeps it visible without
     # polluting this function's return value under Set-StrictMode.
-    & $fixtureBin __install-local --version $version --directory $packageDir | Out-Host
+    & $installerBin install --version $version --from-directory $packageDir | Out-Host
     if ($LASTEXITCODE -ne 0) {
       throw @"
-$Name`: local install failed (exit $LASTEXITCODE).
+$Name`: local install failed (exit $LASTEXITCODE; exit 3 means run 'coforge-computer recover').
   Common Windows causes (not Web URL):
-    - old supervisor did not confirm process-tree shutdown (schtasks /End left Coordinator up)
-    - local handshake timeout (leftover CoForge Upgrade tasks / upgrade-results)
+    - the previous Coordinator did not stop (schtasks /End left its process running)
+    - the new Coordinator did not answer its local RPC handshake in time
   Check: schtasks /Query /TN 'CoForge Daemon' /V /FO LIST
   Then: & '$env:USERPROFILE\.coforge\computer\install\active\coforge-computer.exe' status --json
   Current COFORGE_E2E_WEB_URL=$webUrl

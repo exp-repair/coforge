@@ -19,7 +19,6 @@ import {
   encodeUsageScanResponse,
   decodeDaemonHoldRequest,
   encodeDaemonHoldResponse,
-  RUNNER_HOLD_REASONS,
   type RunnerHoldReason,
   type HeldBusyAgent,
   type UsageScanResponse,
@@ -83,8 +82,6 @@ const LIFECYCLE_METHODS: ReadonlySet<string> = new Set([
   LOCAL_RPC_METHODS.STOP,
   LOCAL_RPC_METHODS.RESTART,
   LOCAL_RPC_METHODS.SNAPSHOT,
-  LOCAL_RPC_METHODS.PAUSE,
-  LOCAL_RPC_METHODS.RESUME,
   LOCAL_RPC_METHODS.UPGRADE,
   LOCAL_RPC_METHODS.UPGRADE_ACKNOWLEDGE,
 ]);
@@ -230,18 +227,21 @@ class LocalRpcDispatcher {
    * Engages or lifts the runner hold. Deliberately not a LIFECYCLE_METHOD: it answers with its own
    * message because the caller needs the busy set, not a runtime identity list. A daemon that does
    * not implement the port answers `accepted: false`, which callers must read as "cannot hold,
-   * carry on" - an upgrade is never blocked by a daemon that cannot be held.
+   * carry on" - a restart is never blocked by a daemon that cannot be held.
    */
   async #hold(payload: Uint8Array, engage: boolean): Promise<Uint8Array> {
     const request = decodeDaemonHoldRequest(payload);
     this.#assertOwnServer(request.expectedServerUrl, "request");
     const { runtime } = this.input;
     const valid = request.protocolMajor === 1 && request.requestId.length > 0;
-    const report = valid
-      ? await (engage
-          ? runtime.hold?.(request.reason ?? RUNNER_HOLD_REASONS.UPGRADE)
-          : runtime.release?.())
-      : undefined;
+    let report: DaemonHoldReport | undefined;
+    if (valid && engage) {
+      // A hold without a reason is a malformed request, not a hold to guess at: the caller gets a
+      // closed socket and the local RPC layer logs why.
+      if (request.reason === undefined)
+        throw new Error("daemon:hold requires a runner hold reason");
+      report = await runtime.hold?.(request.reason);
+    } else if (valid) report = await runtime.release?.();
     return encodeDaemonHoldResponse({
       protocolMajor: 1,
       requestId: request.requestId,

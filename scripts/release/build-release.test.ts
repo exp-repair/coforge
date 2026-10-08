@@ -1,14 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ComputerUpdater } from "@coforge/computer/src/updater";
+import { ReleaseManifestSchema } from "@coforge/computer/src/updater";
 import { buildReleaseTree, isValidReleaseVersion, type ReleaseInputs } from "./build-release";
 
-// Core acceptance: the feed tree buildReleaseTree() produces must be accepted, byte-for-byte, by
-// both real consumers - packages/computer/src/updater.ts (imported directly) and the real
-// scripts/release/install.sh (spawned as a subprocess). Both are exercised against small fake
+// Core acceptance: the feed tree buildReleaseTree() produces must hold, byte-for-byte, what its
+// manifest records, and the real scripts/release/install.sh (spawned as a subprocess) must install
+// from it. The installer that installs a version is coforge-installer (crates/installer), which
+// has its own tests; this file checks the tree it reads. Both are exercised against small fake
 // binaries (a shell script, a plain string) rather than a real compile, which is slow and
 // intentionally out of scope here - see compile-targets.ts.
 
@@ -66,9 +67,8 @@ const ALL_TARGETS = [
 /** Every target gets its own distinct computer bytes. Identical bytes across targets would let a
  * "wrote target A's checksum into target B's
  * sidecar" bug pass the consistency test further down - only distinct bytes make that a real
- * check. Each computer "binary" is a runnable POSIX shell script, since the install.sh test below
- * executes whichever one matches the current host platform. `argumentLog` is where it records the
- * arguments it was invoked with; tests that never execute a binary can pass "/dev/null". */
+ * check. `argumentLog` is where a computer "binary" records the arguments it was invoked with;
+ * tests that never execute a binary can pass "/dev/null". */
 function fixtureArtifacts(argumentLog: string): Record<string, { computer: Uint8Array }> {
   const artifacts: Record<string, { computer: Uint8Array }> = {};
   for (const target of ALL_TARGETS) {
@@ -126,6 +126,32 @@ function flipHexChar(hex: string, index: number): string {
   const current = hex[index]!;
   const next = alphabet[(alphabet.indexOf(current) + 1) % alphabet.length]!;
   return hex.slice(0, index) + next + hex.slice(index + 1);
+}
+
+/** A stand-in coforge-installer: it records its arguments and, like the real one, leaves the shim
+ * where install.sh looks for it. It refuses any invocation other than `install --version <v>`. */
+function installerStub(log: string): Uint8Array {
+  return Buffer.from(
+    `#!/bin/sh\n` +
+      `[ "$#" -eq 3 ] && [ "$1" = install ] && [ "$2" = --version ] || exit 90\n` +
+      `printf '%s\\n' "$@" > "${log}"\n` +
+      `bin_directory=\${XDG_BIN_HOME:-}\n` +
+      `case "$bin_directory" in\n  /*) ;;\n  *) bin_directory="$HOME/.local/bin" ;;\nesac\n` +
+      `mkdir -p "$bin_directory"\n` +
+      `printf '#!/bin/sh\\nexit 0\\n' > "$bin_directory/coforge-computer"\n` +
+      `chmod 755 "$bin_directory/coforge-computer"\n`,
+  );
+}
+
+/** Writes the installer feed the bootstrap reads, laid out as publish-installer.ts publishes it:
+ * the pointer, and one gzip and sidecar for the target. */
+async function writeInstallerFeed(root: string, target: string, installer: Uint8Array) {
+  const directory = join(root, "installer", "0.1.0", target);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(root, "installer", "latest"), "0.1.0\n");
+  await writeFile(join(directory, "coforge-installer.gz"), Bun.gzipSync(installer));
+  await writeFile(join(directory, "coforge-installer.sha256"), `${sha256hex(installer)}\n`);
+  return join(directory, "coforge-installer.sha256");
 }
 
 async function runInstallSh(baseUrl: string): Promise<{ exitCode: number; stderr: string }> {
@@ -275,78 +301,57 @@ test("buildReleaseTree produces deterministic gzip bytes", async () => {
   }
 });
 
-test("ComputerUpdater installs successfully from the produced tree, for every release target", async () => {
+test("the produced tree holds, for every target, the bytes its manifest records", async () => {
   const outputDirectory = await tempDir("coforge-release-tree-");
   const inputs = releaseInputs();
   const { version } = await buildReleaseTree(inputs, outputDirectory);
-  await writeFile(join(outputDirectory, "latest"), `${version}\n`);
-  const { baseUrl } = serveTree(outputDirectory);
+  const manifest = ReleaseManifestSchema.parse(
+    JSON.parse(await readFile(join(outputDirectory, version, "manifest.json"), "utf8")),
+  );
 
   for (const target of ALL_TARGETS) {
-    const installRoot = await tempDir("coforge-updater-install-");
-    const updater = new ComputerUpdater({ baseUrl, target, installRoot });
-
-    const result = await updater.install("latest");
-
-    expect(result.version).toBe(version);
-    const suffix = target.startsWith("windows-") ? ".exe" : "";
-    const installedComputer = await readFile(
-      join(installRoot, "versions", version, `coforge-computer${suffix}`),
-    );
-    expect(installedComputer.equals(Buffer.from(inputs.artifacts[target]!.computer))).toBe(true);
-    expect(
-      await Bun.file(join(installRoot, "versions", version, `coforge-daemon${suffix}`)).exists(),
-    ).toBe(false);
+    const platform = manifest.platforms[target]!.computer;
+    const gzip = await readFile(join(outputDirectory, version, target, "coforge-computer.gz"));
+    expect(gzip.byteLength).toBe(platform.gzip.size);
+    expect(sha256hex(gzip)).toBe(platform.gzip.checksum);
+    const expanded = Buffer.from(Bun.gunzipSync(gzip));
+    expect(expanded.equals(Buffer.from(inputs.artifacts[target]!.computer))).toBe(true);
+    expect(expanded.byteLength).toBe(platform.size);
+    expect(sha256hex(expanded)).toBe(platform.checksum);
   }
+  const wasm = await readFile(join(outputDirectory, version, "photon_rs_bg.wasm"));
+  expect(wasm.byteLength).toBe(manifest.photonWasm.size);
+  expect(sha256hex(wasm)).toBe(manifest.photonWasm.checksum);
 });
 
-test("the real install.sh installs successfully from the produced tree", async () => {
+test("the real install.sh installs successfully through the produced installer feed", async () => {
   const directory = await tempDir("coforge-install-sh-");
   const log = join(directory, "arguments");
   const outputDirectory = await tempDir("coforge-release-tree-");
-  const host = currentTarget();
-  // Only the host target's binary is ever actually executed, so only it needs a real log path;
-  // every other target keeps the /dev/null default from fixtureArtifacts.
-  const artifacts = fixtureArtifacts("/dev/null");
-  artifacts[host] = {
-    // Besides logging its arguments, the stub must leave a shim where install.sh looks for one
-    // afterwards - the real binary's `install` does, and the script refuses to report success
-    // without it.
-    computer: Buffer.from(
-      `#!/bin/sh\n` +
-        `printf '%s\\n' "$@" > "${log}"\n` +
-        `bin_directory=\${XDG_BIN_HOME:-}\n` +
-        `case "$bin_directory" in\n  /*) ;;\n  *) bin_directory="$HOME/.local/bin" ;;\nesac\n` +
-        `mkdir -p "$bin_directory"\n` +
-        `printf '#!/bin/sh\\nexit 0\\n' > "$bin_directory/coforge-computer"\n` +
-        `chmod 755 "$bin_directory/coforge-computer"\n`,
-    ),
-  };
-  const { version } = await buildReleaseTree(releaseInputs({ artifacts }), outputDirectory);
+  const { version } = await buildReleaseTree(releaseInputs(), outputDirectory);
   await writeFile(join(outputDirectory, "latest"), `${version}\n`);
+  await writeInstallerFeed(outputDirectory, currentTarget(), installerStub(log));
   const { baseUrl } = serveTree(outputDirectory);
 
   const { exitCode, stderr } = await runInstallSh(baseUrl);
 
-  expect(stderr).toContain(`CoForge Computer ${version} installed`);
-  expect(stderr).toContain('/.local/bin/coforge-computer" setup --workspace <slug>');
   expect(exitCode).toBe(0);
+  expect(stderr).toContain("CoForge Computer installed");
+  expect(stderr).toContain('/.local/bin/coforge-computer" setup --workspace <slug>');
   expect((await readFile(log, "utf8")).trim().split("\n")).toEqual([
-    "__install-local",
+    "install",
     "--version",
-    version,
-    "--directory",
-    expect.stringContaining("coforge-installer."),
+    "latest",
   ]);
 });
 
-test("install.sh fails when one bit of a sidecar checksum is flipped", async () => {
+test("install.sh fails when one bit of an installer sidecar checksum is flipped", async () => {
   const outputDirectory = await tempDir("coforge-release-tree-");
   const host = currentTarget();
   const { version } = await buildReleaseTree(releaseInputs(), outputDirectory);
   await writeFile(join(outputDirectory, "latest"), `${version}\n`);
+  const sidecarPath = await writeInstallerFeed(outputDirectory, host, installerStub("/dev/null"));
 
-  const sidecarPath = join(outputDirectory, version, host, "coforge-computer.sha256");
   const original = (await readFile(sidecarPath, "utf8")).trim();
   await writeFile(sidecarPath, `${flipHexChar(original, 0)}\n`);
   const { baseUrl } = serveTree(outputDirectory);
@@ -355,26 +360,4 @@ test("install.sh fails when one bit of a sidecar checksum is flipped", async () 
 
   expect(exitCode).not.toBe(0);
   expect(stderr).toContain("failed its checksum check");
-});
-
-test("ComputerUpdater rejects a tree whose manifest checksum was tampered with, with UPDATE_INTEGRITY_FAILED", async () => {
-  const outputDirectory = await tempDir("coforge-release-tree-");
-  const target = ALL_TARGETS[0]!;
-  const { version } = await buildReleaseTree(releaseInputs(), outputDirectory);
-  await writeFile(join(outputDirectory, "latest"), `${version}\n`);
-
-  const manifestPath = join(outputDirectory, version, "manifest.json");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  manifest.platforms[target].computer.checksum = flipHexChar(
-    manifest.platforms[target].computer.checksum,
-    0,
-  );
-  await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
-  const { baseUrl } = serveTree(outputDirectory);
-  const installRoot = await tempDir("coforge-updater-install-");
-  const updater = new ComputerUpdater({ baseUrl, target, installRoot });
-
-  await expect(updater.install("latest")).rejects.toMatchObject({
-    code: "UPDATE_INTEGRITY_FAILED",
-  });
 });

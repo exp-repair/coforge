@@ -13,7 +13,7 @@ export async function runInstallationSource(options: {
   selection: string;
   directory?: string;
   quietHeader?: boolean;
-  phase?: "manifest" | "artifact";
+  phase?: "manifest" | "artifact" | "installer";
 }): Promise<string> {
   const temporary = await mkdtemp(join(tmpdir(), "coforge-install-source-"));
   const windows = process.platform === "win32";

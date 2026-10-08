@@ -1,0 +1,403 @@
+name: Publish installer (staging)
+run-name: ${{ inputs.pointer_only && format('Move the staging installer pointer to {0}', inputs.pointer_only) || 'Publish the installer to staging' }}
+
+# Publishing coforge-installer is manual, never automatic on a push to main, for the same reason
+# the Computer's is (release-staging.yml, docs/release/github-actions.md): a release leaves a
+# persistent artifact set behind. Do not add a `push:` trigger here. The feed layout, the write-once
+# rule, and the `pointer_only` input are documented in docs/release/installer-feed.md; every
+# procedural step lives in scripts/release/publish-installer.ts, which goes through publish.ts's
+# upload flow. The jobs that compile the installer hold no credential and hand their binary on as an
+# artifact: the only jobs that hold an OIDC token compile nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      pointer_only:
+        description: >-
+          Move installer/latest to this already-published installer version, forward or back, and do
+          nothing else (no build, no publication). Leave empty to publish the version in
+          crates/installer/Cargo.toml.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # The credential chain is the Computer publisher's (release-staging.yml): GitHub OIDC is
+  # exchanged for a short-lived STS token of the same RAM role. No long-term AccessKey exists.
+  ALIBABA_CLOUD_ROLE_ARN: acs:ram::1085194890307801:role/coforge-release-publisher
+  ALIBABA_CLOUD_OIDC_PROVIDER_ARN: acs:ram::1085194890307801:oidc-provider/github-actions
+  ALIBABA_CLOUD_ROLE_SESSION_NAME: github-actions-${{ github.run_id }}
+  # The credential chain would otherwise fall through to the ECS metadata service and a
+  # credentials URI after an OIDC failure, spending minutes on connection timeouts before
+  # reporting the real error.
+  ALIBABA_CLOUD_ECS_METADATA_DISABLED: "true"
+
+concurrency:
+  group: release-installer-staging
+  cancel-in-progress: false
+
+jobs:
+  gates:
+    name: Validate
+    if: github.ref == 'refs/heads/main' && inputs.pointer_only == ''
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      track: installer
+
+  # Refuses a version that is already published before six runners spend their time building it.
+  plan:
+    name: Plan the installer release
+    if: github.ref == 'refs/heads/main' && inputs.pointer_only == ''
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: "2026.9.2"
+          install: false
+
+      - name: Install toolchain
+        run: mise install
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate protocol sources
+        run: bun run --cwd packages/coforge-sdk generate
+
+      - name: Request an OIDC token for Alibaba Cloud
+        env:
+          AUDIENCE: sts.aliyuncs.com
+        run: |
+          token_file="$RUNNER_TEMP/aliyun-oidc-token"
+          curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" \
+            | jq -r '.value' > "$token_file"
+          chmod 600 "$token_file"
+          echo "ALIBABA_CLOUD_OIDC_TOKEN_FILE=$token_file" >> "$GITHUB_ENV"
+          # The RAM role's trust policy matches these three claims exactly; print them so a
+          # trust-policy mismatch is diagnosable from the run log. The payload is public run
+          # metadata; the signature (the only secret part) is never printed.
+          payload="$(cut -d. -f2 "$token_file" | tr '_-' '/+' | awk '{ n = length($0) % 4; if (n) $0 = $0 substr("==", 1, 4 - n); print }' | base64 -d)"
+          printf 'OIDC claims: %s\n' "$(printf '%s' "$payload" | jq -c '{iss, aud, sub, exp}')"
+
+      - name: Refuse a version that is already published
+        id: plan
+        # GitHub-hosted runners reach oss-cn-beijing over the public cross-border path at a few
+        # tens of KB/s; OSS transfer acceleration routes over Alibaba Cloud's backbone instead. The
+        # endpoint is global, so the bucket's region is passed for V4 signing.
+        run: |
+          bun scripts/release/publish-installer.ts plan \
+            --endpoint oss-accelerate.aliyuncs.com \
+            --region oss-cn-beijing
+
+  # One native runner per release target. The matrix is `installer-crate`'s in ci.yml
+  # (scripts/ci/workflow.test.ts keeps the two identical). A build job compiles about sixty crates,
+  # build scripts and proc-macros included, so it holds no OIDC token and no environment: it hands
+  # its binary on as an artifact, and the `publish` job uploads it.
+  build:
+    name: Build ${{ matrix.release_target }}
+    needs: [gates, plan]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple's linker ad-hoc signs arm64 output itself; macOS 27 kills arm64 binaries whose
+          # signature is invalid, so the job verifies it with `codesign --verify --strict`.
+          - release_target: darwin-arm64
+            rust_target: aarch64-apple-darwin
+            runner: macos-latest
+            tools: rust
+          # Cross-compiled on the arm64 runner. The linker leaves x86_64 output unsigned, so the
+          # job ad-hoc signs it the way Bun signs its darwin-x64 executables.
+          - release_target: darwin-x64
+            rust_target: x86_64-apple-darwin
+            runner: macos-latest
+            tools: rust
+          # musl, statically linked: no glibc version floor on the user's machine. This entry
+          # also generates the licence notices, which every target's release ships beside it.
+          - release_target: linux-x64
+            rust_target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            tools: rust github:EmbarkStudios/cargo-about
+          - release_target: linux-arm64
+            rust_target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            tools: rust
+          - release_target: windows-x64
+            rust_target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            tools: rust
+          - release_target: windows-arm64
+            rust_target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            tools: rust
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: crates/installer
+    env:
+      # From the repository root; the crate's own steps run one level down (`../../$BINARY`).
+      BINARY: target/${{ matrix.rust_target }}/release/coforge-installer${{ startsWith(matrix.release_target, 'windows') && '.exe' || '' }}
+      # `mise exec` would otherwise install every tool in crates/installer/mise.toml (and the root
+      # one) that is missing, including supply-chain tools only linux-x64 uses; cargo-audit
+      # publishes no windows-arm64 build. Each entry uses exactly its `tools`.
+      # https://mise.jdx.dev/configuration/settings.html#exec_auto_install
+      MISE_EXEC_AUTO_INSTALL: "false"
+      # The feed the installer binary will trust once the crate compiles it in, one build per
+      # environment (docs/release/tracks-and-identities.md); this is the staging one. The crate
+      # does not read the variable yet, so setting it changes nothing about today's binary.
+      COFORGE_RELEASE_FEED_URL: https://releases-staging.coforge.cn
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # From crates/installer/ mise also sees the root tools, so install only what this entry uses.
+      - name: Install pinned Rust tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: "2026.9.2"
+          working_directory: crates/installer
+          install_args: ${{ matrix.tools }}
+
+      - name: Add the Rust target
+        run: mise exec rust -- rustup target add "${{ matrix.rust_target }}"
+
+      - name: Install the musl C compiler for ring
+        if: startsWith(matrix.release_target, 'linux')
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+          target="${{ matrix.rust_target }}"
+          echo "CC_${target//-/_}=musl-gcc" >> "$GITHUB_ENV"
+
+      - name: Build release binary
+        run: mise exec rust -- cargo build --locked --release --target "${{ matrix.rust_target }}"
+
+      - name: Ad-hoc sign the x86_64 darwin binary
+        if: matrix.release_target == 'darwin-x64'
+        run: codesign --sign - --force "../../$BINARY"
+
+      - name: Verify the darwin signature
+        if: startsWith(matrix.release_target, 'darwin')
+        run: |
+          codesign -dv --verbose=2 "../../$BINARY"
+          codesign --verify --strict --verbose=2 "../../$BINARY"
+
+      - name: Report binary size
+        run: |
+          size="$(wc -c < "../../$BINARY" | tr -d ' ')"
+          echo "coforge-installer ${{ matrix.release_target }}: $size bytes" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run on the native host
+        if: matrix.release_target != 'darwin-x64'
+        run: '"../../$BINARY" --version'
+
+      - name: Run under Rosetta when available
+        if: matrix.release_target == 'darwin-x64'
+        run: |
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            arch -x86_64 "../../$BINARY" --version
+          else
+            echo "::warning::Rosetta is not installed on this runner; darwin-x64 was built but not run"
+          fi
+
+      - name: Generate third-party notices
+        if: matrix.release_target == 'linux-x64'
+        run: mise exec -- cargo about generate --locked --fail --output-file THIRD_PARTY_NOTICES.txt about/notices.hbs
+
+      # The artifact holds this target's binary and nothing else, plus the notices from the one job
+      # that has them; `publish-installer.ts finalize` refuses any other file in it.
+      - name: Stage this target's output
+        working-directory: .
+        env:
+          RELEASE_TARGET: ${{ matrix.release_target }}
+        run: |
+          mkdir installer-out
+          cp "$BINARY" installer-out/
+          if [ "$RELEASE_TARGET" = linux-x64 ]; then
+            cp crates/installer/THIRD_PARTY_NOTICES.txt installer-out/
+          fi
+
+      - name: Hand this target's output to the publishing job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer-${{ matrix.release_target }}
+          path: installer-out
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only job that reaches the bucket with the six binaries in hand, and it compiles nothing:
+  # it packages them, uploads and reads back every object, writes the manifest, then moves
+  # `installer/latest`.
+  publish:
+    name: Package, upload, and move installer/latest
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: "2026.9.2"
+          install: false
+
+      - name: Install toolchain
+        run: mise install
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate protocol sources
+        run: bun run --cwd packages/coforge-sdk generate
+
+      # Not merged: each artifact lands in its own `installer-bin/installer-<target>/`, so one build
+      # job cannot replace another target's binary.
+      - name: Collect the six targets' binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: installer-*
+          path: installer-bin
+
+      - name: Request an OIDC token for Alibaba Cloud
+        env:
+          AUDIENCE: sts.aliyuncs.com
+        run: |
+          token_file="$RUNNER_TEMP/aliyun-oidc-token"
+          curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" \
+            | jq -r '.value' > "$token_file"
+          chmod 600 "$token_file"
+          echo "ALIBABA_CLOUD_OIDC_TOKEN_FILE=$token_file" >> "$GITHUB_ENV"
+          # The RAM role's trust policy matches these three claims exactly; print them so a
+          # trust-policy mismatch is diagnosable from the run log. The payload is public run
+          # metadata; the signature (the only secret part) is never printed.
+          payload="$(cut -d. -f2 "$token_file" | tr '_-' '/+' | awk '{ n = length($0) % 4; if (n) $0 = $0 substr("==", 1, 4 - n); print }' | base64 -d)"
+          printf 'OIDC claims: %s\n' "$(printf '%s' "$payload" | jq -c '{iss, aud, sub, exp}')"
+
+      - name: Package, upload, and verify every object, write the manifest, and move installer/latest
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          bun scripts/release/publish-installer.ts finalize \
+            --commit "$RELEASE_COMMIT" \
+            --binaries installer-bin \
+            --out installer-out \
+            --endpoint oss-accelerate.aliyuncs.com \
+            --region oss-cn-beijing
+
+      - name: Summarize published installer
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          {
+            echo "## Installer published to staging"
+            echo ""
+            echo "- Version: ${RELEASE_VERSION}"
+            echo "- Source commit: ${RELEASE_COMMIT}"
+            echo "- Targets: Linux, macOS, Windows (x64 and arm64)"
+            echo "- Verified: uploaded bytes, checksums, private storage access, and the installer/latest pointer"
+            echo "- Installing and upgrading a Computer with it is a separate check."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # `installer/latest` moves alone, forward or back, to a version whose manifest is already up.
+  pointer:
+    name: Move installer/latest
+    if: github.ref == 'refs/heads/main' && inputs.pointer_only != ''
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: "2026.9.2"
+          install: false
+
+      - name: Install toolchain
+        run: mise install
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate protocol sources
+        run: bun run --cwd packages/coforge-sdk generate
+
+      - name: Request an OIDC token for Alibaba Cloud
+        env:
+          AUDIENCE: sts.aliyuncs.com
+        run: |
+          token_file="$RUNNER_TEMP/aliyun-oidc-token"
+          curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" \
+            | jq -r '.value' > "$token_file"
+          chmod 600 "$token_file"
+          echo "ALIBABA_CLOUD_OIDC_TOKEN_FILE=$token_file" >> "$GITHUB_ENV"
+          # The RAM role's trust policy matches these three claims exactly; print them so a
+          # trust-policy mismatch is diagnosable from the run log. The payload is public run
+          # metadata; the signature (the only secret part) is never printed.
+          payload="$(cut -d. -f2 "$token_file" | tr '_-' '/+' | awk '{ n = length($0) % 4; if (n) $0 = $0 substr("==", 1, 4 - n); print }' | base64 -d)"
+          printf 'OIDC claims: %s\n' "$(printf '%s' "$payload" | jq -c '{iss, aud, sub, exp}')"
+
+      - name: Move installer/latest
+        # inputs.pointer_only is caller-controlled text: it goes through an env var, never into the
+        # script body, and the script validates it as a version before it names any object.
+        env:
+          INPUT_POINTER_ONLY: ${{ inputs.pointer_only }}
+        run: |
+          bun scripts/release/publish-installer.ts pointer \
+            --version "$INPUT_POINTER_ONLY" \
+            --endpoint oss-accelerate.aliyuncs.com \
+            --region oss-cn-beijing
+
+      - name: Summarize the pointer move
+        env:
+          INPUT_POINTER_ONLY: ${{ inputs.pointer_only }}
+        run: |
+          {
+            echo "## Staging installer pointer moved"
+            echo ""
+            echo "- installer/latest: ${INPUT_POINTER_ONLY}"
+            echo "- Nothing was built or published."
+          } >> "$GITHUB_STEP_SUMMARY"

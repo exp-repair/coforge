@@ -1,6 +1,6 @@
 # Per-user installation
 
-Installation, upgrade, background startup, and rollback run entirely as the
+Installation, upgrade, background startup, and recovery run entirely as the
 current user. They must not request `sudo` or administrator elevation, write to
 `/usr/local`, `/opt`, `/Library`, `Program Files`, or system service locations,
 reuse another user's installation, enable Linux lingering, or modify root-owned
@@ -16,7 +16,7 @@ be on PATH and therefore cannot live in a private directory nobody's PATH names:
   already on PATH for most users, so an install is usable in the shell that ran
   the installer, and `install.sh` writes shell configuration only when the
   directory is genuinely absent from PATH. The shim itself is only a symlink into
-  the versioned installation below `~/.coforge`, so upgrade and rollback move the
+  the versioned installation below `~/.coforge`, so upgrade and downgrade move the
   `active` link and never touch the user's PATH. Computer background startup is
   user-scoped; only Computer may register a per-user LaunchAgent on macOS.
 - Windows has no comparable per-user PATH convention, so the shim - a `.cmd`
@@ -36,10 +36,10 @@ be on PATH and therefore cannot live in a private directory nobody's PATH names:
   so only already-running Explorer-spawned applications miss the change. Only
   Computer may use a current-user startup mechanism.
 
-The installer maintains a user-owned versioned installation directory. It downloads
-the unified Computer executable into staging, verifies it against the
+`coforge-installer` maintains a user-owned versioned installation directory. It
+downloads the unified Computer executable into staging, verifies it against the
 manifest's recorded size and SHA-256 checksum, activates only after it passes,
-preserves the prior version for rollback, and never relocates
+keeps the prior version for rollback, and never relocates
 stable machine identity, credentials, configuration, or user data into a
 versioned directory. Only the `coforge-computer` shim enters the current
 user's PATH. Computer launches the adjacent executable with `__daemon` through
@@ -89,7 +89,8 @@ complete unified executable; there is no independent Daemon version.
 
 Staging and production artifacts are **not interchangeable**. The feed a build
 trusts is compiled into it (`COFORGE_RELEASE_FEED_URL`, see
-`packages/computer/src/release-channel.ts`), so a binary built for staging carries
+`packages/computer/src/release-channel.ts`, and the installer's feed in
+`crates/installer/src/compiled_feed.rs`), so a binary built for staging carries
 the staging feed address and would keep updating itself from staging if it were
 copied into the production feed. Promotion therefore rebuilds the same commit
 against the production feed rather than copying bytes; what carries across
@@ -125,8 +126,10 @@ shell (a piped installer cannot modify its parent shell) and an absolute setup
 command. Metadata requests are quiet; only the binary download has a progress bar.
 
 `install.sh` and `install.ps1` read the same `COFORGE_RELEASE_FEED_URL`
-variable, but unconditionally and at runtime: any `https://` value is
-accepted, not just the compiled-in default. This is deliberate, not an
+variable. It only chooses where the scripts fetch `coforge-installer` from; the
+installer installs from its own compiled-in feed. The variable is read
+unconditionally at runtime: any `https://` value is accepted, not just the
+compiled-in default. This is deliberate, not an
 oversight of the rule above: `release-channel.ts` hardens the _compiled_,
 long-lived binary that auto-updates itself indefinitely, where a runtime
 toggle would let it be silently redirected to an untrusted feed on every

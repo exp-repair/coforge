@@ -5,6 +5,7 @@
 | **CI**                         | A pull request is opened or updated | Plan checks → validate affected packages and scripts → CI passed                         |
 | **Deploy Web (staging)**       | A commit reaches `main`             | Validate → build and push Docker image → deploy and verify Web                           |
 | **Publish Computer (staging)** | Manually started from `main`        | Validate → build all six platforms → upload and verify release → update staging `latest` |
+| **Publish installer (staging)** | Manually started from `main`       | Validate → plan → build each target natively → package, upload, and verify, write the manifest, and update `installer/latest`; or with `pointer_only` move that pointer alone |
 
 The Web workflow skips image build and deployment when the commit does not
 affect Web. Computer publication is manual and its run title includes the
@@ -107,6 +108,12 @@ input. No beta or release-candidate stage is required. Previously published
 versions, including historical `rc` versions, remain immutable and available
 by exact version; the next successful publication moves `latest` without
 renaming or deleting them.
+
+The installer has its own manual workflow and its own version, described in
+[Installer feed and release workflow](installer-feed.md); the two publications
+share the upload flow in `scripts/release/publish.ts`, and the Computer
+publication checks that the installer it needs is published before it moves its
+`latest`.
 
 The Computer distribution is published to the release feed only. It is **not
 published to npm**; that channel is purely additive and can be introduced later

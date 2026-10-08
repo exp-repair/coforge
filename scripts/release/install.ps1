@@ -11,7 +11,7 @@ param(
   [Parameter()]
   [switch]$QuietHeader,
   [Parameter()]
-  [ValidateSet("all", "manifest", "artifact")]
+  [ValidateSet("all", "manifest", "artifact", "installer")]
   [string]$PreparePhase = "all"
 )
 
@@ -46,7 +46,8 @@ $defaultFeedUrl = "https://releases.coforge.cn"
 # packages/computer/src/release-channel.ts hardens by inlining the feed URL at build time - an
 # attacker able to set this variable in the invoking shell can equally set PATH or a proxy
 # variable to reach the same result, so there is no additional boundary to enforce here. See
-# docs/release/per-user-installation.md.
+# docs/release/per-user-installation.md. It only chooses where this script's installer comes from:
+# coforge-installer installs from its own compiled-in feed.
 $feedUrl = $env:COFORGE_RELEASE_FEED_URL
 if ([string]::IsNullOrEmpty($feedUrl)) { $feedUrl = $defaultFeedUrl }
 $feedUrl = $feedUrl.TrimEnd("/")
@@ -80,6 +81,8 @@ $platform = switch -CaseSensitive ($Target) {
 if ($PreparePhase -ne "all" -and -not $PrepareDirectory) {
   throw "install.ps1: preparation phase requires a directory"
 }
+# The installer gzip is chosen by target; the bootstrap and the `installer` phase both fetch it.
+$installerGzip = if ($Target.StartsWith("windows-", [System.StringComparison]::Ordinal)) { "coforge-installer.exe.gz" } else { "coforge-installer.gz" }
 
 # `latest` and the checksum sidecar are both tiny, feed-controlled text objects with no
 # advertised size of their own, so each download gets a small fixed ceiling rather than none.
@@ -154,72 +157,107 @@ if ($PrepareDirectory) {
 }
 try {
   if (-not $QuietHeader) { Write-CoforgeStep "Detected platform: $platform" }
-  if ($Version -eq "latest") {
-    if (-not $QuietHeader) { Write-CoforgeStep "Finding the latest CoForge Computer version" }
-    $latestPath = Join-Path $temporaryDirectory "latest"
-    Get-CoforgeObject -Uri "$feedUrl/latest" -OutFile $latestPath -MaxBytes $maxPointerBytes
-    # Get-Content -Raw on a zero-byte file returns $null on Windows PowerShell 5.1, and $null has
-    # no .Trim() method - the [string] cast turns that into an empty string, matching how
-    # is_valid_version("") in install.sh already fails closed on an empty body instead of
-    # erroring out with an unrelated method-not-found exception.
-    $latestPointer = ([string](Get-Content -Raw -LiteralPath $latestPath)).Trim()
-    Remove-Item -LiteralPath $latestPath
-    if ($latestPointer -eq "latest" -or -not (Test-CoforgeVersion $latestPointer)) {
-      throw "install.ps1: the latest pointer did not return a valid version"
+  # -PrepareDirectory and -ResolveOnly are the Computer's own calls (installation-source.ts and
+  # installer-launch.ts in release/). A plain bootstrap skips this block and installs through
+  # coforge-installer below.
+  if ($PrepareDirectory -or $ResolveOnly) {
+    if ($Version -eq "latest") {
+      if (-not $QuietHeader) { Write-CoforgeStep "Finding the latest CoForge Computer version" }
+      $latestPath = Join-Path $temporaryDirectory "latest"
+      Get-CoforgeObject -Uri "$feedUrl/latest" -OutFile $latestPath -MaxBytes $maxPointerBytes
+      # Get-Content -Raw on a zero-byte file returns $null on Windows PowerShell 5.1, and $null has
+      # no .Trim() method - the [string] cast turns that into an empty string, matching how
+      # is_valid_version("") in install.sh already fails closed on an empty body instead of
+      # erroring out with an unrelated method-not-found exception.
+      $latestPointer = ([string](Get-Content -Raw -LiteralPath $latestPath)).Trim()
+      Remove-Item -LiteralPath $latestPath
+      if ($latestPointer -eq "latest" -or -not (Test-CoforgeVersion $latestPointer)) {
+        throw "install.ps1: the latest pointer did not return a valid version"
+      }
+      $Version = $latestPointer
     }
-    $Version = $latestPointer
+
+    if (-not $QuietHeader) { Write-CoforgeStep "Resolved version: $Version" }
+    if ($ResolveOnly) {
+      Write-Output $Version
+      return
+    }
+
+    # The `installer` phase fetches one object of the installer feed (`<feed>/installer/...`, so the
+    # caller passes that as the feed URL): this target's coforge-installer gzip and nothing else. Its
+    # name is derived from the target here, never taken from a caller, and the caller verifies size
+    # and checksum against the installer manifest it fetched with the `manifest` phase.
+    if ($PreparePhase -eq "installer") {
+      Write-CoforgeStep "Downloading CoForge installer"
+      Get-CoforgeObject -Uri "$feedUrl/$Version/$Target/$installerGzip" -OutFile (Join-Path $temporaryDirectory $installerGzip) -MaxBytes $maxBinaryBytes -Binary
+      return
+    }
+
+    $manifestPath = Join-Path $temporaryDirectory "manifest.json"
+    if ($PreparePhase -ne "artifact") {
+      Get-CoforgeObject -Uri "$feedUrl/$Version/manifest.json" -OutFile $manifestPath -MaxBytes $maxManifestBytes
+    }
+    if ($PreparePhase -eq "manifest") { return }
+    $compressedPath = Join-Path $temporaryDirectory "coforge-computer.gz"
+    Write-CoforgeStep "Downloading CoForge Computer"
+    Get-CoforgeObject -Uri "$feedUrl/$Version/$Target/coforge-computer.gz" -OutFile $compressedPath -MaxBytes $maxBinaryBytes -Binary
+    # Pi's image library is part of the Computer download step and gets no progress line of its
+    # own; only a failed fetch mentions it.
+    $wasmPath = Join-Path $temporaryDirectory "photon_rs_bg.wasm"
+    Get-CoforgeObject -Uri "$feedUrl/$Version/photon_rs_bg.wasm" -OutFile $wasmPath -MaxBytes $maxWasmBytes
+    [System.IO.File]::WriteAllText((Join-Path $temporaryDirectory "version"), "$Version`n", [System.Text.UTF8Encoding]::new($false))
+    if ($PrepareDirectory) { return }
   }
 
-  if (-not $QuietHeader) { Write-CoforgeStep "Resolved version: $Version" }
-  if ($ResolveOnly) {
-    Write-Output $Version
-    return
+  # Bootstrap: the installer feed (<feed>/installer) names its current version in one pointer, and
+  # each target has one installer gzip and a sidecar checksum. The installer resolves the Computer
+  # version itself, so this script fetches no Computer object.
+  Write-CoforgeStep "Finding the CoForge installer"
+  $installerPointerPath = Join-Path $temporaryDirectory "installer-latest"
+  Get-CoforgeObject -Uri "$feedUrl/installer/latest" -OutFile $installerPointerPath -MaxBytes $maxPointerBytes
+  $installerVersion = ([string](Get-Content -Raw -LiteralPath $installerPointerPath)).Trim()
+  Remove-Item -LiteralPath $installerPointerPath
+  if ($installerVersion -eq "latest" -or -not (Test-CoforgeVersion $installerVersion)) {
+    throw "install.ps1: the installer pointer did not return a valid version"
   }
 
-  $manifestPath = Join-Path $temporaryDirectory "manifest.json"
-  if ($PreparePhase -ne "artifact") {
-    Get-CoforgeObject -Uri "$feedUrl/$Version/manifest.json" -OutFile $manifestPath -MaxBytes $maxManifestBytes
-  }
-  if ($PreparePhase -eq "manifest") { return }
-  $compressedPath = Join-Path $temporaryDirectory "coforge-computer.gz"
-  Write-CoforgeStep "Downloading CoForge Computer"
-  Get-CoforgeObject -Uri "$feedUrl/$Version/$Target/coforge-computer.gz" -OutFile $compressedPath -MaxBytes $maxBinaryBytes -Binary
-  # Pi's image library is part of the Computer download step and gets no progress line of its
-  # own; only a failed fetch mentions it.
-  $wasmPath = Join-Path $temporaryDirectory "photon_rs_bg.wasm"
-  Get-CoforgeObject -Uri "$feedUrl/$Version/photon_rs_bg.wasm" -OutFile $wasmPath -MaxBytes $maxWasmBytes
-  [System.IO.File]::WriteAllText((Join-Path $temporaryDirectory "version"), "$Version`n", [System.Text.UTF8Encoding]::new($false))
-  if ($PrepareDirectory) { return }
+  $installerUrl = "$feedUrl/installer/$installerVersion/$Target"
+  $installerGzipPath = Join-Path $temporaryDirectory $installerGzip
+  Write-CoforgeStep "Downloading CoForge installer"
+  Get-CoforgeObject -Uri "$installerUrl/$installerGzip" -OutFile $installerGzipPath -MaxBytes $maxBinaryBytes -Binary
 
-  # Bootstrap checks the sidecar before executing code; the local installer parses the manifest.
-  $sidecarPath = Join-Path $temporaryDirectory "coforge-computer.sha256"
-  Get-CoforgeObject -Uri "$feedUrl/$Version/$target/coforge-computer.sha256" -OutFile $sidecarPath -MaxBytes $maxPointerBytes
+  # Bootstrap checks the sidecar before executing code.
+  $sidecarPath = Join-Path $temporaryDirectory "coforge-installer.sha256"
+  Get-CoforgeObject -Uri "$installerUrl/coforge-installer.sha256" -OutFile $sidecarPath -MaxBytes $maxPointerBytes
   $expectedSha256 = ([string](Get-Content -Raw -LiteralPath $sidecarPath)).Trim()
   # `-cnotmatch`, not the case-insensitive default `-notmatch`: Get-FileHash below always returns
   # lowercase hex (`.ToLowerInvariant()`), so a sidecar carrying uppercase hex would pass this
   # check under case-insensitive matching and then fail the checksum comparison instead - the
-  # wrong error, for the wrong reason. install.sh's `case` pattern is inherently
-  # case-sensitive, so this keeps both scripts equally strict about the sidecar's format.
+  # wrong error, for the wrong reason. install.sh's `case` pattern is inherently case-sensitive,
+  # so this keeps both scripts equally strict about the sidecar's format.
   if ($expectedSha256 -cnotmatch '^[a-f0-9]{64}\z') {
-    throw "install.ps1: sidecar checksum for $target is missing or malformed"
+    throw "install.ps1: sidecar checksum for $Target is missing or malformed"
   }
 
-  $computerPath = Join-Path $temporaryDirectory "coforge-computer.exe"
-  Expand-CoforgeGzip -InputFile $compressedPath -OutFile $computerPath -MaxBytes $maxBinaryBytes
-  $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $computerPath).Hash.ToLowerInvariant()
+  $installerPath = Join-Path $temporaryDirectory "coforge-installer.exe"
+  Expand-CoforgeGzip -InputFile $installerGzipPath -OutFile $installerPath -MaxBytes $maxBinaryBytes
+  $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installerPath).Hash.ToLowerInvariant()
   if ($actualSha256 -ne $expectedSha256) {
-    throw "install.ps1: downloaded binary failed its checksum check"
+    throw "install.ps1: downloaded installer failed its checksum check"
   }
 
-  & $computerPath __install-local --version $Version --directory $temporaryDirectory
+  & $installerPath install --version $Version
   # Not `exit`: the documented entry point is `irm ... | iex`, which runs this script inside the
   # user's own PowerShell process, where a top-level `exit` terminates their session - closing the
   # window on success just as readily as on failure. Throwing surfaces the failure through the
   # same path as every other error above and leaves the host alone. Running in-process is also
   # what lets the PATH work below take effect in the very session that ran the installer.
   if ($LASTEXITCODE -ne 0) {
-    throw "install.ps1: CoForge Computer $Version install exited with code $LASTEXITCODE"
+    throw "install.ps1: coforge-installer exited with code $LASTEXITCODE"
   }
+  # The installer resolves "latest" itself and this script never learns the concrete version, so
+  # the messages below name the version only when the caller asked for one.
+  $computerLabel = if ($Version -eq "latest") { "CoForge Computer" } else { "CoForge Computer $Version" }
 
   # Mirrors packages/computer/src/paths.ts:resolveComputerBinaryDirectory for win32, which in turn
   # takes its home directory the way packages/computer/src/cli.ts does - HOME first, USERPROFILE
@@ -233,7 +271,7 @@ try {
   # PATHEXT is what makes it invocable as a bare `coforge-computer` from both cmd and PowerShell.
   $shimPath = Join-Path $binDirectory "coforge-computer.cmd"
   if (-not (Test-Path -LiteralPath $shimPath)) {
-    throw "install.ps1: CoForge Computer $Version was installed, but no shim appeared at $shimPath - that version predates this installer. Re-run this installer once a newer version is published."
+    throw "install.ps1: $computerLabel was installed, but no shim appeared at $shimPath - that version predates this installer. Re-run this installer once a newer version is published."
   }
 
   # Persist to the current user's environment only - never HKLM or the "Machine" scope, which
@@ -279,7 +317,7 @@ try {
   if (-not $alreadyInSession) { $env:Path = "$binDirectory;$env:Path" }
 
   # Keep completion guidance out of the script's pipeline return value.
-  Write-Host "   CoForge Computer $Version installed and ready to use"
+  Write-Host "   $computerLabel installed and ready to use"
   Write-Host "Next: coforge-computer setup --workspace <slug>"
 }
 finally {

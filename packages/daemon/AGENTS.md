@@ -36,6 +36,9 @@ Directories with their own `AGENTS.md` add rules for that directory only.
   use LogTape category loggers directly, without a logger facade.
 - Keep OS-specific APIs in `platform/` (and the platform instance adapters in
   `supervisor/`); do not leak them into domain or application modules.
+- `platform/computer-install-directory.ts` is the one Computer install-root resolver, and
+  `platform/upgrade-receipt-file.ts` the one reader of `upgrade-results/<id>.result.json`
+  (size cap, accepted shapes, held-to-failed). Receipt, journal, and sweep paths go through them.
 
 ## Naming and abstraction
 

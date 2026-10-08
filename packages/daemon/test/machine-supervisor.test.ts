@@ -7,10 +7,7 @@ import {
   type PendingUpgradeSettler,
 } from "#src/supervisor/machine-supervisor";
 import { WorkspaceParkedError } from "#src/supervisor/workspace-health-journal";
-import {
-  UpgradeLaunchesPausedError,
-  UpgradeOperationPendingError,
-} from "#src/supervisor/upgrade-error";
+import { UpgradeOperationPendingError } from "#src/supervisor/upgrade-error";
 
 const NOW = 1_700_000_000_000;
 
@@ -37,36 +34,6 @@ function upgradeFixture(
   );
   return { state, supervisor, operations: () => state.saved[0]?.upgradeOperations };
 }
-
-test("paused recovery loads bindings without starting them, then resume reconciles the set", async () => {
-  const calls: string[] = [];
-  const bindings: ManagedBinding[] = [
-    { workspaceId: "running", computerId: "c", workspaceRoot: "/running", enabled: true },
-    { workspaceId: "stopped", computerId: "c", workspaceRoot: "/stopped", enabled: false },
-  ];
-  const supervisor = new MachineSupervisor(
-    { load: async () => structuredClone(bindings), save: async () => {} },
-    {
-      start: async (binding) => {
-        calls.push(`start:${binding.workspaceId}`);
-        return `instance:${binding.workspaceId}`;
-      },
-      stop: async (binding) => {
-        calls.push(`stop:${binding.workspaceId}`);
-      },
-      instance: async () => null,
-    },
-  );
-
-  await supervisor.recover({ paused: true });
-  expect(calls).toEqual([]);
-  await expect(
-    supervisor.configure({ workspaceId: "new", computerId: "c", workspaceRoot: "/new" }),
-  ).rejects.toBeInstanceOf(UpgradeLaunchesPausedError);
-
-  await supervisor.resume();
-  expect(calls).toEqual(["start:running", "stop:stopped"]);
-});
 
 test("reconcile restarts an enabled Workspace whose OS instance went inactive", async () => {
   let live: string | null = "instance-1";
@@ -102,27 +69,6 @@ test("reconcile restarts an enabled Workspace whose OS instance went inactive", 
   expect(live!).toBe("instance-2");
 });
 
-test("reconcile is a no-op while paused for upgrade", async () => {
-  const starts: string[] = [];
-  const supervisor = new MachineSupervisor(
-    {
-      load: async () => [{ workspaceId: "a", computerId: "c", workspaceRoot: "/a", enabled: true }],
-      save: async () => {},
-    },
-    {
-      start: async () => {
-        starts.push("start");
-        return "instance";
-      },
-      stop: async () => {},
-      instance: async () => null,
-    },
-  );
-  await supervisor.recover({ paused: true });
-  await supervisor.reconcile();
-  expect(starts).toEqual([]);
-});
-
 test("only one upgrade operation may be pending, and a replay is not a second launch", async () => {
   const { supervisor, operations } = upgradeFixture();
   await supervisor.recover();
@@ -152,18 +98,6 @@ test("recordUpgrade's pending refusal is a typed error carrying UPGRADE_OPERATIO
   expect((rejection as UpgradeOperationPendingError).code).toBe(
     UPGRADE_ERROR_CODE.OPERATION_PENDING,
   );
-});
-
-test("configure's pause refusal is a typed error carrying UPGRADE_LAUNCHES_PAUSED", async () => {
-  const { supervisor } = upgradeFixture();
-  await supervisor.recover();
-  await supervisor.pause();
-
-  const rejection = await supervisor
-    .configure({ workspaceId: "b", computerId: "c", workspaceRoot: "/b" })
-    .catch((error: unknown) => error);
-  expect(rejection).toBeInstanceOf(UpgradeLaunchesPausedError);
-  expect((rejection as UpgradeLaunchesPausedError).code).toBe(UPGRADE_ERROR_CODE.LAUNCHES_PAUSED);
 });
 
 test("recordUpgrade settles an already-receipted pending operation instead of refusing, then accepts the new request", async () => {
@@ -1279,21 +1213,6 @@ test("a stop marked while a restart is under way records that restart cancelled 
   await expect(restart).rejects.toThrow("superseded by a stop");
   await fixture.supervisor.snapshot();
   expect(fixture.saved()[0]?.restartResults).toHaveLength(1);
-});
-
-test("a pause takes effect at once instead of waiting behind a start under way; work queued behind it is refused", async () => {
-  const fixture = gatedFixture([binding("a", false), binding("b", false)]);
-  await fixture.supervisor.recover();
-  const startA = fixture.supervisor.command("start", "a");
-  const startB = fixture.supervisor.command("start", "b").catch((error: unknown) => error);
-  await untilStarted(fixture);
-
-  await fixture.supervisor.pause();
-
-  fixture.open();
-  await expect(startA).resolves.toEqual({ started: ["a"], pending: [] });
-  expect(await startB).toBeInstanceOf(UpgradeLaunchesPausedError);
-  expect(fixture.starts).toEqual(["a"]);
 });
 
 test("configure answers by its deadline while its start is still under way, and the start finishes", async () => {

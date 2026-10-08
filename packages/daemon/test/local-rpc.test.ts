@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  RUNNER_HOLD_REASONS,
   decodeLocalRpcResponse,
   decodeDaemonRuntimeConfigureResponse,
   encodeDaemonCommandRequest,
@@ -580,7 +581,7 @@ test("daemon:hold and daemon:release round-trip the busy set over the local sock
     socketPath,
   });
 
-  const held = await launcher.hold("hold", "upgrade");
+  const held = await launcher.hold("hold", RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   expect(held.accepted).toBe(true);
   expect(held.held).toBe(true);
   expect(held.busyAgents).toEqual([
@@ -595,8 +596,8 @@ test("daemon:hold and daemon:release round-trip the busy set over the local sock
 
   // Idempotent at the wire level too: a second hold is just another busy-set read, which is what
   // the upgrade's quiescence poll relies on.
-  await launcher.hold("hold", "upgrade");
-  expect(holds).toEqual(["upgrade", "upgrade"]);
+  await launcher.hold("hold", RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
+  expect(holds).toEqual(["restart", "restart"]);
 
   const released = await launcher.hold("release");
   expect(released.accepted).toBe(true);
@@ -621,9 +622,37 @@ test("a daemon that cannot hold answers accepted:false rather than blocking an u
     socketPath,
   });
 
-  const response = await launcher.hold("hold");
+  const response = await launcher.hold("hold", RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   expect(response.accepted).toBe(false);
   expect(response.busyAgents).toEqual([]);
+});
+
+test("a hold that names no reason is refused, never engaged as some default reason", async () => {
+  const socketPath = join(tmpdir(), `coforge-${crypto.randomUUID()}.sock`);
+  const holds: string[] = [];
+  servers.push(
+    await startDaemonLocalRpcServer({
+      socketPath,
+      serverUrl: launcherEnvironment.serverUrl,
+      validateCredential: () => true,
+      credentials: new InMemoryDaemonCredentialStore(),
+      runtime: {
+        hold: async (reason) => {
+          holds.push(reason);
+          return { held: true, busyAgents: [], unreachableWorkspaceIds: [] };
+        },
+        release: async () => ({ held: false, busyAgents: [], unreachableWorkspaceIds: [] }),
+      },
+    }),
+  );
+  const launcher = new LocalDaemonLauncher({
+    ...launcherEnvironment,
+    executablePath: "/unused",
+    socketPath,
+  });
+
+  await expect(launcher.hold("hold")).rejects.toThrow();
+  expect(holds).toEqual([]);
 });
 
 test.each(["superseded", "failed"] as const)(

@@ -15,10 +15,8 @@ test("a remote upgrade operation is built from argv alone", () => {
     ]),
   ).toEqual({
     requestId: id,
-    operation: "upgrade",
     selection: "0.1.0-dev.29",
     origin: "remote",
-    quiet: true,
   });
 });
 

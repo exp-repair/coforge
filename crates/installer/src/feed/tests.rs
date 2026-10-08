@@ -16,7 +16,10 @@ fn serve(release: &Release) -> Server {
 }
 
 fn feed(server: &Server) -> Feed {
-    Feed::new(&server.base_url(), crate::fetch::agent(false))
+    Feed::new(
+        &server.base_url(),
+        crate::fetch::agent(crate::fetch::Transport::LoopbackHttp),
+    )
 }
 
 fn manifest_of(release: &Release) -> ReleaseManifest {
@@ -156,7 +159,7 @@ fn objects_are_requested_below_the_feed_url_whatever_its_trailing_slashes() {
     for base in ["/feed", "/feed/", "/feed//"] {
         let feed = Feed::new(
             &format!("{}{base}", server.base_url()),
-            crate::fetch::agent(false),
+            crate::fetch::agent(crate::fetch::Transport::LoopbackHttp),
         );
         assert_eq!(feed.resolve_version("latest").unwrap(), VERSION, "{base}");
     }

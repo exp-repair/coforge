@@ -3,14 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { UPGRADE_RECEIPT_MAX_BYTES } from "@lrm/coforge-sdk/internal/upgrade-receipt";
 import {
-  computerUpgradeResultPath,
   readComputerUpgradeReceipt,
   sweepComputerUpgradeReceipts,
   watchComputerUpgradeReceipt,
   UPGRADE_EXPIRED_WITHOUT_RECEIPT,
-  UPGRADE_RECEIPT_MAX_BYTES,
 } from "#src/platform/computer-upgrade-receipts";
+import { resolveComputerInstallDirectory } from "#src/platform/computer-install-directory";
+import { upgradeReceiptPath } from "#src/platform/upgrade-receipt-file";
 import {
   MachineSupervisor,
   UPGRADE_OPERATION_PENDING_TTL_MS,
@@ -21,23 +22,39 @@ async function home() {
   return await mkdtemp(join(realpathSync(tmpdir()), "coforge-upgrade-receipt-"));
 }
 
+/** This machine's install root for a test home directory, where the receipts are read from. */
+function installRootOf(homeDirectory: string): string {
+  return resolveComputerInstallDirectory({ platform: process.platform, homeDirectory });
+}
+
 async function writeReceipt(homeDirectory: string, requestId: string, value: unknown) {
-  await Bun.write(computerUpgradeResultPath(requestId, homeDirectory), JSON.stringify(value));
+  await Bun.write(
+    upgradeReceiptPath(installRootOf(homeDirectory), requestId),
+    JSON.stringify(value),
+  );
 }
 
 test("a pending operation has no receipt until its job writes one", async () => {
   const homeDirectory = await home();
   try {
-    expect(await readComputerUpgradeReceipt("absent", { homeDirectory })).toBeUndefined();
-    await writeReceipt(homeDirectory, "request-a", {
+    expect(
+      await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000001", {
+        installRoot: installRootOf(homeDirectory),
+      }),
+    ).toBeUndefined();
+    await writeReceipt(homeDirectory, "00000000-0000-4000-8000-000000000006", {
       schema_version: 1,
-      request_id: "request-a",
+      request_id: "00000000-0000-4000-8000-000000000006",
       operation: "upgrade",
       status: "succeeded",
       version: "0.1.0-dev.29",
     });
-    expect(await readComputerUpgradeReceipt("request-a", { homeDirectory })).toMatchObject({
-      requestId: "request-a",
+    expect(
+      await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000006", {
+        installRoot: installRootOf(homeDirectory),
+      }),
+    ).toMatchObject({
+      requestId: "00000000-0000-4000-8000-000000000006",
       status: "succeeded",
       version: "0.1.0-dev.29",
     });
@@ -49,16 +66,35 @@ test("a pending operation has no receipt until its job writes one", async () => 
 test("a receipt that names another operation, or no known status, is not evidence", async () => {
   const homeDirectory = await home();
   try {
-    await writeReceipt(homeDirectory, "request-a", {
+    await writeReceipt(homeDirectory, "00000000-0000-4000-8000-000000000006", {
       schema_version: 1,
-      request_id: "someone-else",
+      request_id: "00000000-0000-4000-8000-000000000009",
+      operation: "upgrade",
       status: "succeeded",
     });
-    expect(await readComputerUpgradeReceipt("request-a", { homeDirectory })).toBeUndefined();
-    await writeReceipt(homeDirectory, "request-b", { schema_version: 1, status: "running" });
-    expect(await readComputerUpgradeReceipt("request-b", { homeDirectory })).toBeUndefined();
-    await Bun.write(computerUpgradeResultPath("request-c", homeDirectory), "{ not json");
-    expect(await readComputerUpgradeReceipt("request-c", { homeDirectory })).toBeUndefined();
+    expect(
+      await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000006", {
+        installRoot: installRootOf(homeDirectory),
+      }),
+    ).toBeUndefined();
+    await writeReceipt(homeDirectory, "00000000-0000-4000-8000-000000000007", {
+      schema_version: 1,
+      status: "running",
+    });
+    expect(
+      await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000007", {
+        installRoot: installRootOf(homeDirectory),
+      }),
+    ).toBeUndefined();
+    await Bun.write(
+      upgradeReceiptPath(installRootOf(homeDirectory), "00000000-0000-4000-8000-000000000008"),
+      "{ not json",
+    );
+    expect(
+      await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000008", {
+        installRoot: installRootOf(homeDirectory),
+      }),
+    ).toBeUndefined();
   } finally {
     await rm(homeDirectory, { recursive: true, force: true });
   }
@@ -74,6 +110,8 @@ function heldReceipt(requestId: string, fields: Record<string, unknown> = {}) {
     status: "held",
     error: HELD_REASON,
     exit_code: 2,
+    protocol: "coforge-installer/v1",
+    installer_version: "0.1.0-dev.29",
     ...fields,
   };
 }
@@ -81,18 +119,34 @@ function heldReceipt(requestId: string, fields: Record<string, unknown> = {}) {
 test("a held receipt settles the operation as failed, with the installer's reason", async () => {
   const homeDirectory = await home();
   try {
-    await writeReceipt(homeDirectory, "request-a", heldReceipt("request-a"));
-    const receipt = await readComputerUpgradeReceipt("request-a", { homeDirectory });
-    expect(receipt).toMatchObject({ requestId: "request-a", status: "failed", error: HELD_REASON });
+    await writeReceipt(
+      homeDirectory,
+      "00000000-0000-4000-8000-000000000006",
+      heldReceipt("00000000-0000-4000-8000-000000000006"),
+    );
+    const receipt = await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000006", {
+      installRoot: installRootOf(homeDirectory),
+    });
+    expect(receipt).toMatchObject({
+      requestId: "00000000-0000-4000-8000-000000000006",
+      status: "failed",
+      error: HELD_REASON,
+    });
     expect(receipt).not.toHaveProperty("errorCode");
 
     await writeReceipt(
       homeDirectory,
-      "request-b",
-      heldReceipt("request-b", { errorCode: "UPGRADE_INSTALLER_INCOMPATIBLE" }),
+      "00000000-0000-4000-8000-000000000007",
+      heldReceipt("00000000-0000-4000-8000-000000000007", {
+        errorCode: "UPGRADE_INSTALLER_INCOMPATIBLE",
+      }),
     );
-    expect(await readComputerUpgradeReceipt("request-b", { homeDirectory })).toMatchObject({
-      requestId: "request-b",
+    expect(
+      await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000007", {
+        installRoot: installRootOf(homeDirectory),
+      }),
+    ).toMatchObject({
+      requestId: "00000000-0000-4000-8000-000000000007",
       status: "failed",
       error: HELD_REASON,
       errorCode: "UPGRADE_INSTALLER_INCOMPATIBLE",
@@ -105,18 +159,24 @@ test("a held receipt settles the operation as failed, with the installer's reaso
 test("a pending operation whose receipt is held is settled at once, not left to expire", async () => {
   const homeDirectory = await home();
   try {
-    await writeReceipt(homeDirectory, "request-a", heldReceipt("request-a"));
+    await writeReceipt(
+      homeDirectory,
+      "00000000-0000-4000-8000-000000000006",
+      heldReceipt("00000000-0000-4000-8000-000000000006"),
+    );
     const settled: { requestId: string; status: string; error?: string }[] = [];
     const resolved = await sweepComputerUpgradeReceipts(
-      [{ workspaceId: "a", requestId: "request-a", requestedAt: 0 }],
+      [{ workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000006", requestedAt: 0 }],
       async (_workspaceId, requestId, receipt) => {
         settled.push({ requestId, status: receipt.status, error: receipt.error });
       },
-      { homeDirectory, now: () => 1, pendingTtlMs: 30 * 60_000 },
+      { installRoot: installRootOf(homeDirectory), now: () => 1, pendingTtlMs: 30 * 60_000 },
     );
 
     expect(resolved).toBe(1);
-    expect(settled).toEqual([{ requestId: "request-a", status: "failed", error: HELD_REASON }]);
+    expect(settled).toEqual([
+      { requestId: "00000000-0000-4000-8000-000000000006", status: "failed", error: HELD_REASON },
+    ]);
   } finally {
     await rm(homeDirectory, { recursive: true, force: true });
   }
@@ -128,7 +188,7 @@ test("a pending operation whose receipt is held is settled at once, not left to 
 function receiptOfSize(bytes: number): string {
   const receipt = {
     schema_version: 1,
-    request_id: "request-a",
+    request_id: "00000000-0000-4000-8000-000000000006",
     operation: "upgrade",
     status: "failed",
     error: "",
@@ -141,14 +201,25 @@ test("a receipt is read up to 64 KiB and ignored beyond it", async () => {
   expect(UPGRADE_RECEIPT_MAX_BYTES).toBe(65_536);
   const homeDirectory = await home();
   try {
-    const path = computerUpgradeResultPath("request-a", homeDirectory);
+    const path = upgradeReceiptPath(
+      installRootOf(homeDirectory),
+      "00000000-0000-4000-8000-000000000006",
+    );
     await Bun.write(path, receiptOfSize(UPGRADE_RECEIPT_MAX_BYTES));
-    expect(await readComputerUpgradeReceipt("request-a", { homeDirectory })).toMatchObject({
-      requestId: "request-a",
+    expect(
+      await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000006", {
+        installRoot: installRootOf(homeDirectory),
+      }),
+    ).toMatchObject({
+      requestId: "00000000-0000-4000-8000-000000000006",
       status: "failed",
     });
     await Bun.write(path, receiptOfSize(UPGRADE_RECEIPT_MAX_BYTES + 1));
-    expect(await readComputerUpgradeReceipt("request-a", { homeDirectory })).toBeUndefined();
+    expect(
+      await readComputerUpgradeReceipt("00000000-0000-4000-8000-000000000006", {
+        installRoot: installRootOf(homeDirectory),
+      }),
+    ).toBeUndefined();
   } finally {
     await rm(homeDirectory, { recursive: true, force: true });
   }
@@ -157,26 +228,29 @@ test("a receipt is read up to 64 KiB and ignored beyond it", async () => {
 test("the sweep settles only the pending operations whose job already finished", async () => {
   const homeDirectory = await home();
   try {
-    await writeReceipt(homeDirectory, "done", {
+    await writeReceipt(homeDirectory, "00000000-0000-4000-8000-000000000002", {
       schema_version: 1,
-      request_id: "done",
+      request_id: "00000000-0000-4000-8000-000000000002",
+      operation: "upgrade",
       status: "failed",
       error: "candidate failed",
     });
     const settled: { workspaceId: string; requestId: string; status: string }[] = [];
     const resolved = await sweepComputerUpgradeReceipts(
       [
-        { workspaceId: "a", requestId: "done", requestedAt: 0 },
+        { workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000002", requestedAt: 0 },
         { workspaceId: "a", requestId: "still-running", requestedAt: 0 },
       ],
       async (workspaceId, requestId, receipt) => {
         settled.push({ workspaceId, requestId, status: receipt.status });
       },
-      { homeDirectory },
+      { installRoot: installRootOf(homeDirectory) },
     );
 
     expect(resolved).toBe(1);
-    expect(settled).toEqual([{ workspaceId: "a", requestId: "done", status: "failed" }]);
+    expect(settled).toEqual([
+      { workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000002", status: "failed" },
+    ]);
   } finally {
     await rm(homeDirectory, { recursive: true, force: true });
   }
@@ -193,7 +267,7 @@ test("a pending operation without a receipt expires once, and only past its TTL"
         async (workspaceId, _requestId, receipt) => {
           expired.push({ workspaceId, ...receipt });
         },
-        { homeDirectory, now: () => now, pendingTtlMs: 5 * 60_000 },
+        { installRoot: installRootOf(homeDirectory), now: () => now, pendingTtlMs: 5 * 60_000 },
       );
 
     // Still inside the window: the job may simply be slow, so nothing is concluded.
@@ -251,7 +325,11 @@ test("an expired operation stops blocking the next request; a live one still blo
           at: receipt.at,
           ...(receipt.error ? { error: receipt.error } : {}),
         }),
-      { homeDirectory, now: () => now, pendingTtlMs: UPGRADE_OPERATION_PENDING_TTL_MS },
+      {
+        installRoot: installRootOf(homeDirectory),
+        now: () => now,
+        pendingTtlMs: UPGRADE_OPERATION_PENDING_TTL_MS,
+      },
     );
 
   try {
@@ -294,33 +372,40 @@ test("the continuous post-startup watch settles a receipt the startup sweep miss
   );
   try {
     await machine.recover();
-    expect(await machine.recordUpgrade("a", "req-1", "2.0.0")).toBe(true);
+    expect(await machine.recordUpgrade("a", "00000000-0000-4000-8000-000000000004", "2.0.0")).toBe(
+      true,
+    );
 
     // "Coordinator start" sweep: the job has not written its receipt yet, so nothing settles.
     const startupSweepResolved = await sweepComputerUpgradeReceipts(
-      [{ workspaceId: "a", requestId: "req-1", requestedAt }],
+      [{ workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000004", requestedAt }],
       (workspaceId, requestId, receipt) =>
         machine.completeUpgrade(workspaceId, requestId, {
           status: receipt.status,
           at: receipt.at,
           ...(receipt.version ? { version: receipt.version } : {}),
         }),
-      { homeDirectory, now: () => requestedAt, pendingTtlMs: UPGRADE_OPERATION_PENDING_TTL_MS },
+      {
+        installRoot: installRootOf(homeDirectory),
+        now: () => requestedAt,
+        pendingTtlMs: UPGRADE_OPERATION_PENDING_TTL_MS,
+      },
     );
     expect(startupSweepResolved).toBe(0);
     expect(saved[0]?.upgradeOperations?.[0]?.state).toBe("pending");
 
     // The job finishes after the startup sweep already ran, as it does in the field.
-    await writeReceipt(homeDirectory, "req-1", {
+    await writeReceipt(homeDirectory, "00000000-0000-4000-8000-000000000004", {
       schema_version: 1,
-      request_id: "req-1",
+      request_id: "00000000-0000-4000-8000-000000000004",
+      operation: "upgrade",
       status: "succeeded",
       version: "2.0.0",
     });
 
     // The continuous watch, still running in this same process, finds it on its next check.
     await watchComputerUpgradeReceipt(
-      { workspaceId: "a", requestId: "req-1", requestedAt },
+      { workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000004", requestedAt },
       (workspaceId, requestId, receipt) =>
         machine.completeUpgrade(workspaceId, requestId, {
           status: receipt.status,
@@ -331,17 +416,21 @@ test("the continuous post-startup watch settles a receipt the startup sweep miss
         signal: new AbortController().signal,
         pollMs: 5,
         ttlMs: UPGRADE_OPERATION_PENDING_TTL_MS,
-        homeDirectory,
+        installRoot: installRootOf(homeDirectory),
         now: () => requestedAt,
       },
     );
 
     expect(saved[0]?.upgradeOperations?.[0]?.state).toBe("succeeded");
-    expect(await machine.acknowledgeUpgrade("a", "req-1")).toBe(true);
+    expect(await machine.acknowledgeUpgrade("a", "00000000-0000-4000-8000-000000000004")).toBe(
+      true,
+    );
     expect(saved[0]?.upgradeOperations?.[0]?.state).toBe("acknowledged");
 
     // Settled without another restart: a second upgrade request is now accepted, not refused.
-    expect(await machine.recordUpgrade("a", "req-2", "2.0.1")).toBe(true);
+    expect(await machine.recordUpgrade("a", "00000000-0000-4000-8000-000000000005", "2.0.1")).toBe(
+      true,
+    );
   } finally {
     await rm(homeDirectory, { recursive: true, force: true });
   }
@@ -354,7 +443,7 @@ describe("watchComputerUpgradeReceipt", () => {
       const settled: { workspaceId: string; requestId: string; status: string }[] = [];
       let polls = 0;
       await watchComputerUpgradeReceipt(
-        { workspaceId: "a", requestId: "request-a", requestedAt: 0 },
+        { workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000006", requestedAt: 0 },
         async (workspaceId, requestId, receipt) => {
           settled.push({ workspaceId, requestId, status: receipt.status });
         },
@@ -362,14 +451,15 @@ describe("watchComputerUpgradeReceipt", () => {
           signal: new AbortController().signal,
           pollMs: 10,
           ttlMs: 60_000,
-          homeDirectory,
+          installRoot: installRootOf(homeDirectory),
           now: () => 0,
           sleep: async () => {
             polls += 1;
             // The job only leaves its receipt after the first poll finds nothing.
-            await writeReceipt(homeDirectory, "request-a", {
+            await writeReceipt(homeDirectory, "00000000-0000-4000-8000-000000000006", {
               schema_version: 1,
-              request_id: "request-a",
+              request_id: "00000000-0000-4000-8000-000000000006",
+              operation: "upgrade",
               status: "succeeded",
               version: "1.2.3",
             });
@@ -377,7 +467,13 @@ describe("watchComputerUpgradeReceipt", () => {
         },
       );
       expect(polls).toBe(1);
-      expect(settled).toEqual([{ workspaceId: "a", requestId: "request-a", status: "succeeded" }]);
+      expect(settled).toEqual([
+        {
+          workspaceId: "a",
+          requestId: "00000000-0000-4000-8000-000000000006",
+          status: "succeeded",
+        },
+      ]);
     } finally {
       await rm(homeDirectory, { recursive: true, force: true });
     }
@@ -398,7 +494,7 @@ describe("watchComputerUpgradeReceipt", () => {
           signal: new AbortController().signal,
           pollMs: 10,
           ttlMs: 30,
-          homeDirectory,
+          installRoot: installRootOf(homeDirectory),
           now: () => now,
           sleep: async () => {
             polls += 1;
@@ -429,7 +525,7 @@ describe("watchComputerUpgradeReceipt", () => {
       let sleepCalls = 0;
       const settled: unknown[] = [];
       await watchComputerUpgradeReceipt(
-        { workspaceId: "a", requestId: "never", requestedAt: 0 },
+        { workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000003", requestedAt: 0 },
         async (...args) => {
           settled.push(args);
         },
@@ -438,7 +534,7 @@ describe("watchComputerUpgradeReceipt", () => {
           pollMs: 10,
           // A TTL this far out proves the abort - not the TTL - is what stopped the watch.
           ttlMs: 10 * 60_000,
-          homeDirectory,
+          installRoot: installRootOf(homeDirectory),
           now: () => 0,
           sleep: async () => {
             sleepCalls += 1;
@@ -456,14 +552,15 @@ describe("watchComputerUpgradeReceipt", () => {
   test("does nothing beyond its first check when the operation already has a receipt", async () => {
     const homeDirectory = await home();
     try {
-      await writeReceipt(homeDirectory, "request-a", {
+      await writeReceipt(homeDirectory, "00000000-0000-4000-8000-000000000006", {
         schema_version: 1,
-        request_id: "request-a",
+        request_id: "00000000-0000-4000-8000-000000000006",
+        operation: "upgrade",
         status: "succeeded",
       });
       const settled: string[] = [];
       await watchComputerUpgradeReceipt(
-        { workspaceId: "a", requestId: "request-a", requestedAt: 0 },
+        { workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000006", requestedAt: 0 },
         async (_workspaceId, requestId) => {
           settled.push(requestId);
         },
@@ -471,13 +568,13 @@ describe("watchComputerUpgradeReceipt", () => {
           signal: new AbortController().signal,
           pollMs: 10,
           ttlMs: 60_000,
-          homeDirectory,
+          installRoot: installRootOf(homeDirectory),
           sleep: async () => {
             throw new Error("should never sleep when a receipt is already available");
           },
         },
       );
-      expect(settled).toEqual(["request-a"]);
+      expect(settled).toEqual(["00000000-0000-4000-8000-000000000006"]);
     } finally {
       await rm(homeDirectory, { recursive: true, force: true });
     }
@@ -496,13 +593,13 @@ describe("watchComputerUpgradeReceipt", () => {
         const controller = new AbortController();
         setTimeout(() => controller.abort(), 20);
         await watchComputerUpgradeReceipt(
-          { workspaceId: "a", requestId: "never", requestedAt: 0 },
+          { workspaceId: "a", requestId: "00000000-0000-4000-8000-000000000003", requestedAt: 0 },
           async () => {},
           {
             signal: controller.signal,
             pollMs: 10 * 60_000,
             ttlMs: 10 * 60_000,
-            homeDirectory: ${JSON.stringify(watchHomeDirectory)},
+            installRoot: ${JSON.stringify(resolveComputerInstallDirectory({ platform: process.platform, homeDirectory: watchHomeDirectory }))},
             now: () => 0,
           },
         );

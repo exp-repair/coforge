@@ -43,9 +43,6 @@ if (Bun.argv[2] === "__agent-cli") {
     console.error(error);
     process.exit(1);
   }
-} else if (Bun.argv[2] === "__upgrade") {
-  const { runUpgradeCoordinator } = await import("#src/release/upgrade-coordinator");
-  await runUpgradeCoordinator(Bun.argv.slice(3));
 } else if (Bun.argv[2] === "__lifecycle") {
   const { runLifecycleCommand } = await import("#src/release/lifecycle-command");
   process.exitCode = await runLifecycleCommand(Bun.argv.slice(3));
@@ -54,7 +51,7 @@ if (Bun.argv[2] === "__agent-cli") {
   // environment for its identity.
   const { parseRemoteUpgradeOperation } = await import("#src/release/upgrade-operation");
   const operation = parseRemoteUpgradeOperation(Bun.argv.slice(2));
-  const { runRemoteUpgrade } = await import("./cli");
+  const { runRemoteUpgrade } = await import("#src/release/remote-upgrade");
   await runRemoteUpgrade(operation);
 } else {
   const { runComputer } = await import("./cli");

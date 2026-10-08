@@ -1,15 +1,14 @@
 import { expect, test } from "bun:test";
 
 import {
-  nextUpgradeCommandHint,
   reportSkippedRestarts,
-  reportStoppedWorkspaces,
   runCli,
   type LoginCommand,
   type SetupCommand,
   type StatusCommand,
 } from "#src/cli";
-import { UpgradeCoordinatorError } from "#src/release/upgrade-coordinator";
+import { nextUpgradeCommandHint, reportStoppedWorkspaces } from "#src/cli/upgrade-output";
+import { UpgradeFailedError } from "#src/release/upgrade-receipt";
 import { CliError, loginError, setupError } from "#src/errors";
 import { COMPUTER_CLI_COMMANDS } from "@lrm/coforge-sdk/internal";
 
@@ -47,7 +46,7 @@ test("the upgrade CLI's next-command hint names the real commands for each outco
   expect(nextUpgradeCommandHint(new Error("boom"))).toContain("coforge-computer status");
   expect(nextUpgradeCommandHint(new Error("boom"))).toContain("coforge-computer upgrade");
 
-  const rolledBack = new UpgradeCoordinatorError("candidate failed; previous version restored", {
+  const rolledBack = new UpgradeFailedError("candidate failed; previous version restored", {
     schema_version: 1,
     request_id: "r-1",
     operation: "upgrade",
@@ -57,14 +56,15 @@ test("the upgrade CLI's next-command hint names the real commands for each outco
   expect(nextUpgradeCommandHint(rolledBack)).toContain("coforge-computer logs");
   expect(nextUpgradeCommandHint(rolledBack)).toContain("coforge-computer upgrade");
 
-  const rollbackFailed = new UpgradeCoordinatorError("candidate and rollback failed", {
+  const rollbackFailed = new UpgradeFailedError("candidate and rollback failed", {
     schema_version: 1,
     request_id: "r-2",
     operation: "upgrade",
     status: "failed",
+    errorCode: "UPGRADE_ROLLBACK_FAILED",
   });
+  expect(nextUpgradeCommandHint(rollbackFailed)).toContain("coforge-computer recover");
   expect(nextUpgradeCommandHint(rollbackFailed)).toContain("coforge-computer status");
-  expect(nextUpgradeCommandHint(rollbackFailed)).toContain("coforge-computer logs");
 });
 
 test("login uses the server selected by the compiled build", async () => {
@@ -433,7 +433,9 @@ test.each(["", "n", "no", "maybe", null])(
           async upgrade() {
             upgrades += 1;
           },
-          async rollback() {},
+          async recover() {
+            return 0;
+          },
         },
       },
       {
@@ -453,7 +455,7 @@ test.each(["", "n", "no", "maybe", null])(
 );
 
 test.each(["y", " YES "])(
-  "install and rollback remain unchanged; upgrade requires consent: %s",
+  "install, upgrade, and recover run their own operations; upgrade requires consent: %s",
   async (answer) => {
     const calls: Array<{ operation: string; version?: string }> = [];
     const dependencies = {
@@ -473,8 +475,9 @@ test.each(["y", " YES "])(
         async upgrade(version: string) {
           calls.push({ operation: "upgrade", version });
         },
-        async rollback() {
-          calls.push({ operation: "rollback" });
+        async recover() {
+          calls.push({ operation: "recover" });
+          return 0;
         },
       },
     };
@@ -502,7 +505,7 @@ test.each(["y", " YES "])(
         dependencies,
       ),
     ).resolves.toBe(0);
-    await expect(runCli(["rollback"], dependencies)).resolves.toBe(0);
+    await expect(runCli(["recover"], dependencies)).resolves.toBe(0);
 
     expect(calls).toEqual([
       { operation: "install", version: "latest" },
@@ -511,7 +514,7 @@ test.each(["y", " YES "])(
         operation: "install",
         version: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       },
-      { operation: "rollback" },
+      { operation: "recover" },
     ]);
   },
 );
@@ -700,7 +703,7 @@ test("status is registered, read-only, and forwards --json without touching life
       upgrade: async () => {
         throw new Error("must not be called by status");
       },
-      rollback: async () => {
+      recover: async () => {
         throw new Error("must not be called by status");
       },
     },

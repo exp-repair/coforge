@@ -12,6 +12,7 @@ import type {
 } from "#src/code-agent/contract";
 import { InMemoryDaemonCredentialStore } from "#src/credentials/credential-store";
 import { AgentConsumedSeqStore } from "#src/persistence/agent-consumed-seq-store";
+import { RUNNER_HOLD_REASONS } from "@lrm/coforge-sdk/internal";
 import type { MentionDeliveryEnvelope } from "@lrm/coforge-sdk/internal";
 
 // macOS tmpdir lives under /var, a symlink; the state store rejects linked ancestors.
@@ -485,7 +486,7 @@ test("any other runtime-error backoff refuses a mention as rejected instead of h
 test("a mention behind a runner hold waits unacknowledged and is told once the hold lifts", async () => {
   const { runtime, frames, notices, envelope, deliver, frameSent } = await harness();
   try {
-    runtime.holdRunners("upgrade");
+    runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
     await deliver(1, envelope(1));
     expect(frames).toEqual([]);
 
@@ -563,7 +564,7 @@ test("a mention for an Agent whose server Start is still launching is refused as
 test("a mention a runner hold kept for an Agent whose process exited is refused when the hold lifts", async () => {
   const { runtime, frames, envelope, deliver, exit } = await harness();
   try {
-    runtime.holdRunners("upgrade");
+    runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
     await deliver(1, envelope(1));
     exit();
 

@@ -69,7 +69,6 @@ import { HeldPublications } from "#src/connection/held-publications";
 import {
   type DaemonConnectRejectionReason,
   WORKSPACE_PROTOCOL_MAJOR,
-  RUNNER_HOLD_REASONS,
   type DaemonShutdownReason,
   type RunnerHoldReason,
   AGENT_MESSAGE_REJECT_METHOD,
@@ -641,6 +640,9 @@ export class DaemonRuntime {
       /** The cloud refused this Workspace's running connection for good. Called after every
        * Agent was stopped; the Workspace process then parks itself. */
       connectionRefused?(reason: DaemonConnectRejectionReason): void;
+      /** Whether an installer upgrade is in flight, read when a stop names its reason. Absent
+       * means no upgrade is known to be in flight. */
+      installerJournalExists?(): boolean;
     } = {},
     private readonly computerVersion?: string,
   ) {
@@ -4872,9 +4874,9 @@ export class DaemonRuntime {
 
   /**
    * Stops admitting new Agent turns and reports which Agents are still busy. Idempotent: a repeat
-   * call only re-reads the busy set, which is what the upgrade's quiescence poll relies on.
+   * call only re-reads the busy set, which is what the restart's quiescence poll relies on.
    */
-  holdRunners(reason: RunnerHoldReason = RUNNER_HOLD_REASONS.UPGRADE): BusyAgentReport[] {
+  holdRunners(reason: RunnerHoldReason): BusyAgentReport[] {
     if (this.#runnerHold === undefined)
       logger.info("Runner hold engaged", { event: "daemon.runner_hold.engaged", reason });
     this.#runnerHold = { reason, renewedAtMs: Date.now() };
@@ -4940,7 +4942,11 @@ export class DaemonRuntime {
 
   stop(): Promise<void> {
     if (this.#stopPromise) return this.#stopPromise;
-    const shutdownReason = shutdownReasonForHold(this.#runnerHold, Date.now());
+    const shutdownReason = shutdownReasonForHold(
+      this.#runnerHold,
+      Date.now(),
+      this.lifecycle.installerJournalExists ?? (() => false),
+    );
     this.#runnerHold = undefined;
     // Close every local capability synchronously before any shutdown await.
     this.#stopping = true;

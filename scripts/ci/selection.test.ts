@@ -92,12 +92,19 @@ test("documentation skips application checks, while shared and unknown inputs fa
     "macos-lifecycle",
     "windows-release",
   ]);
+  // The install scripts' own behavior is exercised by packages/computer/test/installer-scripts.test.ts
+  // (install.sh directly, install.ps1 under PowerShell 7), so a change to either runs Computer.
   expect(selectChecks(["scripts/release/install.ps1"], "changes")).toEqual([
+    "computer",
     "release",
     "web",
     "windows-installer",
   ]);
-  expect(selectChecks(["scripts/release/install.sh"], "changes")).toEqual(["release", "web"]);
+  expect(selectChecks(["scripts/release/install.sh"], "changes")).toEqual([
+    "computer",
+    "release",
+    "web",
+  ]);
   for (const path of [
     "crates/installer/src/fetch.rs",
     "Cargo.lock",
@@ -164,6 +171,23 @@ test("manual local publication always validates its complete track, regardless o
     "windows-installer",
     "windows-release",
   ]);
+});
+
+test("manual installer publication validates the installer crate and only the installer crate, regardless of changed files", async () => {
+  expect(selectChecks([], "installer")).toEqual(["installer-crate"]);
+  expect(
+    selectChecks(["apps/web/src/a.tsx", "packages/daemon/src/runtime.ts"], "installer"),
+  ).toEqual(["installer-crate"]);
+  const child = Bun.spawn([process.execPath, "scripts/ci/selection.ts", "installer"], {
+    stdin: new Blob([""]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const output = await new Response(child.stdout).text();
+  expect(await child.exited).toBe(0);
+  expect(output).toContain('checks=["installer-crate"]\n');
+  expect(output).toContain('jobs=["changes","installer-crate"]\n');
+  expect(output).toContain("deploy=false\n");
 });
 
 test("workflow selection accepts NUL-delimited filenames and emits job and matrix outputs", async () => {

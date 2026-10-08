@@ -16,9 +16,10 @@ management commands.
 Normal lifecycle commands request startup through the platform user process
 manager. `foreground` is the explicit public mode for containers and other
 external supervisors; no command implicitly detaches an unmanaged fallback.
-Upgrade/rollback hands off to a short-lived coordinator outside the managed
-service kill scope; foreground upgrades require the external supervisor to stop
-the process first.
+Upgrade runs the separately released `coforge-installer` (`release/upgrade-runner.ts`),
+which owns the transaction, the service stop and start, and the receipt. Computer
+launches it and reads the receipt; it does not roll back itself. `coforge-computer
+recover` runs the installer's `recover`.
 
 ## Module map
 
@@ -26,32 +27,36 @@ Keep `src` organized by responsibility. New code belongs in the owning module;
 do not grow `cli.ts` or `setup/` into an application god module. Paths are
 relative to `src/`.
 
-| Path                                 | Single responsibility                                                         |
-| ------------------------------------ | ----------------------------------------------------------------------------- |
-| `main.ts`                            | Binary entrypoint: dispatches the internal modes or the Computer CLI          |
-| `cli.ts`                             | Commander command tree and thin command actions                               |
-| `cli/`                               | Human output for command results                                              |
-| `errors.ts`                          | Stable user-facing CLI error stages                                           |
-| `terminal-output.ts`                 | Terminal-safe text                                                            |
-| `setup/`                             | Computer setup business flow                                                  |
-| `workspace/`                         | Direct Workspace lookup and slug validation for setup intent                  |
-| `registration/`                      | Computer registration idempotency                                             |
-| `cloud-rpc-transport.ts`             | User-authenticated HTTPS RPC for `workspace:get` and `computer:register`      |
-| `login.ts`, `oauth-device-client.ts` | Device-code authorization                                                     |
-| `credential-store.ts`                | File-backed User credentials                                                  |
-| `machine-id.ts`, `platform.ts`       | Machine identity and platform metadata                                        |
-| `paths.ts`                           | Platform-native state and credential paths                                    |
-| `local-config.ts`                    | Reading and validating the persisted profile                                  |
-| `release-channel.ts`                 | Compiled official feed/server mapping                                         |
-| `daemon-client/`                     | Daemon lifecycle requests (`start`, `stop`, `restart`) through the supervisor |
-| `status/`                            | Read-only `status` report through per-platform ports                          |
-| `logging/`                           | Computer LogTape configuration and the `logs` follower                        |
-| `updater.ts`                         | Verified installation, launchers, and version activation                      |
-| `release/`                           | Installer scripts and the independent upgrade/rollback coordinator            |
-| `release/installer-contract.ts`      | Shapes shared only with `coforge-installer` (manifest, receipt, lifecycle)    |
-| `release/supervisor-status.ts`       | What the supervisor runs: live snapshot, or persisted bindings when stopped   |
-| `release/lifecycle-command.ts`       | Hidden `__lifecycle` command: the installer's read-only JSON surface          |
-| `version.ts`                         | Build version                                                                 |
+| Path                                 | Single responsibility                                                                         |
+| ------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `main.ts`                            | Binary entrypoint: dispatches the internal modes or the Computer CLI                          |
+| `cli.ts`                             | Commander command tree and thin command actions                                               |
+| `cli/`                               | Human output for command results, including upgrade and install wording (`upgrade-output.ts`) |
+| `errors.ts`                          | Stable user-facing CLI error stages                                                           |
+| `terminal-output.ts`                 | Terminal-safe text                                                                            |
+| `setup/`                             | Computer setup business flow                                                                  |
+| `workspace/`                         | Direct Workspace lookup and slug validation for setup intent                                  |
+| `registration/`                      | Computer registration idempotency                                                             |
+| `cloud-rpc-transport.ts`             | User-authenticated HTTPS RPC for `workspace:get` and `computer:register`                      |
+| `login.ts`, `oauth-device-client.ts` | Device-code authorization                                                                     |
+| `credential-store.ts`                | File-backed User credentials                                                                  |
+| `machine-id.ts`, `platform.ts`       | Machine identity and platform metadata                                                        |
+| `paths.ts`                           | Platform-native state and credential paths                                                    |
+| `local-config.ts`                    | Reading and validating the persisted profile                                                  |
+| `release-channel.ts`                 | Compiled official feed/server mapping                                                         |
+| `daemon-client/`                     | Daemon lifecycle requests (`start`, `stop`, `restart`) through the supervisor                 |
+| `status/`                            | Read-only `status` report through per-platform ports                                          |
+| `logging/`                           | Computer LogTape configuration and the `logs` follower                                        |
+| `updater.ts`                         | Reads the installed version; zod contract schemas and launcher text shared with the installer |
+| `release/upgrade-runner.ts`          | Runs the installer for one upgrade or `recover`, and returns its receipt                      |
+| `release/remote-upgrade.ts`          | Runs one server-triggered upgrade, then removes its finished OS job (no terminal output)      |
+| `release/upgrade-receipt.ts`         | Writes the fallback failed receipt; `UpgradeFailedError` (the receipt read is the Daemon's)   |
+| `release/upgrade-operation.ts`       | One upgrade operation record, built from CLI or `__remote-upgrade` arguments                  |
+| `release/installer-contract.ts`      | Shapes shared only with `coforge-installer` (release manifest, lifecycle)                     |
+| `release/supervisor-status.ts`       | What the supervisor runs: live snapshot, or persisted bindings when stopped                   |
+| `release/lifecycle-command.ts`       | Hidden `__lifecycle` command: the installer's read-only JSON surface                          |
+| `release/installer-launch.ts`        | Fetches, verifies, and caches the `coforge-installer` binary for this machine                 |
+| `version.ts`                         | Build version                                                                                 |
 
 `coforge-computer __lifecycle protocol|status` is how the installer reads a
 Computer. It prints exactly one JSON object on stdout (the `Lifecycle*` shapes),
@@ -65,12 +70,16 @@ product's own upgrade and `__lifecycle status` share `release/supervisor-status.
 `crates/installer/contract/`, the cross-language contract with the Rust installer:
 JSON Schema via `z.toJSONSchema()` plus golden files. This package is its source
 of truth; each shape's zod schema lives in the module that owns the concept
-(`updater.ts`, `release/upgrade-coordinator.ts`, `release/installer-contract.ts`).
+(`updater.ts`, `release/installer-contract.ts`, and the upgrade receipt in
+`@lrm/coforge-sdk/internal/upgrade-receipt`, which the Daemon's single receipt reader also uses).
 `scripts/installer-receipt-cases.ts` holds, as literals, the receipts that schema accepts
 and refuses; the Rust crate builds and checks every row.
 After changing a contract shape or a value it exports (paths, service names,
 launchers, lock, feed environments), run `bun run generate:installer-contract`
 and commit the result; `test/installer-contract.test.ts` and CI fail otherwise.
+The install root (`<home>/.coforge/computer/install`) and the upgrade receipt reader are
+owned by `@lrm/coforge-daemon` (`resolveComputerInstallDirectory`, `readUpgradeReceipt`);
+the Computer imports them and does not rebuild either path.
 Contract objects are `z.looseObject` (fields only get added). Resolve the home
 directory with `os.homedir()` only, never `HOME`/`USERPROFILE` directly: the
 installer follows the same rule (`crates/installer/contract/paths.json`).
@@ -79,20 +88,24 @@ The map describes ownership, not permission to create empty layers. Keep an
 existing file in place when it still has one clear responsibility; move code
 only when a real boundary is needed, and update this map in the same change.
 
-`src/updater.ts` owns verified gzip installation and the version-local
-`coforge` launcher targeting the adjacent `coforge-computer __agent-cli` entry.
-Computer owns writing it into staging, recording its identity and verifying
-it on rollback. There is no legacy installer compatibility path.
-It also owns installing and offline-verifying Pi's `photon_rs_bg.wasm`
-(`docs/release/local-distribution.md`), staged next to `coforge-computer` in `versions/<v>/` the
-same way as the launchers.
-`src/release/installation-source.ts` runs the embedded release installer scripts
-for curl-based version resolution and package preparation. The same scripts own
-bootstrap downloads; updater consumes local manifest/gzip bytes and never
-implements another binary downloader. The hidden `__install-local` command
-hands bootstrap packages to the existing install use case without downloading again.
+`src/updater.ts` reads the installed version (`active.json`) and owns the zod schemas and
+launcher text that `crates/installer` writes. Installing, verifying, and activating a version
+belong to `coforge-installer` (`crates/installer/AGENTS.md`), which also fetches Pi's
+`photon_rs_bg.wasm` (`docs/release/local-distribution.md`). The Computer never writes a version
+directory.
+`src/release/installation-source.ts` runs the embedded release installer scripts for version
+resolution (`--resolve-only`) and the installer bootstrap. Nothing in the Computer downloads a binary.
+`src/release/installer-launch.ts` fetches `coforge-installer` through the same
+scripts, pointed at `<feed>/installer` (pointer and manifest phases) plus their
+`installer` phase, which downloads only that target's `coforge-installer(.exe).gz`;
+it verifies size and checksum in TypeScript, keeps the binary in
+`<install root>/installer/<sha256>/`, prunes to the current plus two more
+recently used copies (ranked by use time, never hashed; a kept copy is verified before use),
+and sweeps what a killed run left after an hour.
+It does not launch the installer, read receipts, or touch the product's own
+upgrade transaction.
 Computer's user command tree does not own Agent message commands.
-The full install/upgrade/rollback transaction is serialized by the machine
+The install and upgrade transaction is serialized by the machine
 mutation lock; do not narrow it to activation or reuse the Supervisor lifetime
 mutex as the upgrade lock.
 
@@ -164,4 +177,8 @@ client, or command-specific copy of an existing domain operation.
 - Resolve state through the platform-native path module; do not hand-build a
   hidden home-directory convention at call sites.
 - Run `mise run test:computer`, `mise run check:computer`, and
-  `mise run build:computer` before review.
+  `mise run build:computer` before review. `test/installer-scripts.test.ts` runs
+  `install.ps1` under PowerShell 7. `mise run test` and `mise run test:computer`
+  install the version `mise.toml` pins (task tools, on first use); a bare
+  `bun test` needs your own `pwsh` on PATH. Those tests fail without it and are
+  never skipped.

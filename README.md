@@ -41,7 +41,7 @@ The architecture invariants every change must respect are in
 | [docs/workspace-deletion.md](docs/workspace-deletion.md) | What deleting a Workspace removes, and when |
 | [docs/observability/](docs/observability/README.md) | Agent Activity, status, and observability baseline |
 | [docs/local-logging.md](docs/local-logging.md) | Computer/Daemon logging contract |
-| [docs/release/](docs/release/README.md) | Release contract: deployment, Computer distribution, promotion, rollback |
+| [docs/release/](docs/release/README.md) | Release contract: deployment, Computer distribution, installer feed, promotion, rollback |
 | [docs/design/](docs/design/README.md) | Product UI design guidance |
 | [docs/design-tokens.md](docs/design-tokens.md) | Design tokens |
 | [docs/operations/aliyun-oss-cdn/](docs/operations/aliyun-oss-cdn/README.md) | OSS/CDN provisioning runbook |

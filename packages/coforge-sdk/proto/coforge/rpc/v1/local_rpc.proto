@@ -148,7 +148,7 @@ message UsageScanResponse {
   bytes snapshot_json = 6;
 }
 
-// Runner hold. Sent Coordinator -> Workspace daemon before an upgrade stops the
+// Runner hold. Sent Coordinator -> Workspace daemon before a restart stops the
 // supervisor, so Agents stop admitting new turns and in-flight tool calls get a
 // bounded grace period instead of the ~2s SIGTERM/SIGKILL ladder. Additive:
 // protocol_major stays 1.
@@ -156,8 +156,8 @@ message DaemonHoldRequest {
   uint32 protocol_major = 1;
   string request_id = 2;
   string expected_server_url = 3;
-  // One of RUNNER_HOLD_REASONS: why the hold was asked for. Whether and how long runners are held
-  // never depends on it; a Workspace daemon that shuts down while freshly held reports it as the
+  // One of RUNNER_HOLD_REASONS: why the hold was asked for. A hold must carry one; a release
+  // does not. Whether and how long runners are held never depends on it; a Workspace daemon that shuts down while freshly held reports it as the
   // reason in its DaemonRuntimeShutdown notice.
   string reason = 4;
 }
@@ -178,6 +178,6 @@ message DaemonHoldResponse {
   bool held = 4;
   repeated HeldBusyAgent busy_agents = 5;
   // Workspaces that did not answer within the per-Workspace hold budget. A
-  // Coordinator reports them rather than blocking the upgrade on them.
+  // Coordinator reports them rather than blocking the restart on them.
   repeated string unreachable_workspace_ids = 6;
 }

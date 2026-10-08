@@ -13,7 +13,6 @@ import {
   encodeDaemonHoldRequest,
   decodeDaemonHoldResponse,
   LOCAL_RPC_METHODS,
-  RUNNER_HOLD_REASONS,
   type RunnerHoldReason,
 } from "@lrm/coforge-sdk/internal";
 import type {
@@ -167,15 +166,7 @@ export class LocalDaemonLauncher implements DaemonLauncher, DaemonCommandRunner 
   }
 
   async control(
-    operation:
-      | "start"
-      | "stop"
-      | "restart"
-      | "snapshot"
-      | "pause"
-      | "resume"
-      | "upgrade"
-      | "upgrade_ack",
+    operation: "start" | "stop" | "restart" | "snapshot" | "upgrade" | "upgrade_ack",
     workspaceId?: string,
     requestId: string = crypto.randomUUID(),
     expectedVersion?: string,
@@ -220,11 +211,11 @@ export class LocalDaemonLauncher implements DaemonLauncher, DaemonCommandRunner 
 
   /**
    * Engages (`"hold"`) or lifts (`"release"`) this daemon's runner hold and returns the busy set.
-   * Idempotent at both ends, so the upgrade's quiescence poll is just a repeated `hold`.
+   * Idempotent at both ends, so the quiescence poll is just a repeated `hold`.
    */
   async hold(
     operation: "hold" | "release" = "hold",
-    reason: RunnerHoldReason = RUNNER_HOLD_REASONS.UPGRADE,
+    reason?: RunnerHoldReason,
     requestId: string = crypto.randomUUID(),
   ): Promise<DaemonHoldResponse> {
     const method = operation === "hold" ? LOCAL_RPC_METHODS.HOLD : LOCAL_RPC_METHODS.RELEASE;

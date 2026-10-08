@@ -48,7 +48,11 @@ test("every declared tool is locked for each required platform", () => {
 });
 
 test("the lockfile pins no tool that mise.toml has dropped", () => {
-  const declared = new Set(Object.keys(config.tools ?? {}));
+  // A task's own `tools` (https://mise.jdx.dev/tasks/toml-tasks.html) are locked too.
+  const taskTools = Object.values(config.tasks ?? {}).flatMap((task) =>
+    Object.keys((task as { tools?: Record<string, string> }).tools ?? {}),
+  );
+  const declared = new Set([...Object.keys(config.tools ?? {}), ...taskTools]);
   for (const tool of Object.keys(lockfile.tools ?? {})) {
     expect(declared.has(tool), `mise.lock still pins the removed tool: ${tool}`).toBe(true);
   }

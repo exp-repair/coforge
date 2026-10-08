@@ -6,7 +6,7 @@ import {
 } from "@lrm/coforge-sdk/internal";
 import type { DaemonConfig } from "#src/daemon-runtime/runtime";
 import { answeredWithin, holdRunnersUntilQuiescent, type RunnerHoldSnapshot } from "./runner-hold";
-import { UpgradeLaunchesPausedError, UpgradeOperationPendingError } from "./upgrade-error";
+import { UpgradeOperationPendingError } from "./upgrade-error";
 import { WorkspaceParkedError } from "./workspace-health-journal";
 import { WorkspaceLifecycleSupersededError } from "./lifecycle-superseded-error";
 
@@ -177,7 +177,6 @@ export class MachineSupervisor {
   /** Store writes, one at a time: a stop's intent is written outside the lifecycle queue. */
   #writing = new SerialQueue();
   #mutation = new SerialQueue();
-  #paused = false;
   #reloadRequired = false;
   constructor(
     private readonly store: BindingStore,
@@ -192,23 +191,21 @@ export class MachineSupervisor {
     private readonly settlePendingUpgrade?: PendingUpgradeSettler,
   ) {}
 
-  recover(options: { paused?: boolean } = {}) {
+  recover() {
     return this.#serialize(async () => {
       this.#bindings = await this.store.load();
       this.#reloadRequired = false;
-      this.#paused = options.paused ?? false;
-      if (!this.#paused) await this.#reconcileBindings();
+      await this.#reconcileBindings();
     });
   }
 
   /**
-   * Re-applies enabled/disabled intent for every binding. Used on Coordinator startup/resume and,
+   * Re-applies enabled/disabled intent for every binding. Used on Coordinator startup and,
    * on Windows (no OS-level Workspace restart), by a periodic poll that replaces systemd/launchd
-   * failure restart. No-ops while paused for Computer upgrade.
+   * failure restart.
    */
   reconcile() {
     return this.#serialize(async () => {
-      if (this.#paused) return;
       await this.#refresh();
       await this.#reconcileBindings();
     });
@@ -220,7 +217,6 @@ export class MachineSupervisor {
     this.#supersede([config.workspaceId], "configure");
     const settle = this.#markUnderWay([config.workspaceId]);
     const work = this.#serialize(async () => {
-      this.#assertMutable();
       await this.#refresh();
       const previous = this.#bindings.find((binding) => binding.workspaceId === config.workspaceId);
       if (previous) await this.#stop(previous);
@@ -433,7 +429,6 @@ export class MachineSupervisor {
     sequence: number,
     progress: CommandProgress,
   ): Promise<CommandAnswer> {
-    this.#assertMutable();
     await this.#refresh();
     if (workspaceId && !this.#bindings.some((binding) => binding.workspaceId === workspaceId))
       throw new Error("Workspace is not registered locally");
@@ -573,7 +568,6 @@ export class MachineSupervisor {
    */
   recordUpgrade(workspaceId: string, requestId: string, expectedVersion: string) {
     return this.#serialize(async () => {
-      this.#assertMutable();
       await this.#refresh();
       const binding = this.#bindings.find((entry) => entry.workspaceId === workspaceId);
       if (!binding) throw new Error("Workspace is not registered locally");
@@ -679,23 +673,6 @@ export class MachineSupervisor {
     });
   }
 
-  /**
-   * Stops new lifecycle work at once. Work already running finishes; work still queued is refused
-   * when its turn comes (`#assertMutable`). It does not wait behind the queue: a restart's hold
-   * and readiness would outlast the local lifecycle client, and an upgrade waits for the work
-   * under way through the view instead.
-   */
-  pause() {
-    this.#paused = true;
-    return Promise.resolve();
-  }
-  resume() {
-    return this.#serialize(async () => {
-      this.#paused = false;
-      await this.#refresh();
-      await this.#reconcileBindings();
-    });
-  }
   shutdown() {
     return this.#serialize(async () => {
       for (const binding of this.#bindings) await this.#stop(binding);
@@ -772,8 +749,7 @@ export class MachineSupervisor {
    * idempotent.
    *
    * The wait runs inside the serialized mutation, so other lifecycle commands queue behind it for
-   * up to `RUNNER_HOLD_MS`. That is accepted: an upgrade's `pauseLaunches` already blocks the same
-   * queue for as long, and a restart that raced ahead of the drain would defeat the point. An
+   * up to `RUNNER_HOLD_MS`. That is accepted: a restart that raced ahead of the drain would defeat the point. An
    * operator restart keeps the full bound too: its answer is bounded by its deadline
    * (`#answerBy`), not by cutting the drain short for Agents mid tool call.
    *
@@ -841,13 +817,6 @@ export class MachineSupervisor {
   async #stop(binding: ManagedBinding) {
     await this.processes.stop(binding);
     this.#instances.delete(binding.workspaceId);
-  }
-  #assertMutable() {
-    // `#paused` is set only by an in-flight Computer upgrade (`daemon:pause`/the launch-hold
-    // file), so every caller of this guard - configure, command, and recordUpgrade - is refusing
-    // for that one reason.
-    if (this.#paused)
-      throw new UpgradeLaunchesPausedError("machine lifecycle is paused for upgrade");
   }
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
     return this.#mutation.run(operation);

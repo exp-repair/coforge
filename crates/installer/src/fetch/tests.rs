@@ -6,6 +6,16 @@ use std::thread;
 use super::*;
 use crate::test_support::{self, Scratch, gzip};
 
+#[test]
+fn the_production_agent_verifies_with_the_platform_verifier() {
+    let agent = agent(Transport::Https);
+    assert!(matches!(
+        agent.config().tls_config().root_certs(),
+        ureq::tls::RootCerts::PlatformVerifier
+    ));
+    assert!(agent.config().https_only());
+}
+
 fn sha256(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
@@ -187,7 +197,7 @@ fn fetch_downloads_verifies_and_places_an_object_over_http() {
     req.url = format!("{base}/0.0.0/darwin-arm64/coforge-computer.gz");
     req.expanded_sha256 = Some(sha256(&payload));
 
-    let receipt = fetch(&agent(false), &req).unwrap();
+    let receipt = fetch(&agent(Transport::LoopbackHttp), &req).unwrap();
 
     assert!(receipt.gzip);
     assert_eq!(fs::read(&out).unwrap(), payload);
@@ -201,7 +211,7 @@ fn fetch_reports_a_non_success_status() {
     let mut req = request(out.clone(), "0".repeat(64));
     req.url = format!("{base}/missing.gz");
 
-    let error = fetch(&agent(false), &req).unwrap_err();
+    let error = fetch(&agent(Transport::LoopbackHttp), &req).unwrap_err();
 
     assert_eq!(error.code, FetchErrorCode::HttpStatus, "{}", error.message);
     assert!(scratch.entries().is_empty(), "{:?}", scratch.entries());
@@ -214,7 +224,7 @@ fn the_production_agent_refuses_plain_http() {
     let mut req = request(out, "0".repeat(64));
     req.url = "http://127.0.0.1:9/never-contacted.gz".into();
 
-    let error = fetch(&https_agent(), &req).unwrap_err();
+    let error = fetch(&agent(Transport::Https), &req).unwrap_err();
 
     assert_eq!(error.code, FetchErrorCode::Download, "{}", error.message);
 }
@@ -245,7 +255,7 @@ fn fetch_refuses_a_redirect() {
     let mut req = request(out, "0".repeat(64));
     req.url = format!("{}/moved.gz", server.base_url());
 
-    let error = fetch(&agent(false), &req).unwrap_err();
+    let error = fetch(&agent(Transport::LoopbackHttp), &req).unwrap_err();
 
     assert_eq!(error.code, FetchErrorCode::HttpStatus, "{}", error.message);
     assert!(error.message.contains("302"), "{}", error.message);
@@ -262,7 +272,7 @@ fn fetch_bytes_returns_a_small_object() {
     let server = serve(&[("/latest", test_support::Response::ok(b"0.2.0\n".to_vec()))]);
 
     let bytes = fetch_bytes(
-        &agent(false),
+        &agent(Transport::LoopbackHttp),
         &format!("{}/latest", server.base_url()),
         4096,
     )
@@ -276,8 +286,13 @@ fn fetch_bytes_accepts_exactly_the_cap_and_refuses_one_byte_more() {
     let server = serve(&[("/object", test_support::Response::ok(vec![b'x'; 100]))]);
     let url = format!("{}/object", server.base_url());
 
-    assert_eq!(fetch_bytes(&agent(false), &url, 100).unwrap().len(), 100);
-    let error = fetch_bytes(&agent(false), &url, 99).unwrap_err();
+    assert_eq!(
+        fetch_bytes(&agent(Transport::LoopbackHttp), &url, 100)
+            .unwrap()
+            .len(),
+        100
+    );
+    let error = fetch_bytes(&agent(Transport::LoopbackHttp), &url, 99).unwrap_err();
 
     assert_eq!(error.code, FetchErrorCode::SizeLimit, "{}", error.message);
 }
@@ -290,8 +305,12 @@ fn fetch_bytes_reports_a_status_and_refuses_a_redirect() {
     ]);
 
     for path in ["/missing", "/moved"] {
-        let error =
-            fetch_bytes(&agent(false), &format!("{}{path}", server.base_url()), 10).unwrap_err();
+        let error = fetch_bytes(
+            &agent(Transport::LoopbackHttp),
+            &format!("{}{path}", server.base_url()),
+            10,
+        )
+        .unwrap_err();
         assert_eq!(
             error.code,
             FetchErrorCode::HttpStatus,
@@ -304,7 +323,12 @@ fn fetch_bytes_reports_a_status_and_refuses_a_redirect() {
 
 #[test]
 fn fetch_bytes_refuses_plain_http_in_production() {
-    let error = fetch_bytes(&https_agent(), "http://127.0.0.1:9/never-contacted", 10).unwrap_err();
+    let error = fetch_bytes(
+        &agent(Transport::Https),
+        "http://127.0.0.1:9/never-contacted",
+        10,
+    )
+    .unwrap_err();
 
     assert_eq!(error.code, FetchErrorCode::Download, "{}", error.message);
 }
@@ -551,7 +575,7 @@ fn a_body_cut_short_without_a_length_is_a_gzip_error_and_with_a_length_a_downloa
         let mut req = request(scratch.path().join("coforge-computer"), sha256(&wire));
         req.url = format!("{}/coforge-computer.gz", server.base_url());
 
-        let error = fetch(&agent(false), &req).unwrap_err();
+        let error = fetch(&agent(Transport::LoopbackHttp), &req).unwrap_err();
 
         assert_eq!(error.code, expected, "{name}: {}", error.message);
         assert!(
@@ -601,7 +625,7 @@ fn a_body_that_stalls_partway_is_abandoned_after_the_idle_timeout() {
     let started = Instant::now();
 
     let outcomes = within(Duration::from_secs(20), move || {
-        let agent = agent_with_idle_timeout(false, STALL);
+        let agent = agent_with_idle_timeout(Transport::LoopbackHttp, STALL);
         let bytes = fetch_bytes(&agent, &format!("{base}/latest"), 4096).map(drop);
         let mut gz = request(directory.join("coforge-computer"), sha256(&wire));
         gz.url = format!("{base}/coforge-computer.gz");
@@ -680,7 +704,11 @@ fn a_slow_body_that_keeps_arriving_is_not_cut_off() {
     req.url = format!("{}/coforge-computer.gz", server.base_url());
 
     let started = Instant::now();
-    fetch(&agent_with_idle_timeout(false, LIMIT), &req).unwrap();
+    fetch(
+        &agent_with_idle_timeout(Transport::LoopbackHttp, LIMIT),
+        &req,
+    )
+    .unwrap();
 
     assert!(
         started.elapsed() > LIMIT,
@@ -688,4 +716,65 @@ fn a_slow_body_that_keeps_arriving_is_not_cut_off() {
         started.elapsed()
     );
     assert_eq!(fs::read(out).unwrap(), payload);
+}
+
+// ---- connections are not reused ----------------------------------------------------------------
+
+/// Answers each accepted connection with one `HTTP/1.0` response that declares its length and has
+/// no `Connection` header, as Python's `http.server` does, then keeps that socket open without
+/// reading another request. The sockets stay alive until the test process exits.
+fn serve_one_http_1_0_response_per_connection(body: Vec<u8>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 0 && line != "\r\n" {
+                line.clear();
+            }
+            write!(
+                stream,
+                "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+            held.push(stream);
+        }
+    });
+    format!("http://{address}")
+}
+
+#[test]
+fn consecutive_fetches_from_an_http_1_0_server_each_succeed() {
+    let payload = b"release bytes".repeat(500);
+    let base = serve_one_http_1_0_response_per_connection(payload.clone());
+    let scratch = Scratch::new("http-1-0-reuse");
+    let directory = scratch.path().to_owned();
+
+    // A reused connection would never be answered, so the bounded wait and the idle timeout both
+    // turn that hang into a failure within seconds.
+    let outcomes = within(Duration::from_secs(15), move || {
+        let agent = agent_with_idle_timeout(Transport::LoopbackHttp, Duration::from_secs(2));
+        (1..=2)
+            .map(|n| {
+                let mut req = request(directory.join(format!("fetch-{n}")), sha256(&payload));
+                req.url = format!("{base}/coforge-computer");
+                fetch(&agent, &req).map(drop).map_err(|error| error.message)
+            })
+            .collect::<Vec<_>>()
+    });
+
+    for (n, outcome) in outcomes.iter().enumerate() {
+        assert_eq!(outcome, &Ok(()), "fetch {}", n + 1);
+    }
+    for n in 1..=2 {
+        assert_eq!(
+            fs::read(scratch.path().join(format!("fetch-{n}"))).unwrap(),
+            b"release bytes".repeat(500)
+        );
+    }
 }

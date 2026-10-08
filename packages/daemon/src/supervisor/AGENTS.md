@@ -71,12 +71,9 @@ Rules for the machine Coordinator in `src/supervisor/`. They extend
   `MachineSupervisor.view()`, which never waits behind a mutation, so neither
   `status` nor a command answer can end in a client timeout. A Workspace whose
   start, restart, or configure is queued or running carries
-  `lifecycle_under_way` (never a `cloud_connection` value). `pause` takes effect
-  at once (queued work is refused at its turn) and never waits behind the
-  queue; an upgrade then waits for the running work through the view. The
-  Coordinator's own steps keep the serialized `snapshot()`.
-- The snapshot reports a parked Workspace's `park_reason`; an upgrade treats it
-  as down on purpose, not as an unhealthy runtime set.
+  `lifecycle_under_way` (never a `cloud_connection` value). The Coordinator's own
+  steps keep the serialized `snapshot()`.
+- The snapshot reports a parked Workspace's `park_reason`.
 - systemd Workspace units restart on failure after cgroup cleanup.
 - On macOS, `launchd-workspace-instance.ts` implements the instance seam on top
   of `platform/launchd-job.ts`. Workspace startup reconciles only its own Agent

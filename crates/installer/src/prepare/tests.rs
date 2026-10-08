@@ -7,13 +7,18 @@ use serde::Serialize;
 use super::*;
 use crate::contract::InstalledIdentity;
 use crate::digest::measure_bytes;
+use crate::feed::Feed;
 use crate::lock::MachineMutationLock;
+use crate::release_directory::ReleaseDirectory;
 use crate::test_support::{Release, Response, Scratch, Server};
 
 const VERSION: &str = "0.2.0";
 
 fn feed(server: &Server) -> Feed {
-    Feed::new(&server.base_url(), crate::fetch::agent(false))
+    Feed::new(
+        &server.base_url(),
+        crate::fetch::agent(crate::fetch::Transport::LoopbackHttp),
+    )
 }
 
 fn names(directory: &Path) -> Vec<String> {
@@ -33,7 +38,7 @@ fn latest_is_resolved_downloaded_verified_and_installed() {
     let lock = MachineMutationLock::acquire(root.path()).unwrap();
     let store = VersionStore::new(root.path(), "linux-x64");
 
-    let prepared = prepare_version(&lock, &feed(&server), &store, "latest").unwrap();
+    let prepared = prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap();
 
     assert_eq!(
         prepared,
@@ -72,7 +77,7 @@ fn a_named_version_does_not_consult_the_pointer() {
     let lock = MachineMutationLock::acquire(root.path()).unwrap();
     let store = VersionStore::new(root.path(), "linux-x64");
 
-    prepare_version(&lock, &feed(&server), &store, VERSION).unwrap();
+    prepare_version(&lock, &feed(&server), &store, VERSION, None).unwrap();
 
     assert!(!server.requests().contains(&"/latest".to_string()));
 }
@@ -84,10 +89,10 @@ fn a_version_that_is_already_installed_is_not_downloaded_again() {
     let root = Scratch::new("prepare-again");
     let lock = MachineMutationLock::acquire(root.path()).unwrap();
     let store = VersionStore::new(root.path(), "linux-x64");
-    prepare_version(&lock, &feed(&server), &store, "latest").unwrap();
+    prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap();
     let identity = fs::read(store.version_directory(VERSION).join("installation.json")).unwrap();
 
-    let prepared = prepare_version(&lock, &feed(&server), &store, "latest").unwrap();
+    let prepared = prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap();
 
     assert_eq!(prepared.installation, Installation::AlreadyInstalled);
     assert_eq!(
@@ -112,7 +117,7 @@ fn a_lock_on_another_install_root_stops_the_preparation_before_the_feed_is_asked
     let lock = MachineMutationLock::acquire(elsewhere.path()).unwrap();
     let store = VersionStore::new(root.path(), "linux-x64");
 
-    let error = prepare_version(&lock, &feed(&server), &store, "latest").unwrap_err();
+    let error = prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap_err();
 
     assert!(matches!(error, UpdateError::Local(_)), "{error:?}");
     assert!(server.requests().is_empty(), "{:?}", server.requests());
@@ -133,7 +138,7 @@ fn what_a_killed_run_left_in_staging_is_removed_by_the_next_preparation() {
     fs::create_dir_all(&stale).unwrap();
     fs::write(stale.join("coforge-computer"), vec![0u8; 4096]).unwrap();
 
-    prepare_version(&lock, &feed(&server), &store, "latest").unwrap();
+    prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap();
 
     assert!(names(&root.path().join(".staging")).is_empty());
     store.verify_installed(VERSION).unwrap();
@@ -150,7 +155,7 @@ fn an_incomplete_version_directory_stops_the_preparation() {
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("version"), "0.2.0\n").unwrap();
 
-    let error = prepare_version(&lock, &feed(&server), &store, VERSION).unwrap_err();
+    let error = prepare_version(&lock, &feed(&server), &store, VERSION, None).unwrap_err();
 
     assert!(
         matches!(error, UpdateError::IntegrityFailed(_)),
@@ -168,7 +173,7 @@ fn a_manifest_without_this_target_is_unsupported_and_leaves_nothing_behind() {
     let lock = MachineMutationLock::acquire(root.path()).unwrap();
     let store = VersionStore::new(root.path(), "linux-x64");
 
-    let error = prepare_version(&lock, &feed(&server), &store, "latest").unwrap_err();
+    let error = prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap_err();
 
     assert_eq!(
         error,
@@ -196,7 +201,7 @@ fn a_failed_download_installs_nothing_and_removes_its_staging_directory() {
         let lock = MachineMutationLock::acquire(root.path()).unwrap();
         let store = VersionStore::new(root.path(), "linux-x64");
 
-        let error = prepare_version(&lock, &feed(&server), &store, "latest").unwrap_err();
+        let error = prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap_err();
 
         assert!(
             matches!(error, UpdateError::IntegrityFailed(_)),
@@ -217,10 +222,107 @@ fn a_manifest_missing_from_the_feed_is_a_feed_error() {
     let lock = MachineMutationLock::acquire(root.path()).unwrap();
     let store = VersionStore::new(root.path(), "linux-x64");
 
-    let error = prepare_version(&lock, &feed(&server), &store, "latest").unwrap_err();
+    let error = prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap_err();
 
     assert!(matches!(error, UpdateError::FeedInvalid(_)), "{error:?}");
     assert!(!root.path().join("versions").exists());
+}
+
+// ---- a release directory: the local package layout of --from-directory -------------------
+
+#[test]
+fn a_local_directory_installs_and_verifies_like_the_feed() {
+    let release = Release::new(VERSION, "linux-x64");
+    let package = Scratch::new("prepare-directory-package");
+    release.write_directory(package.path());
+    let root = Scratch::new("prepare-directory");
+    let lock = MachineMutationLock::acquire(root.path()).unwrap();
+    let store = VersionStore::new(root.path(), "linux-x64");
+
+    let prepared = prepare_version(
+        &lock,
+        &ReleaseDirectory::new(package.path()),
+        &store,
+        VERSION,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        prepared,
+        Prepared {
+            version: VERSION.into(),
+            installation: Installation::Installed
+        }
+    );
+    store.verify_installed(VERSION).unwrap();
+    let directory = store.version_directory(VERSION);
+    assert_eq!(
+        fs::read(directory.join("coforge-computer")).unwrap(),
+        release.computer
+    );
+    assert_eq!(
+        fs::read(directory.join("photon_rs_bg.wasm")).unwrap(),
+        release.photon_wasm
+    );
+    assert!(names(&root.path().join(".staging")).is_empty());
+}
+
+#[test]
+fn a_tampered_directory_gzip_is_refused_and_installs_nothing() {
+    let release = Release::new(VERSION, "linux-x64");
+    let package = Scratch::new("prepare-directory-tampered");
+    release.write_directory(package.path());
+    let mut gzip = release.computer_gzip.clone();
+    let last = gzip.len() - 1;
+    gzip[last] ^= 0xff;
+    fs::write(package.path().join("coforge-computer.gz"), gzip).unwrap();
+    let root = Scratch::new("prepare-directory-tampered-root");
+    let lock = MachineMutationLock::acquire(root.path()).unwrap();
+    let store = VersionStore::new(root.path(), "linux-x64");
+
+    let error = prepare_version(
+        &lock,
+        &ReleaseDirectory::new(package.path()),
+        &store,
+        VERSION,
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code(), Some("UPDATE_INTEGRITY_FAILED"), "{error:?}");
+    assert!(!store.version_directory(VERSION).exists());
+    assert!(names(&root.path().join(".staging")).is_empty());
+}
+
+#[test]
+fn a_directory_manifest_for_another_version_is_refused_before_anything_is_fetched() {
+    let release = Release::new(VERSION, "linux-x64");
+    let package = Scratch::new("prepare-directory-wrong-version");
+    release.write_directory(package.path());
+    let mut manifest = release.manifest();
+    manifest["version"] = "0.3.0".into();
+    fs::write(
+        package.path().join("manifest.json"),
+        format!("{manifest:#}\n"),
+    )
+    .unwrap();
+    let root = Scratch::new("prepare-directory-wrong-version-root");
+    let lock = MachineMutationLock::acquire(root.path()).unwrap();
+    let store = VersionStore::new(root.path(), "linux-x64");
+
+    let error = prepare_version(
+        &lock,
+        &ReleaseDirectory::new(package.path()),
+        &store,
+        VERSION,
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code(), Some("UPDATE_FEED_INVALID"), "{error:?}");
+    assert!(!root.path().join("versions").exists());
+    assert!(!root.path().join(".staging").exists());
 }
 
 // ---- what the product reads back ----------------------------------------------------------
@@ -303,7 +405,7 @@ fn installed_files(target: &str) -> BTreeMap<String, InstalledFile> {
     let root = Scratch::new("prepare-emit");
     let lock = MachineMutationLock::acquire(root.path()).unwrap();
     let store = VersionStore::new(root.path(), target);
-    prepare_version(&lock, &feed(&server), &store, "latest").unwrap();
+    prepare_version(&lock, &feed(&server), &store, "latest", None).unwrap();
 
     let directory = store.version_directory(VERSION);
     let files: BTreeMap<String, InstalledFile> = names(&directory)

@@ -3,10 +3,30 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildReleaseTree } from "../../../scripts/release/build-release";
-import { ComputerUpdater } from "#src/updater";
 
 let directory: string;
 let executable: string;
+
+/** The installed-layout golden the Rust installer's tests write: the launchers and version marker
+ * for `linux-x64`, which are the same bytes on every posix target. */
+const INSTALLED_VERSIONS = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "crates",
+  "installer",
+  "contract",
+  "rust",
+  "installed-versions.json",
+);
+
+async function installedFile(name: string): Promise<string> {
+  const files = (await Bun.file(INSTALLED_VERSIONS).json())["linux-x64"];
+  const file = files[`versions/0.2.0/${name}`];
+  if (file?.encoding !== "utf8") throw new Error(`${name} is not in installed-versions.json`);
+  return file.content;
+}
 
 /** The release target `install.sh` derives from `uname -s -m` on this host. The single-file
  * installation test drives that script directly, so its feed has to carry the artifact for the
@@ -31,7 +51,7 @@ function hostReleaseTarget(): string {
 const FIXTURE_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
 /** A small, distinct fixture standing in for the real ~1.8 MB `photon_rs_bg.wasm` - these tests
- * exercise the real compiled install.sh/updater round trip, not photon-wasm.ts's own resolution
+ * exercise the real compiled install.sh round trip, not photon-wasm.ts's own resolution
  * (covered separately by publish.test.ts). */
 const PHOTON_WASM_FIXTURE = new Uint8Array(Buffer.from("#wasm-fixture: photon_rs_bg.wasm\n"));
 
@@ -52,6 +72,40 @@ test("single-file installation provides management and Agent CLI without a Daemo
       },
     },
     feed,
+  );
+  // install.sh hands the install to coforge-installer, which fetches the Computer itself. This
+  // stand-in installer lays out the version directory the way the installer does, with this test's
+  // own compiled Computer as the executable and the launchers and version marker exactly as
+  // crates/installer/contract/rust/installed-versions.json records them, then activates it. The
+  // installer is covered by its own crate tests; this test covers the compiled Computer.
+  const staged = join(directory, "staged");
+  await mkdir(staged, { recursive: true });
+  await writeFile(
+    join(staged, "coforge-computer"),
+    new Uint8Array(await Bun.file(executable).arrayBuffer()),
+    { mode: 0o700 },
+  );
+  await writeFile(join(staged, "coforge"), await installedFile("coforge"), { mode: 0o700 });
+  await writeFile(join(staged, "gh"), await installedFile("gh"), { mode: 0o700 });
+  await writeFile(join(staged, "version"), `${version}\n`);
+  const installerVersion = "1.0.0";
+  const installerDirectory = join(feed, "installer", installerVersion, target);
+  await mkdir(installerDirectory, { recursive: true });
+  const installerScript = Buffer.from(
+    `#!/bin/sh\n` +
+      `[ "$#" -eq 3 ] && [ "$1" = install ] && [ "$2" = --version ] || exit 90\n` +
+      `root="$HOME/.coforge/computer/install"\n` +
+      `mkdir -p "$root/versions/$3" "$XDG_BIN_HOME"\n` +
+      `cp -R "${staged}/." "$root/versions/$3/"\n` +
+      `echo "==> Installing CoForge Computer to $root/versions/$3"\n` +
+      `ln -sfn "versions/$3" "$root/active"\n` +
+      `ln -sfn "$root/active/coforge-computer" "$XDG_BIN_HOME/coforge-computer"\n`,
+  );
+  await writeFile(join(feed, "installer", "latest"), `${installerVersion}\n`);
+  await writeFile(join(installerDirectory, "coforge-installer.gz"), Bun.gzipSync(installerScript));
+  await writeFile(
+    join(installerDirectory, "coforge-installer.sha256"),
+    `${new Bun.CryptoHasher("sha256").update(installerScript).digest("hex")}\n`,
   );
   const requests: string[] = [];
   const agentRequests: { path: string; body: unknown }[] = [];
@@ -99,8 +153,8 @@ test("single-file installation provides management and Agent CLI without a Daemo
     ]);
     expect({ status, output: status ? output + errors : "" }).toEqual({ status: 0, output: "" });
     expect(errors).toContain("Detected platform:");
-    expect(errors.indexOf("Detected platform:")).toBeLessThan(errors.indexOf("Resolved version:"));
-    expect(errors.match(/Downloading CoForge Computer/g)).toHaveLength(1);
+    expect(errors.match(/Downloading CoForge installer/g)).toHaveLength(1);
+    expect(errors).not.toContain("Downloading CoForge Computer");
     expect(output.match(/Installing CoForge Computer to/g)).toHaveLength(1);
     expect(errors).not.toContain("Installing CoForge Computer to");
     expect(output).not.toContain("Checking runtime health");
@@ -148,104 +202,15 @@ test("single-file installation provides management and Agent CLI without a Daemo
     expect(
       await Bun.file(join(directory, "agent-home", ".coforge", "computer", "config.json")).exists(),
     ).toBe(false);
+    // The bootstrap fetches the installer once and no Computer object itself.
     expect(
-      requests.filter((path) => path === `/${version}/${target}/coforge-computer.gz`),
+      requests.filter(
+        (path) => path === `/installer/${installerVersion}/${target}/coforge-installer.gz`,
+      ),
     ).toHaveLength(1);
+    expect(requests).not.toContain(`/${version}/${target}/coforge-computer.gz`);
     expect(requests).not.toContain(`/${version}/${target}/coforge-daemon.gz`);
     expect(requests).not.toContain(`/${version}/${target}/coforge-computer`);
-  } finally {
-    server.stop(true);
-  }
-}, 30_000);
-
-test("detached upgrade shows one download and restores a healthy version after a failed probe", async () => {
-  const feed = join(directory, "upgrade-feed");
-  const installRoot = join(directory, "upgrade-install");
-  for (const version of ["8.0.0", "9.0.0-test", "10.0.0"]) {
-    await buildReleaseTree(
-      {
-        version,
-        commit: "a".repeat(40),
-        buildDate: "2026-09-10T00:00:00Z",
-        photonWasm: PHOTON_WASM_FIXTURE,
-        artifacts: {
-          "linux-x64": {
-            computer:
-              version === "8.0.0"
-                ? Buffer.from("#!/bin/sh\nprintf '8.0.0\\n'\n")
-                : new Uint8Array(await Bun.file(executable).arrayBuffer()),
-          },
-        },
-      },
-      feed,
-    );
-  }
-  const requests: string[] = [];
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      requests.push(path);
-      return new Response(Bun.file(join(feed, path)));
-    },
-  });
-  try {
-    const updater = new ComputerUpdater({
-      baseUrl: server.url.href,
-      target: "linux-x64",
-      installRoot,
-    });
-    await updater.install("8.0.0");
-    const caller = join(directory, "upgrade-caller.ts");
-    await Bun.write(
-      caller,
-      `import { launchUpgradeCoordinator } from ${JSON.stringify(new URL("../src/release/upgrade-coordinator.ts", import.meta.url).pathname)}; try { const { operation, ...paths } = JSON.parse(Bun.argv[2]); const result = await launchUpgradeCoordinator(operation, paths); console.log(result.status); } catch (error) { console.error(error.message); process.exitCode = 1; }`,
-    );
-    for (const version of ["9.0.0-test", "10.0.0"]) {
-      const child = Bun.spawn(
-        [
-          process.execPath,
-          caller,
-          JSON.stringify({
-            operation: {
-              requestId: crypto.randomUUID(),
-              operation: "upgrade",
-              selection: version,
-              origin: "cli",
-              quiet: false,
-            },
-            installRoot,
-            baseUrl: server.url.href,
-            target: "linux-x64",
-            executablePath: executable,
-            supervisorSocketPath: join(directory, "absent-supervisor.sock"),
-            supervisorStatePath: join(directory, "empty-supervisor"),
-          }),
-        ],
-        { stdout: "pipe", stderr: "pipe" },
-      );
-      const [code, output, errors] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      expect(code).toBe(version === "9.0.0-test" ? 0 : 1);
-      expect(errors.match(/Downloading CoForge Computer/g)).toHaveLength(1);
-      expect(output.match(/Installing CoForge Computer to/g)).toHaveLength(1);
-      expect(errors).not.toContain("Installing CoForge Computer to");
-      expect(
-        requests.filter((path) => path === `/${version}/linux-x64/coforge-computer.gz`),
-      ).toHaveLength(1);
-      expect(await updater.getCurrentVersion()).toBe("9.0.0-test");
-      if (code === 0) {
-        expect(output.endsWith("succeeded\n")).toBe(true);
-        expect(output).not.toContain("Checking runtime health");
-      } else {
-        expect(output).not.toContain("succeeded");
-        expect(output).toContain("Previous version 9.0.0-test restored and healthy");
-        expect(errors).not.toContain("UpgradeCoordinatorError:");
-      }
-    }
   } finally {
     server.stop(true);
   }
@@ -367,7 +332,7 @@ test("compiled CLI writes help to stdout and exits successfully", () => {
   expect(result.stdout.toString()).toContain("setup|attach [options]");
   expect(result.stdout.toString()).toContain("install [options]");
   expect(result.stdout.toString()).toContain("upgrade [options]");
-  expect(result.stdout.toString()).toContain("rollback");
+  expect(result.stdout.toString()).toContain("recover");
   expect(result.stdout.toString()).toContain("start");
   expect(result.stdout.toString()).toContain("stop");
   expect(result.stdout.toString()).toContain("restart");

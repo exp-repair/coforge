@@ -46,13 +46,20 @@ EdgeScript：域名边界本身就是 fail-closed 的，一个域名请求另一
 3. Cache > Cache Expiration 按下表设置。higher weight 优先，禁止 Ignore Origin
    No-Cache：
 
-   | 域名 | match | POP TTL | weight | client `Cache-Control` |
+   | 域名 | match（规则类型） | POP TTL | weight | client `Cache-Control` |
    | --- | --- | --- | --- | --- |
-   | `releases.coforge.cn` | `/latest` | `0`, Force Revalidation | `99` | `no-cache, must-revalidate` |
-   | `releases.coforge.cn` | `/*/manifest.json` | `0`, Force Revalidation | `99` | `no-cache, must-revalidate` |
-   | `releases.coforge.cn` | `/` | `31536000` seconds | `80` | `public, max-age=31536000, immutable` |
-   | `files.coforge.cn` | `/` | `0` | `80` | `private, no-store` |
-   | `images.coforge.cn` | `/` | `31536000` seconds | `80` | `public, max-age=31536000, immutable` |
+   | `releases.coforge.cn` | `/latest`（目录） | `0`, Force Revalidation | `99` | `no-cache, must-revalidate` |
+   | `releases.coforge.cn` | `/installer/latest`（目录） | `0`, Force Revalidation | `99` | `no-cache, must-revalidate` |
+   | `releases.coforge.cn` | `json`（文件后缀名） | `0`, Force Revalidation | `99` | `no-cache, must-revalidate` |
+   | `releases.coforge.cn` | `/`（目录） | `31536000` seconds | `80` | `public, max-age=31536000, immutable` |
+   | `files.coforge.cn` | `/`（目录） | `0` | `80` | `private, no-store` |
+   | `images.coforge.cn` | `/`（目录） | `31536000` seconds | `80` | `public, max-age=31536000, immutable` |
+
+   `json` 后缀规则覆盖所有 manifest，包括 `<version>/manifest.json` 与
+   `installer/<version>/manifest.json`：阿里云的「目录」类型不支持通配符，所以不写
+   `/*/manifest.json`。目录规则按路径前缀匹配，`/latest` 不覆盖 `/installer/latest`；
+   `/installer/latest` 是 installer 发布指针（[Installer feed](../../release/installer-feed.md)），
+   必须有自己的规则，否则它落到 `/` 的 365 天规则下，指针前移或回退对 Computer 长期不可见。
 
    POP TTL 与 outgoing response header 是两个配置：前者控制 CDN cache，后者控制 client；
    两者都必须设置和验收。

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { ALLOWED_RECEIPTS, REJECTED_RECEIPTS, receiptOf } from "../scripts/installer-receipt-cases";
-import { InstallerReceiptSchema } from "#src/release/installer-contract";
+import { InstallerReceiptSchema } from "@lrm/coforge-sdk/internal/upgrade-receipt";
 
 /** What a reader sees: the receipt after it went through a file. */
 function throughFile(value: unknown): unknown {

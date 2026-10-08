@@ -70,7 +70,7 @@ Rules for one Workspace child's runtime in `src/daemon-runtime/`. They extend
 - An untracked delivery is ACKed as soon as the daemon takes custody of it:
   when its notice is accepted, or when it is held for a later notice or launch
   (`AgentDeliveryQueue`, a failed launch's input queue). A delivery queued
-  behind the runner hold of a Computer upgrade is not ACKed.
+  behind the runner hold of a `coforge-computer restart` is not ACKed.
 - An Agent with no process, no launch in progress, and no restart config
   takes no custody: its untracked delivery, and any a lifted runner hold left
   queued for it, is not ACKed but rejected over `agent:v1:message:reject` with

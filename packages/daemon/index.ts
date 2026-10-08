@@ -23,6 +23,7 @@ import { DaemonConnectionStoppedError } from "#src/connection/daemon-connection-
 import { COFORGE_DAEMON_VERSION } from "#src/version";
 import { LocalDaemonLauncher } from "#src/daemon-host/launcher";
 import { configureDaemonLogging } from "#src/platform/daemon-logging";
+import { installerJournalExists } from "#src/platform/installer-journal";
 import { stopLaunchdJobs } from "#src/platform/launchd-job";
 import { stopWorkspaceAgentProcesses } from "#src/platform/linux-agent-processes";
 import {
@@ -107,10 +108,14 @@ export {
   computerUpgradeTaskName,
   computerUpgradeUnitName,
 } from "#src/platform/computer-upgrade-launcher";
+export { readComputerUpgradeReceipt } from "#src/platform/computer-upgrade-receipts";
+export { resolveComputerInstallDirectory } from "#src/platform/computer-install-directory";
 export {
-  readComputerUpgradeReceipt,
-  UPGRADE_RECEIPT_MAX_BYTES,
-} from "#src/platform/computer-upgrade-receipts";
+  readUpgradeReceipt,
+  upgradeReceiptPath,
+  upgradeResultsDirectory,
+  type UpgradeReceiptFile,
+} from "#src/platform/upgrade-receipt-file";
 export {
   acquireProcessLock,
   isLockContention,
@@ -373,6 +378,7 @@ export async function runDaemon(args: string[], computerVersion?: string): Promi
                 }
               : undefined,
             connectionRefused: (reason) => void parking.park(reason),
+            installerJournalExists: () => installerJournalExists(),
             requestUpgrade: async (requestId: string, expectedVersion?: string) => {
               if (!config) throw new Error("Workspace is not configured");
               if (!expectedVersion) throw new Error("upgrade expected version is unavailable");
@@ -410,7 +416,7 @@ export async function runDaemon(args: string[], computerVersion?: string): Promi
         inbox: async (context: string, request: LocalInboxRequest) =>
           requireRuntime().inbox(context, request),
         // Runner hold. A Workspace with no configured runtime has nothing to drain and
-        // reports itself quiescent, so it never holds an upgrade up.
+        // reports itself quiescent, so it never holds a restart up.
         async hold(reason: RunnerHoldReason) {
           return { held: true, busyAgents: stampWorkspace(runtime?.holdRunners(reason)) };
         },

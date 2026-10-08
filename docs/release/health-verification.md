@@ -84,30 +84,14 @@ A local Computer release version is production-ready only when:
 The implementation must define the required platform matrix and exact command
 seams before a local distribution channel can be promoted.
 
-An upgrade or rollback coordinator must execute outside the managed service's
-kill scope. Under native management it acquires the machine mutation lock for
-the complete transaction, prepares and verifies bytes, persists launch-hold
-with the exact request ID,
-snapshots the exact running Workspace set, holds the runners and waits for them
-to quiesce (see [The runner hold](upgrade-operations.md#the-runner-hold)), asks `systemd --user` or per-user `launchd` to stop the
-Supervisor, activates the target, and restarts the manager. A replacement
-Coordinator born while launch-hold exists loads its bindings and exposes local
-control but does not start Workspace children. Candidate health requires a new
-Supervisor identity reporting the expected version; it does not require
-Workspace children to be online. The coordinator writes the terminal receipt
-before resume. Resume first settles that receipt into the affected child config,
-then removes the internal pause and starts enabled Workspace children, whose
-first cloud ready can therefore report the already-durable result. The same
-held-recovery seam is bound to the request ID stored in launch-hold and is also invoked by receipt
-watcher/startup settlement: if the external job exits after receipt commit or loses the resume
-response, the Coordinator still resumes that exact verified operation and clears launch-hold; an
-unrelated terminal receipt cannot release it. Legacy hold files select the newest operation by
-`requestedAt`. Candidate
-Supervisor failure automatically restores the prior immutable installation,
-probes that Supervisor, records the rollback result, and only then resumes.
-Once a candidate or rollback receipt is committed, a later Workspace child
-startup failure is a separate Workspace lifecycle fault and never rewrites the
-Computer result or rolls the executable back. Failed Supervisor rollback keeps
-launches held for explicit recovery. A foreground externally supervised instance
-cannot currently be stopped by this coordinator and must be stopped through its
-external supervisor before upgrade.
+An upgrade runs in `coforge-installer`, a separate process outside the managed
+service's kill scope, and holds the machine mutation lock for the whole
+transaction. It stops the service through the native manager, activates the
+target, starts the service, and requires a new supervisor identity that reports
+the target version within 60 s. Workspace children are not part of that check.
+A failed candidate is rolled back to the prior immutable installation and probed
+before the operation is recorded as `UPGRADE_ROLLED_BACK`. When the rollback cannot
+be verified, the operation ends unresolved with its recovery journal kept, and
+`coforge-computer recover` settles it. A foreground externally supervised instance
+is refused before anything changes and must be stopped through its external
+supervisor before upgrade. See [Upgrade operations](upgrade-operations.md).

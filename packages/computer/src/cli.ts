@@ -4,24 +4,20 @@ import { Command, CommanderError } from "commander";
 import { homedir } from "os";
 import { join } from "path";
 
+import { resolveComputerInstallDirectory } from "@lrm/coforge-daemon";
 import { OAuthDeviceClient } from "./oauth-device-client";
 import { ComputerLogin } from "./login";
 import { CliError, loginError, safeErrorDetail, setupError } from "./errors";
 import { FileCredentialStore } from "./credential-store";
-import {
-  resolveComputerInstallDirectory,
-  resolveComputerStateDirectory,
-  resolveDaemonSocketPath,
-} from "./paths";
+import { resolveComputerStateDirectory, resolveDaemonSocketPath } from "./paths";
 import { ComputerUpdater, UpdateError } from "./updater";
-import { resolveUpgradeCoordinatorPaths, runUpgradeOperation } from "#src/release/upgrade-runner";
-import { UpgradeCoordinatorError } from "#src/release/upgrade-coordinator";
 import {
-  createLocalUpgradeOperation,
-  type UpgradeOperation,
-  type UpgradeOperationKind,
-} from "#src/release/upgrade-operation";
-import { runInstallationSource } from "#src/release/installation-source";
+  resolveUpgradeRunnerPaths,
+  runInstallerRecovery,
+  runUpgradeOperation,
+} from "#src/release/upgrade-runner";
+import { nextUpgradeCommandHint, reportStoppedWorkspaces } from "#src/cli/upgrade-output";
+import { createLocalUpgradeOperation } from "#src/release/upgrade-operation";
 import { COFORGE_RELEASE_FEED_URL, COFORGE_SERVER_URL } from "./release-channel";
 import { FileComputerConfig, loadBuildProfile } from "./local-config";
 import { resolveComputerConfigDirectory } from "./paths";
@@ -39,7 +35,6 @@ import {
   type HeldBusyAgent,
 } from "@lrm/coforge-sdk/internal";
 import {
-  cleanupComputerUpgradeJob,
   createDaemonHost,
   holdRunnersUntilQuiescent,
   LocalDaemonLauncher,
@@ -57,6 +52,7 @@ import { followComputerLogs } from "#src/logging/computer-logs";
 import { COFORGE_COMPUTER_VERSION as VERSION } from "./version";
 import { createStatusPorts } from "#src/status/create-status-ports";
 import { createStatusCommand, type StatusCommand } from "#src/status/status-command";
+import { runInstallationSource } from "#src/release/installation-source";
 
 export interface LoginCommand {
   run(serverUrl: string, options: { json: boolean }): Promise<void>;
@@ -69,9 +65,10 @@ export interface SetupCommand {
 export interface UpdateCommand {
   resolveVersion(selector: string): Promise<string>;
   getCurrentVersion(): Promise<string | null>;
-  install(version: string, localDirectory?: string): Promise<void>;
+  install(version: string): Promise<void>;
   upgrade(version: string): Promise<void>;
-  rollback(): Promise<void>;
+  /** Resolves to the installer's exit status. */
+  recover(): Promise<number>;
 }
 
 export interface DaemonCommand {
@@ -117,6 +114,7 @@ export async function runCli(
 ): Promise<number> {
   let json = false;
   let loginSelected = false;
+  let exitCode = 0;
   let setupSelected = false;
   const program = new Command()
     .name("coforge-computer")
@@ -156,48 +154,41 @@ export async function runCli(
       }
       return dependencies.setup.run(workspaceSlug, { json });
     });
-  for (const operation of ["install", "upgrade"] as const) {
-    program
-      .command(operation)
-      .description(
-        operation === "install"
-          ? "Install one verified Computer version for the current user."
-          : "Atomically upgrade to one verified Computer version.",
-      )
-      .option("--version <selector>", "latest|<version>", "latest")
-      .action(async (options: { version: string }) => {
-        const updater = requireUpdater(dependencies);
-        if (operation === "upgrade") {
-          const target = await updater.resolveVersion(options.version);
-          if ((await updater.getCurrentVersion()) === target) {
-            io.stdout(`Already up to date: ${target}`);
-            return;
-          }
-          const answer = (io.prompt ?? globalThis.prompt)(
-            `Upgrade CoForge Computer to ${target}? [y/N] `,
-          );
-          if (!/^(y|yes)$/i.test(answer?.trim() ?? "")) {
-            io.stdout("Upgrade cancelled.");
-            return;
-          }
-          return updater.upgrade(target);
-        }
-        return updater[operation](options.version);
-      });
-  }
   program
-    .command("__install-local", { hidden: true })
-    .requiredOption("--version <version>")
-    .requiredOption("--directory <directory>")
-    .action((options: { version: string; directory: string }) => {
-      if (options.version === "latest")
-        throw new Error("local installation requires a concrete version");
-      return requireUpdater(dependencies).install(options.version, options.directory);
+    .command("install")
+    .description("Install one verified Computer version for the current user.")
+    .option("--version <selector>", "latest|<version>", "latest")
+    .action((options: { version: string }) =>
+      requireUpdater(dependencies).install(options.version),
+    );
+  program
+    .command("upgrade")
+    .description(
+      "Atomically move to one verified Computer version, newer or older (--version <older> downgrades).",
+    )
+    .option("--version <selector>", "latest|<version>", "latest")
+    .action(async (options: { version: string }) => {
+      const updater = requireUpdater(dependencies);
+      const target = await updater.resolveVersion(options.version);
+      if ((await updater.getCurrentVersion()) === target) {
+        io.stdout(`Already up to date: ${target}`);
+        return;
+      }
+      const answer = (io.prompt ?? globalThis.prompt)(
+        `Upgrade CoForge Computer to ${target}? [y/N] `,
+      );
+      if (!/^(y|yes)$/i.test(answer?.trim() ?? "")) {
+        io.stdout("Upgrade cancelled.");
+        return;
+      }
+      return updater.upgrade(target);
     });
   program
-    .command("rollback")
-    .description("Reactivate the previous locally verified Computer bundle without network access.")
-    .action(() => requireUpdater(dependencies).rollback());
+    .command("recover")
+    .description("Finish an upgrade that did not complete.")
+    .action(async () => {
+      exitCode = await requireUpdater(dependencies).recover();
+    });
   program
     .command("start")
     .description("Start the Daemon and all configured Daemon Runtimes.")
@@ -302,7 +293,7 @@ export async function runCli(
     }
     return 1;
   }
-  return 0;
+  return exitCode;
 }
 
 /** `--workspace` wins when the user supplies it explicitly; the setup-intent environment
@@ -384,7 +375,6 @@ function createLoginCommand(
       const installDirectory = resolveComputerInstallDirectory({
         platform: platform.os,
         homeDirectory: homedir(),
-        environment: process.env,
       });
       try {
         await createDaemonLauncher(
@@ -423,7 +413,6 @@ export function createSetupCommand(
   const installDirectory = resolveComputerInstallDirectory({
     platform: platform.os,
     homeDirectory: homedir(),
-    environment: process.env,
   });
   const setup = new ComputerSetup({
     config,
@@ -687,94 +676,31 @@ function createLogsCommand(
   };
 }
 
-/** Prints one line per Workspace binding an upgrade/rollback left stopped, so a caller who only
- * had a disabled binding does not mistake a healthy switch for a broken connection. */
-export function reportStoppedWorkspaces(
-  io: { stdout: (line: string) => void },
-  result: { supervisorRunning?: boolean; runtimes?: { bindingId: string; running: boolean }[] },
-): void {
-  const runtimes = result.runtimes ?? [];
-  if (!runtimes.length) return;
-  if (result.supervisorRunning === false) {
-    io.stdout(
-      "Computer supervisor is not running; run 'coforge-computer start' to bring your Workspaces online.",
-    );
-    return;
-  }
-  for (const runtime of runtimes) {
-    if (!runtime.running)
-      io.stdout(
-        `Workspace ${runtime.bindingId} was already stopped and stays stopped; run 'coforge-computer start' to bring it online.`,
-      );
-  }
-}
-
-/**
- * The next command a caller should run after `coforge-computer upgrade` itself fails - `runCli`'s
- * catch already prints the reason (an `UpdateError`'s `code: message`, or an
- * `UpgradeCoordinatorError`'s message, or a bare Error's message); this only names what to run
- * next, and never changes what is thrown or its exit code.
- */
-export function nextUpgradeCommandHint(error: unknown): string {
-  if (error instanceof UpgradeCoordinatorError) {
-    if (error.result.restoredVersion)
-      return "The previous version was restored. Check 'coforge-computer logs' for detail, then retry with 'coforge-computer upgrade'.";
-    return "Neither version could be confirmed healthy. Check 'coforge-computer status' and 'coforge-computer logs' before retrying.";
-  }
-  return "Check 'coforge-computer status', then retry with 'coforge-computer upgrade'.";
-}
-
-/** A thin CLI adapter: it builds one operation per command and renders the durable result. */
+/** A thin CLI adapter: it runs one operation per command and renders the durable result. */
 export function createUpdateCommand(io: {
   stdout: (line: string) => void;
   stderr: (line: string) => void;
 }): UpdateCommand {
-  const { installRoot, binaryDirectory, target } = resolveUpgradeCoordinatorPaths();
-  const updater = new ComputerUpdater({
-    baseUrl: COFORGE_RELEASE_FEED_URL,
-    target,
-    installRoot,
-    binaryDirectory,
-    onStage: (stage) => io.stdout(`==> ${stage}`),
-  });
-  const coordinate = (
-    operation: UpgradeOperationKind,
-    selection: string,
-    localDirectory?: string,
-    quiet = false,
-  ) =>
-    runUpgradeOperation(
-      createLocalUpgradeOperation(operation, selection, { localDirectory, quiet }),
-    );
+  const { installRoot, target } = resolveUpgradeRunnerPaths();
+  const updater = new ComputerUpdater({ installRoot });
+  const run = (selection: string) => runUpgradeOperation(createLocalUpgradeOperation(selection));
   return {
     resolveVersion: (selection) =>
       runInstallationSource({ baseUrl: COFORGE_RELEASE_FEED_URL, target, selection }),
     getCurrentVersion: () => updater.getCurrentVersion(),
-    async install(version, localDirectory) {
-      const result = (await Bun.file(join(installRoot, "active.json")).exists())
-        ? await coordinate("upgrade", version, localDirectory)
-        : await (
-            localDirectory
-              ? new ComputerUpdater({
-                  baseUrl: COFORGE_RELEASE_FEED_URL,
-                  target,
-                  installRoot,
-                  binaryDirectory,
-                  localDirectory,
-                  onStage: (stage) => io.stdout(`==> ${stage}`),
-                })
-              : updater
-          ).install(version);
-      if (!localDirectory) io.stdout(`CoForge Computer ${result.version} installed successfully.`);
+    async install(version) {
+      const result = await run(version);
+      io.stdout(`CoForge Computer ${result.version} installed successfully.`);
+      reportStoppedWorkspaces(io, result);
     },
     async upgrade(version) {
       const current = await updater.getCurrentVersion();
       io.stdout(`==> Updating CoForge Computer${current ? ` from ${current}` : ""} to ${version}`);
-      let result: Awaited<ReturnType<typeof coordinate>>;
+      let result: Awaited<ReturnType<typeof run>>;
       try {
-        result = await coordinate("upgrade", version, undefined, true);
+        result = await run(version);
       } catch (error) {
-        // The reason is already on stderr from `UpdateError`/`UpgradeCoordinatorError` handling
+        // The reason is already on stderr from `UpdateError`/`UpgradeFailedError` handling
         // in `runCli`'s catch below; this only adds the next command, never changes what is
         // thrown or its exit code.
         io.stderr(nextUpgradeCommandHint(error));
@@ -783,32 +709,8 @@ export function createUpdateCommand(io: {
       io.stdout(`CoForge Computer ${result.version} updated successfully.`);
       reportStoppedWorkspaces(io, result);
     },
-    async rollback() {
-      const result = await coordinate("rollback", "latest");
-      io.stdout(`Rolled back to ${result.version}`);
-      reportStoppedWorkspaces(io, result);
-    },
+    recover: () => runInstallerRecovery(),
   };
-}
-
-/** Runs one server-triggered operation. The Daemon observes it only through its durable
- * receipt, so this entry point produces no terminal output and never throws past the receipt. */
-export async function runRemoteUpgrade(operation: UpgradeOperation): Promise<void> {
-  try {
-    await runUpgradeOperation(operation);
-  } finally {
-    // The job has no KeepAlive, so leaving it in place cannot make it respawn; this only clears
-    // the now-idle `launchctl list` entry and its plist once the result file above is durable, so
-    // a retried upgrade never collides with a stale label. Best-effort: `launchctl bootout`
-    // targeting your own still-running job is unreliable on some macOS versions, and the
-    // Coordinator's startup sweep is the backstop if this does not complete.
-    const stateDirectory = resolveComputerStateDirectory({
-      platform: process.platform,
-      homeDirectory: homedir(),
-      environment: Bun.env,
-    });
-    await cleanupComputerUpgradeJob(operation.requestId, { stateDirectory }).catch(() => {});
-  }
 }
 
 export async function runComputer(): Promise<void> {
@@ -831,7 +733,6 @@ export async function runComputer(): Promise<void> {
   const installDirectory = resolveComputerInstallDirectory({
     platform: platform.os,
     homeDirectory: homedir(),
-    environment: process.env,
   });
   const logging = await configureComputerLogger({
     dataDirectory: computerDirectory,

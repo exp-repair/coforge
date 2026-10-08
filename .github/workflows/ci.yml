@@ -5,7 +5,7 @@ on:
   workflow_call:
     inputs:
       track:
-        description: "Validation scope: web deployment or local publication"
+        description: "Validation scope: web deployment, local publication, or installer publication"
         required: true
         type: string
     outputs:
@@ -67,7 +67,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           files="$RUNNER_TEMP/ci-changed-files"
-          if [ "$TRACK" = local ]; then
+          if [ "$TRACK" = local ] || [ "$TRACK" = installer ]; then
             : > "$files"
           elif [ "$EVENT" = pull_request ]; then
             git diff --check "$BASE...$HEAD"

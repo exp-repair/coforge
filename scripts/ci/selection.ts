@@ -16,7 +16,12 @@ const allChecks = [
   "windows-release",
 ];
 
-export function selectChecks(paths: string[], track: "changes" | "web" | "local") {
+export function selectChecks(paths: string[], track: "changes" | "web" | "local" | "installer") {
+  if (track === "installer") {
+    // The installer's own publication, from the exact main commit: its crate on all six native
+    // targets, with the supply-chain gate. Nothing else ships in it.
+    return ["installer-crate"];
+  }
   if (track === "local") {
     // Computer publication does not ship the installer crate, which has its own release.
     return allChecks.filter(
@@ -40,9 +45,9 @@ export function selectChecks(paths: string[], track: "changes" | "web" | "local"
       // The crate, and the Cargo workspace root that holds its lockfile and release profile.
       affected = ["installer-crate"];
     } else if (path === "scripts/release/install.ps1") {
-      affected = ["release", "web", "windows-installer"];
+      affected = ["computer", "release", "web", "windows-installer"];
     } else if (path === "scripts/release/install.sh") {
-      affected = ["release", "web"];
+      affected = ["computer", "release", "web"];
     } else if (path.startsWith("apps/web/")) {
       affected = ["web"];
     } else if (/^packages\/(computer|daemon)\/test\/.*\.test\.ts$/.test(path)) {
@@ -85,8 +90,8 @@ export function selectChecks(paths: string[], track: "changes" | "web" | "local"
 
 if (import.meta.main) {
   const track = Bun.argv[2];
-  if (track !== "changes" && track !== "web" && track !== "local") {
-    throw new Error("Expected changes, web, or local track");
+  if (track !== "changes" && track !== "web" && track !== "local" && track !== "installer") {
+    throw new Error("Expected changes, web, local, or installer track");
   }
   const paths = (await Bun.stdin.text()).split("\0").filter(Boolean);
   const checks = selectChecks(paths, track);

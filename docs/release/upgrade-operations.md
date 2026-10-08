@@ -1,82 +1,120 @@
-# Upgrade operations and the runner hold
+# Upgrade operations
 
-## Upgrade operations and their receipts
+An upgrade is run by the separately released `coforge-installer`. Computer only
+starts it, reads its receipt, and hands the result to the Daemon. The installer
+owns the machine mutation lock, the recovery journal, download and verification,
+service stop and start, process ends, activation, probing, and rollback. See
+[`crates/installer/AGENTS.md`](../../crates/installer/AGENTS.md) for its command
+line and exit codes.
 
-Every upgrade or rollback - remote or from the CLI - is one `UpgradeOperation`
-`{ requestId, operation, selection, origin, quiet }`, built once at the process
-boundary and passed explicitly from there. No environment variable carries an
-operation's identity. The operation's durable `<requestId>.request.json` and
-`<requestId>.result.json` under `~/.coforge/computer/install/upgrade-results`
-are the only channel between the coordinator process and the Daemon, and the
-result receipt names its own `request_id`.
+## Starting an upgrade
 
-The Coordinator records each operation in `~/.coforge/daemon/bindings.json` as
-`upgradeOperations`; this is the single canonical operation state for exclusion,
-reporting, acknowledgement and audit. The write-once result file is inter-process
-evidence that advances it from `pending` to `succeeded`/`failed`, not a second
-state machine. Child config and cloud messages are projections of the canonical
-record. Settlement happens during exact-request resume and on startup/watch
-recovery when needed; server acceptance moves the same record to `acknowledged`.
-Only
-one operation may be pending per binding; a second request is refused before
-anything is launched rather than left to collide over the installation lock.
+`coforge-computer upgrade`, `coforge-computer install`, and the hidden
+`__remote-upgrade` entry point (started by the Daemon for a server request) build
+one operation `{ requestId, selection, origin }` at the process boundary
+(`release/upgrade-operation.ts`). The request id is a UUID that names the receipt.
 
-A terminal result is reported to the server as `computer:upgrade_result`
-(`ComputerUpgradeResult`, additive, `protocol_major` unchanged) after the
-Workspace daemon's ready handshake. A reported failure settles the request with
-reason `reported`; a reported success is corroborating evidence only, and the
-server still requires the Computer's own new identity and matching versions
-before an upgrade counts as complete. Reported failure text is sanitized of
-absolute paths and credential-shaped runs at both ends.
+For each operation, `release/upgrade-runner.ts` then:
+
+1. obtains `coforge-installer` fresh from the feed's `installer/latest`
+   (`release/installer-launch.ts`). The download is verified and kept under
+   `<install root>/installer/<sha256>/`, so an installer fix reaches the next
+   upgrade without a Computer release;
+2. runs `coforge-installer upgrade --request-id <id> --version <selection>
+   --caller-pid <pid>`. The caller pid is verified by the installer as the parent
+   and is never stopped;
+3. reads `<install root>/upgrade-results/<id>.result.json`.
+
+If the installer cannot be obtained, or exits without a receipt, Computer writes
+a failed receipt itself (with `UpdateError.code` when the installer could not be
+obtained). The write is exclusive: an installer receipt that already exists is
+never replaced. A CLI operation prints the installer's stderr and fails when the
+result is not `succeeded`.
+
+`coforge-installer install` is the same transaction with a generated request id;
+the bootstrap scripts ([per-user installation](per-user-installation.md)) run it
+for a first install.
+
+## What the installer does
+
+In order, with the machine mutation lock held throughout:
+
+- refuses while the recovery journal `installer-transaction.json` exists (exit 3);
+  request id replay returns the earlier outcome, and a reused id for another
+  operation is refused (exit 2);
+- downloads and verifies the target version, and checks it with
+  `coforge-computer __lifecycle protocol`;
+- requires the running version's `__lifecycle status` to be healthy before anything
+  changes, and refuses a foreground externally supervised Computer;
+- writes the recovery journal, then collects the product's processes (the caller
+  excluded), stops the service through launchd, systemd `--user`, or Task
+  Scheduler, and ends any survivor (SIGTERM, then SIGKILL, then verify it is
+  dead). Their identities go into the receipt as `deadProcessIdentities`;
+- activates the target, starts the service, and waits up to 60 s for the
+  supervisor to report the target version under a new supervisor id. Workspace
+  health is not part of this check;
+- on failure rolls back to the previous version and records
+  `UPGRADE_ROLLED_BACK` (exit 1). If the rollback cannot be verified, the
+  operation ends unresolved with the journal kept (exit 3).
+
+Exit codes: 0 succeeded; 1 failed (rolled back, or refused before any change);
+2 held (another run holds the lock, or the request id belongs to something
+else); 3 unresolved, which needs `coforge-computer recover`.
+
+## Downgrade and recovery
+
+There is no `rollback` command. Moving to an older version is
+`coforge-computer upgrade --version <older>`.
+
+`coforge-computer recover` runs `coforge-installer recover`, which settles an
+unfinished upgrade from the journal. While the journal exists, every other
+installer operation exits 3 without a receipt and names `coforge-computer recover`.
+
+## Daemon settlement
+
+The Daemon settles the operation from the receipt, exactly as for any upgrade:
+
+- the Daemon records each operation in `~/.coforge/daemon/bindings.json` as
+  `upgradeOperations`, and only one operation may be pending per binding;
+- a terminal result is reported to the server as `computer:upgrade_result`
+  (`ComputerUpgradeResult`, additive, `protocol_major` unchanged) after the
+  Workspace daemon's ready handshake. A reported failure settles the request with
+  reason `reported`; a reported success is corroborating evidence only, and the
+  server still requires the Computer's own new identity and matching versions
+  before an upgrade counts as complete;
+- reported failure text is sanitized of absolute paths and credential-shaped runs
+  at both ends.
 
 Because the Daemon calls a server method that older deployments do not expose, a
 Computer release carrying this behaviour must ship together with the Web
 deployment that accepts it.
 
-## The runner hold
+## Agents during an upgrade
 
-Stopping the Supervisor gives each Agent about two seconds (a 1 s SIGTERM / 1 s
-SIGKILL ladder), which is not enough for a tool call. Before the stop, the
-coordinator therefore sends `daemon:hold` to the Coordinator, which fans it out
-to every running Workspace daemon over the per-Workspace sockets it already
-owns. A held daemon stops admitting new turns: an inbound delivery is queued on
-the existing per-Agent input queue rather than rejected, is never drained and so
-is never acknowledged, and no new Agent process is launched. Because the
-`agent:deliver:ack` is sent from inside that drain, a held delivery stays
-pending on the server and is republished after the restart - nothing is lost.
+An upgrade has no launch hold and no pause. The service stop stops busy Agents
+with it. Unread messages come back from the cloud read boundary after the restart;
+ACK rules are in the root [`AGENTS.md`](../../AGENTS.md) invariants.
 
-The coordinator then polls the hold - it is idempotent, so a poll is a repeat
-call - until every Agent's last Activity is a terminal detail kind or
-`RUNNER_HOLD_MS` (30 s) elapses, then stops regardless, logging one
-`upgrade:runner_hold_deadline` event per Agent still busy at the deadline. A
-Workspace daemon that does not answer within 5 s counts as idle: an unreachable
-daemon must never block an upgrade. The hold is in-memory only, so a restarted
-daemon - including one restored by a failed install's rollback - is never born
-held.
+## The restart runner hold
 
-`upgrade` and `rollback` get the hold because both go through
-`UpgradeLifecycle`. `coforge-computer stop` deliberately does not: an explicit
-stop is immediate.
-
-`coforge-computer restart` also waits up to 30 s for busy Agents, and a remote
-restart from the web is the same `daemon:restart` local RPC, so it waits too. It
-does not go through `UpgradeLifecycle`; the Coordinator holds the one Workspace
-it is about to stop, immediately before stopping it, and an unscoped restart
-holds each enabled Workspace in turn as it reaches it. As with the upgrade, the
-wait is bounded and every failure proceeds: a Workspace that cannot be held, does
-not answer, or stays busy past the deadline is restarted anyway, logging
+Stopping the supervisor gives each Agent about two seconds (a 1 s SIGTERM / 1 s
+SIGKILL ladder), which is not enough for a tool call. `coforge-computer restart`
+and the same `daemon:restart` local RPC from the web therefore first send
+`daemon:hold` to the target Workspace daemons, and wait up to `RUNNER_HOLD_MS`
+(30 s) for busy Agents to finish. A Workspace daemon that does not answer within
+5 s counts as idle, and every failure proceeds with the restart, logging
 `restart:runner_hold_quiescent` or `restart:runner_hold_expired`.
 
-`coforge-computer restart --supervisor` is different again: it restarts the
-Coordinator process itself, not a Workspace runtime, through the platform's own
-process manager (`launchctl kickstart -k` on macOS; `systemctl --user
-reset-failed` then `restart` on Linux; ending and re-running the scheduled task
-on Windows), then waits for the local handshake. It is mutually exclusive with
-`--workspace`. Before restarting it engages the same fanned-out runner hold
-described above, unless the Coordinator cannot be reached at all - the case
-this command exists for - in which case it skips the hold and restarts anyway.
-It refuses on a `foreground` externally supervised Computer, with the same
-wording an upgrade's own restartability check uses. Until this record, the only
-way to restart a stuck Coordinator was `systemctl --user restart
-coforge-daemon.service` or `launchctl kickstart -k …` by hand, which must never
-appear in user-facing copy.
+A held daemon stops admitting new turns. An inbound delivery is queued on the
+existing per-Agent input queue rather than rejected, is never drained, and so is
+never acknowledged; it is republished after the restart. No new Agent process is
+launched. The hold is in memory only, so a restarted daemon is never born held.
+
+`coforge-computer stop` deliberately does not hold: an explicit stop is immediate.
+
+`coforge-computer restart --supervisor` restarts the Computer supervisor process
+itself, through the platform's process manager (`launchctl kickstart -k` on macOS;
+`systemctl --user reset-failed` then `restart` on Linux; ending and re-running the
+scheduled task on Windows). It is mutually exclusive with `--workspace`. It engages
+the same hold first, unless the supervisor cannot be reached at all, in which case
+it restarts anyway. It refuses on a `foreground` externally supervised Computer.

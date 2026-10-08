@@ -44,6 +44,21 @@ Agent 参照，不要按前面的步骤重复创建。
 通配符；feed 里只有 manifest 是 `.json`，覆盖范围正好。权重 99 压过全目录那条，否则
 `latest` 会被 365 天规则盖住，发布了新版本客户端读不到，而且失败是静默的。
 
+**待应用，尚未生效**（installer feed 的指针，见
+[Installer feed](../../release/installer-feed.md)）：`releases-staging.coforge.cn` 需要再加一条，
+在它生效并验证之前，不要依赖 `installer/latest`：
+
+| 匹配 | 类型 | 过期 | 强制回源验证 | 权重 |
+| --- | --- | --- | --- | --- |
+| `/installer/latest` | 目录 | 0 秒 | 开启 | 99 |
+
+设置与 `/latest` 相同（client 响应头 `no-cache, must-revalidate`）。假设：上表的 `/latest`
+目录规则同时覆盖文件 `/latest` 本身——本记录没有明说匹配语义，只说明这条规则以权重 99
+压过 365 天规则，使 `latest` 不被缓存，所以新规则按同样方式配置。目录规则按路径前缀匹配，
+`/latest` 不覆盖 `/installer/latest`，两条规则必须分开。`installer/<version>/manifest.json`
+以 `.json` 结尾，已被上表的 `json` 后缀规则覆盖，无需另加。验证命令见 installer feed 文档的
+「Before the first installer release」。
+
 `<version>/<target>/coforge-computer.sha256` 落在 365 天那条规则下，这是对的：sidecar
 和它描述的二进制一样按版本不可变。
 

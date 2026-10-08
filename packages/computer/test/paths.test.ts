@@ -4,7 +4,6 @@ import {
   resolveComputerBinaryDirectory,
   resolveComputerConfigDirectory,
   resolveComputerCredentialsDirectory,
-  resolveComputerInstallDirectory,
   resolveComputerStateDirectory,
   resolveDaemonSocketPath,
 } from "#src/paths";
@@ -53,11 +52,6 @@ test("Coordinator local RPC socket is a file path under the Daemon state directo
       stateDirectory: "C:\\Users\\alice\\.coforge\\daemon",
     }),
   ).toBe("C:\\Users\\alice\\.coforge\\daemon\\daemon.sock");
-});
-
-test("Computer installation paths stay under its directory", () => {
-  const input = { platform: "linux" as const, homeDirectory: "/home/alice", environment: {} };
-  expect(resolveComputerInstallDirectory(input)).toBe("/home/alice/.coforge/computer/install");
 });
 
 test("the shim directory is the XDG user binary directory, not the private root", () => {

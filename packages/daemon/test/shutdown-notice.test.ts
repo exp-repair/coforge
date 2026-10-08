@@ -155,6 +155,7 @@ async function runtimeHarness(
   hooks: {
     sendShutdownNotice?: (value: DaemonRuntimeShutdown) => Promise<void>;
     revokeAgentApiKey?: () => Promise<void>;
+    installerJournalExists?: () => boolean;
   } = {},
 ) {
   const credentials = new InMemoryDaemonCredentialStore();
@@ -202,6 +203,10 @@ async function runtimeHarness(
         },
       }),
     },
+    undefined,
+    undefined,
+    undefined,
+    { installerJournalExists: hooks.installerJournalExists ?? (() => false) },
   );
   await runtime.start(connection);
   await runtime.startAgent("agent-a", agentConfig);
@@ -229,7 +234,6 @@ test("a shutdown nobody held for tells the server the Computer is stopping, afte
 });
 
 test.each([
-  [RUNNER_HOLD_REASONS.UPGRADE, "computer_upgrade"],
   [RUNNER_HOLD_REASONS.WORKSPACE_RESTART, "computer_restart"],
   [RUNNER_HOLD_REASONS.COMPUTER_RESTART, "computer_restart"],
 ] as const)("a shutdown held for %s names it as %s", async (hold, reason) => {
@@ -241,10 +245,35 @@ test.each([
   expect(notices.map((sent) => sent.reason)).toEqual([reason]);
 });
 
+test("a shutdown while the installer's recovery journal exists names the Computer upgrade", async () => {
+  const { runtime, notices } = await runtimeHarness({ installerJournalExists: () => true });
+
+  await runtime.stop();
+
+  expect(notices.map((sent) => sent.reason)).toEqual(["computer_upgrade"]);
+});
+
+test("a shutdown without the installer's recovery journal stays a Computer stop", async () => {
+  const { runtime, notices } = await runtimeHarness({ installerJournalExists: () => false });
+
+  await runtime.stop();
+
+  expect(notices.map((sent) => sent.reason)).toEqual(["computer_stop"]);
+});
+
+test("a fresh restart hold names the restart even while the installer's journal exists", async () => {
+  const { runtime, notices } = await runtimeHarness({ installerJournalExists: () => true });
+
+  runtime.holdRunners(RUNNER_HOLD_REASONS.COMPUTER_RESTART);
+  await runtime.stop();
+
+  expect(notices.map((sent) => sent.reason)).toEqual(["computer_restart"]);
+});
+
 test("a hold released before the shutdown no longer names its reason", async () => {
   const { runtime, notices } = await runtimeHarness();
 
-  runtime.holdRunners(RUNNER_HOLD_REASONS.UPGRADE);
+  runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   runtime.releaseRunners();
   await runtime.stop();
 
@@ -256,7 +285,7 @@ test("a hold left over from an operation that ended long ago does not name a lat
   const heldAt = Date.now();
 
   setSystemTime(heldAt);
-  runtime.holdRunners(RUNNER_HOLD_REASONS.UPGRADE);
+  runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   setSystemTime(heldAt + SHUTDOWN_HOLD_REASON_WINDOW_MS + 1);
   await runtime.stop();
 
@@ -268,13 +297,13 @@ test("a hold still being renewed names the stop that follows it", async () => {
   const heldAt = Date.now();
 
   setSystemTime(heldAt);
-  runtime.holdRunners(RUNNER_HOLD_REASONS.UPGRADE);
+  runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   setSystemTime(heldAt + SHUTDOWN_HOLD_REASON_WINDOW_MS);
-  runtime.holdRunners(RUNNER_HOLD_REASONS.UPGRADE);
+  runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
   setSystemTime(heldAt + SHUTDOWN_HOLD_REASON_WINDOW_MS + 1);
   await runtime.stop();
 
-  expect(notices.map((sent) => sent.reason)).toEqual(["computer_upgrade"]);
+  expect(notices.map((sent) => sent.reason)).toEqual(["computer_restart"]);
 });
 
 test("the Agent keys are revoked without waiting for the shutdown notice", async () => {

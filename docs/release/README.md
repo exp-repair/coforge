@@ -55,12 +55,13 @@ Read this overview first, then the topic files the task needs.
 | [Cloud environment model](cloud-environments.md)                    | `staging` versus `production` triggers, authorization, Compose projects, and secrets                       |
 | [Local Computer distribution model](local-distribution.md)          | Feed layout, schema 2 manifest, gzip transport, checksum sidecar, write-once versions, and version strings |
 | [Feed hosting and installation entry points](local-feed-hosting.md) | Release and file CDN domains, per-deployment installer URLs, origin privacy, and cache policy              |
+| [Installer feed and release workflow](installer-feed.md)            | The `installer/` feed layout, its write-once versions, the installer's manual release workflow, `pointer_only`, and the product gate |
 | [Per-user installation](per-user-installation.md)                   | Installation paths, PATH shims, version store, launchers, selection modes, and environment-bound builds    |
 | [Reading GitHub Actions](github-actions.md)                         | The CI, Web deploy, and Computer publish workflows, check selection, and version naming                    |
 | [Main to staging](main-to-staging.md)                               | The automated cloud deployment and local publication paths to staging                                      |
 | [Staging to production](staging-to-production.md)                   | The two-party production promotion for each track                                                          |
-| [Health verification](health-verification.md)                       | Cloud health checks, diagnostics, local readiness gates, and the upgrade coordinator                       |
-| [Upgrade operations and the runner hold](upgrade-operations.md)     | `UpgradeOperation` records and receipts, the runner hold, and `restart` behavior                           |
+| [Health verification](health-verification.md)                       | Cloud health checks, diagnostics, local readiness gates, and upgrade health checks                         |
+| [Upgrade operations](upgrade-operations.md)                         | Installer-run upgrades and downgrades, receipts, recovery, and the restart runner hold                     |
 | [Rollback](rollback.md)                                             | Rollback authorization and targets for each track                                                          |
 | [Audit records](audit-records.md)                                   | What every release, promotion, failure, and rollback record must preserve                                  |
 | [Routine release boundary](routine-release-boundary.md)             | Pre-mutation checklist and changes that are infrastructure work rather than a release                      |

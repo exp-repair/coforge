@@ -1,10 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDaemonHost, LocalDaemonLauncher } from "@lrm/coforge-daemon";
-import { ComputerUpdater } from "#src/updater";
-import { buildReleaseTree } from "../../../scripts/release/build-release";
+import { LocalDaemonLauncher } from "@lrm/coforge-daemon";
 import {
   DAEMON_RUNTIME_READY_METHOD,
   decodeDaemonRuntimeReadyRequest,
@@ -19,33 +17,12 @@ let containerName: string;
 let centrifugoPort: number;
 let proxy: ReturnType<typeof Bun.serve>;
 const readyRequests: DaemonRuntimeReadyRequest[] = [];
-const systemdUserAvailable =
-  process.platform === "linux" &&
-  Bun.spawnSync(["systemctl", "--user", "show-environment"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).exitCode === 0;
-
 const waitFor = async (condition: () => boolean | Promise<boolean>, message: string) => {
   const deadline = Date.now() + 30_000;
   while (!(await condition())) {
     if (Date.now() >= deadline) throw new Error(message);
     await Bun.sleep(50);
   }
-};
-
-const waitForSystemdUserUnitInactive = async (serviceName: string) => {
-  await waitFor(() => {
-    const result = Bun.spawnSync([
-      "systemctl",
-      "--user",
-      "show",
-      serviceName,
-      "--property=ActiveState",
-      "--value",
-    ]);
-    return result.exitCode !== 0 || result.stdout.toString().trim() === "inactive";
-  }, `systemd user unit ${serviceName} did not become inactive`);
 };
 
 beforeAll(async () => {
@@ -234,8 +211,6 @@ test("real compiled machine supervisor preserves Workspace lifecycle and recover
     );
 
     await client.control("stop", "b");
-    await client.control("pause");
-    await client.control("resume");
     await client.control("start", "a");
     const orphanedAProcessId = (await client.control("snapshot")).find(
       (runtime) => runtime.workspaceId === "a",
@@ -278,201 +253,3 @@ test("real compiled machine supervisor preserves Workspace lifecycle and recover
     await supervisor.exited;
   }
 }, 120_000);
-
-test.skipIf(!systemdUserAvailable)(
-  "native coordinator survives caller exit under the real systemd user manager, upgrades the running set, and rolls back a bad candidate offline",
-  async () => {
-    const feedDirectory = join(root, "feed");
-    const downloadStarted = Promise.withResolvers<void>();
-    const allowDownload = Promise.withResolvers<void>();
-    const feed = Bun.serve({
-      port: 0,
-      async fetch(request) {
-        const path = new URL(request.url).pathname;
-        if (path === "/2.0.0/manifest.json") {
-          downloadStarted.resolve();
-          await allowDownload.promise;
-        }
-        return new Response(Bun.file(join(feedDirectory, path)));
-      },
-    });
-    const installRoot = join(root, "installation");
-    const stateDirectory = join(root, "upgrade-machine");
-    const socketPath = join(stateDirectory, "daemon.sock");
-    const serviceName = `coforge-native-upgrade-${crypto.randomUUID()}.service`;
-    const environment = {
-      ...process.env,
-      COFORGE_DAEMON_CONNECTION_ENDPOINT: `ws://127.0.0.1:${centrifugoPort}/connection/websocket`,
-    };
-    const artifacts = new Map<string, Uint8Array>();
-    for (const version of ["1.0.0", "2.0.0"]) {
-      const supplied = Bun.env[`COFORGE_NATIVE_TEST_BUILD_${version[0]}`];
-      const path = supplied ?? join(root, `computer-${version}`);
-      if (!supplied) {
-        const compiled = Bun.spawnSync([
-          process.execPath,
-          "build",
-          "--compile",
-          new URL("../src/main.ts", import.meta.url).pathname,
-          "--define",
-          `Bun.env.COFORGE_COMPUTER_VERSION=${JSON.stringify(version)}`,
-          "--define",
-          `process.env.COFORGE_DAEMON_VERSION=${JSON.stringify(version)}`,
-          "--outfile",
-          path,
-        ]);
-        if (compiled.exitCode !== 0) throw new Error(compiled.stderr.toString());
-      }
-      artifacts.set(version, new Uint8Array(await Bun.file(path).arrayBuffer()));
-    }
-    // Correct checksum but wrong embedded version: installation succeeds, process health must fail.
-    artifacts.set("3.0.0", artifacts.get("1.0.0")!);
-    for (const [version, bytes] of artifacts)
-      await buildReleaseTree(
-        {
-          version,
-          commit: "a".repeat(40),
-          buildDate: "2026-09-07T00:00:00Z",
-          photonWasm: new Uint8Array(Buffer.from("#wasm-fixture: photon_rs_bg.wasm\n")),
-          artifacts: { "linux-x64": { computer: bytes } },
-        },
-        feedDirectory,
-      );
-    await new ComputerUpdater({
-      baseUrl: feed.url.toString(),
-      target: "linux-x64",
-      installRoot,
-    }).install("1.0.0");
-    const installed = join(installRoot, "active", "coforge-computer");
-    const client = new LocalDaemonLauncher({
-      executablePath: installed,
-      socketPath,
-      spawn: () => {},
-    });
-    const host = createDaemonHost({
-      platform: "linux",
-      executablePath: installed,
-      socketPath,
-      stateDirectory,
-      daemonConnectionEndpoint: environment.COFORGE_DAEMON_CONNECTION_ENDPOINT,
-      homeDirectory: homedir(),
-      uid: process.getuid?.() ?? 0,
-      serviceName,
-      runtimeHomeDirectory: root,
-    });
-    const unitDirectory = join(homedir(), ".config", "systemd", "user");
-    const unitPath = join(unitDirectory, serviceName);
-    const callerPath = Bun.env.COFORGE_NATIVE_TEST_CALLER ?? join(root, "upgrade-caller.ts");
-    if (!Bun.env.COFORGE_NATIVE_TEST_CALLER)
-      await writeFile(
-        callerPath,
-        `import { launchUpgradeCoordinator } from ${JSON.stringify(new URL("../src/release/upgrade-coordinator.ts", import.meta.url).pathname)}; const { operation, ...paths } = JSON.parse(Bun.argv[2]); await launchUpgradeCoordinator(operation, paths);`,
-      );
-    const invoke = (selection: string, operation = "upgrade") =>
-      Bun.spawn(
-        [
-          process.execPath,
-          callerPath,
-          JSON.stringify({
-            operation: {
-              requestId: crypto.randomUUID(),
-              operation,
-              selection,
-              origin: "cli",
-              quiet: false,
-            },
-            installRoot,
-            target: "linux-x64",
-            baseUrl: feed.url.toString(),
-            supervisorSocketPath: socketPath,
-            supervisorStatePath: stateDirectory,
-            executablePath: installed,
-            serviceName,
-            homeDirectory: homedir(),
-            runtimeHomeDirectory: root,
-          }),
-        ],
-        { env: environment, stdout: "ignore", stderr: "pipe" },
-      );
-    const results = async () =>
-      (await readdir(join(installRoot, "upgrade-results"))).filter((name) =>
-        name.endsWith(".result.json"),
-      );
-    try {
-      await host.ensureStarted({
-        workspaceId: "a",
-        computerId: "machine",
-        workspaceRoot: root,
-        daemonApiKey: "test-a",
-      });
-      for (const id of ["b"])
-        await host.ensureStarted({
-          workspaceId: id,
-          computerId: "machine",
-          workspaceRoot: root,
-          daemonApiKey: `test-${id}`,
-        });
-      await client.control("stop", "b");
-      const before = await client.control("snapshot");
-      const caller = invoke("2.0.0");
-      await downloadStarted.promise;
-      // Candidate download has started, but old Workspace process is still serving.
-      expect(await client.control("snapshot")).toEqual(before);
-      caller.kill("SIGTERM");
-      await caller.exited;
-      allowDownload.resolve();
-      await waitFor(
-        async () => (await results()).length === 1,
-        "detached coordinator did not finish",
-      );
-      const result = await Bun.file(
-        join(installRoot, "upgrade-results", (await results())[0]!),
-      ).json();
-      expect(result).toMatchObject({ status: "succeeded", version: "2.0.0" });
-      const after = await client.control("snapshot");
-      expect(after.find((runtime) => runtime.workspaceId === "a")?.version).toBe("2.0.0");
-      expect(after.find((runtime) => runtime.workspaceId === "a")?.processId).not.toBe(
-        before.find((runtime) => runtime.workspaceId === "a")?.processId,
-      );
-      expect(after.find((runtime) => runtime.workspaceId === "b")?.processId).toBe(0);
-      const failed = invoke("3.0.0");
-      expect(await failed.exited).not.toBe(0);
-      const outcomes = await Promise.all(
-        (await results()).map((name) =>
-          Bun.file(join(installRoot, "upgrade-results", name)).json(),
-        ),
-      );
-      expect(
-        outcomes.some(
-          (outcome) => outcome.status === "failed" && outcome.restoredVersion === "2.0.0",
-        ),
-      ).toBe(true);
-      expect(
-        (await client.control("snapshot")).find((runtime) => runtime.workspaceId === "a")?.version,
-      ).toBe("2.0.0");
-      feed.stop(true);
-      const rollback = invoke("latest", "rollback");
-      expect(await rollback.exited).toBe(0);
-      const restored = await client.control("snapshot");
-      expect(restored.find((runtime) => runtime.workspaceId === "a")?.version).toBe("1.0.0");
-      expect(restored.find((runtime) => runtime.workspaceId === "b")?.processId).toBe(0);
-    } finally {
-      allowDownload.resolve();
-      await host.stop().catch(() => {});
-      // `systemctl stop` is normally synchronous, but keep cleanup ordered on
-      // the externally observable systemd state before checking the supervisor
-      // marker. This distinguishes a still-managed service from a supervisor
-      // shutdown that failed to release ownership.
-      await waitForSystemdUserUnitInactive(serviceName);
-      await waitFor(
-        async () => !(await Bun.file(join(stateDirectory, "supervisor.lock", "owner")).exists()),
-        "supervisor cleanup did not complete",
-      );
-      Bun.spawnSync(["systemctl", "--user", "disable", "--now", serviceName]);
-      await rm(unitPath, { force: true });
-      Bun.spawnSync(["systemctl", "--user", "daemon-reload"]);
-      feed.stop(true);
-    }
-  },
-  180_000,
-);

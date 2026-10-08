@@ -53,6 +53,9 @@ tracks' `latest` pointers are never the same object):
    each platform's `coforge-computer.sha256` sidecar from the same Computer
    binary bytes and the same checksum computation as the manifest entry - the
    two must never be allowed to diverge.
+   Before any object goes up, when this publication will move `latest`, it also
+   checks that the installer named by `installer/latest` speaks the protocol the
+   release needs ([Installer feed](installer-feed.md#product-gate)).
 4. Publish `manifest.json`, every platform's `coforge-computer.sha256`
    sidecar, every platform's sole `coforge-computer.gz`, and the one
    platform-independent `photon_rs_bg.wasm` beneath the new `<version>/`

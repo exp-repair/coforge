@@ -28,15 +28,6 @@ export class UpgradeOperationPendingError extends UpgradeError {
   }
 }
 
-/** This machine is mid-upgrade (`MachineSupervisor#assertMutable`); the launch-hold file is
- * still on disk. */
-export class UpgradeLaunchesPausedError extends UpgradeError {
-  constructor(message: string) {
-    super(UPGRADE_ERROR_CODE.LAUNCHES_PAUSED, message);
-    this.name = "UpgradeLaunchesPausedError";
-  }
-}
-
 /** `recordUpgrade` accepted the request, but the external upgrade job itself could not be
  * started (`launchComputerUpgrade` rejected). */
 export class UpgradeLaunchFailedError extends UpgradeError {

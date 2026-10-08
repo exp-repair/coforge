@@ -1209,6 +1209,7 @@ test("GitHub workflows pin external actions to full commit SHAs", async () => {
     "../../.github/workflows/ci.yml",
     "../../.github/workflows/deploy-staging.yml",
     "../../.github/workflows/release-staging.yml",
+    "../../.github/workflows/release-installer-staging.yml",
   ]) {
     const workflow = await Bun.file(new URL(path, import.meta.url)).text();
     const references = workflow

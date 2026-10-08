@@ -1,27 +1,19 @@
 import { RFC_UUID_PATTERN } from "@lrm/coforge-sdk/internal";
 
-/**
- * One Computer upgrade or rollback, identified once at the process boundary and carried
- * explicitly from there. Every process that takes part in an operation - the CLI, the
- * `__remote-upgrade` entry point, and the detached `__upgrade` coordinator - receives the same
- * record by argument or through the durable request file, never through the environment.
- */
-export type UpgradeOperationKind = "upgrade" | "rollback";
-
 /** Who asked for the operation. Remote operations owe the server a terminal result. */
 export type UpgradeOperationOrigin = "remote" | "cli";
 
+/**
+ * One Computer upgrade, identified once at the process boundary and carried explicitly from there:
+ * the CLI and the `__remote-upgrade` entry point both build the same record, and it reaches the
+ * installer as `--request-id`, never through the environment.
+ */
 export type UpgradeOperation = {
-  /** Stable operation identity; also names the durable request and result files. */
+  /** Stable operation identity; also names the receipt file. */
   requestId: string;
-  operation: UpgradeOperationKind;
   /** The release selector, or "latest". */
   selection: string;
   origin: UpgradeOperationOrigin;
-  /** The caller already announced this operation, so the installer omits its own banner. */
-  quiet: boolean;
-  /** Install from an already-downloaded release directory. Local operations only. */
-  localDirectory?: string;
 };
 
 export function assertUpgradeRequestId(value: unknown): asserts value is string {
@@ -39,21 +31,10 @@ export function parseRemoteUpgradeOperation(argv: readonly string[]): UpgradeOpe
   assertUpgradeRequestId(requestId);
   const selection = value("--version");
   if (!selection) throw new Error("remote upgrade requires --version");
-  return { requestId, operation: "upgrade", selection, origin: "remote", quiet: true };
+  return { requestId, selection, origin: "remote" };
 }
 
-/** Builds the operation an interactive `upgrade`, `install`, or `rollback` command runs. */
-export function createLocalUpgradeOperation(
-  operation: UpgradeOperationKind,
-  selection: string,
-  options: { quiet?: boolean; localDirectory?: string } = {},
-): UpgradeOperation {
-  return {
-    requestId: crypto.randomUUID(),
-    operation,
-    selection,
-    origin: "cli",
-    quiet: options.quiet ?? false,
-    ...(options.localDirectory ? { localDirectory: options.localDirectory } : {}),
-  };
+/** Builds the operation an interactive `upgrade` or `install` command runs. */
+export function createLocalUpgradeOperation(selection: string): UpgradeOperation {
+  return { requestId: crypto.randomUUID(), selection, origin: "cli" };
 }

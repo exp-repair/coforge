@@ -62,10 +62,10 @@ falls back to an unmanaged child process.
 Use `coforge-computer logs` to print existing Computer log files and follow
 new log records in real time. Press `Ctrl-C` to exit.
 
-`coforge-computer install` and `upgrade` select `latest` or one exact version
-from the build's own release feed. `rollback` reactivates the retained previous
-version offline after checking the unified executable and Agent launcher. Upgrade
-and rollback coordinate replacement of the running executable. All
+`coforge-computer install` and `upgrade` select `latest` or one exact version;
+`coforge-installer` runs the transaction, and `upgrade --version <older>` moves
+to an older version. `coforge-computer recover` finishes an upgrade that did not
+complete. All
 versions and the sole Computer shim are installed for the current user; Daemon
 is never exposed as a separate installed command.
 

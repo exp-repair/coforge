@@ -51,6 +51,7 @@ import {
   AgentMessageDraftStore,
 } from "#src/persistence/agent-message-draft-store";
 import {
+  RUNNER_HOLD_REASONS,
   AGENT_SEND_LOCAL_DEADLINE_MS,
   AGENT_SEND_MAX_REQUESTS,
   AGENT_SEND_REQUEST_TIMEOUT_MS,
@@ -3653,7 +3654,7 @@ describe("DaemonRuntime", () => {
 
     try {
       await runtime.start(connection);
-      runtime.holdRunners("upgrade");
+      runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART);
       await deliver(5);
       runtime.releaseRunners();
       await deliver(6);

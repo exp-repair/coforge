@@ -1,6 +1,7 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { UPGRADE_ERROR_CODE } from "@lrm/coforge-sdk/internal";
+
+import { resolveComputerInstallDirectory } from "./computer-install-directory";
+import { readUpgradeReceipt } from "./upgrade-receipt-file";
 
 /**
  * The Computer's external upgrade job reports only through a durable receipt file. Nothing else
@@ -20,7 +21,8 @@ export type ComputerUpgradeReceipt = {
 };
 
 export type ComputerUpgradeReceiptOptions = {
-  homeDirectory?: string;
+  /** The install root whose `upgrade-results` holds the receipts. Defaults to this machine's. */
+  installRoot?: string;
   /** Injectable receipt reader, for tests only. */
   readReceipt?: (requestId: string) => Promise<ComputerUpgradeReceipt | undefined>;
 };
@@ -41,58 +43,37 @@ export type PendingComputerUpgrade = {
   requestedAt: number;
 };
 
-export function computerUpgradeResultPath(requestId: string, homeDirectory = homedir()): string {
-  return join(
-    homeDirectory,
-    ".coforge",
-    "computer",
-    "install",
-    "upgrade-results",
-    `${requestId}.result.json`,
-  );
-}
-
-/** The largest receipt file a reader accepts. A larger one is treated as no receipt, so the job
- * that writes it (the installer, see `InstallerReceiptSchema`) must stay under it. */
-export const UPGRADE_RECEIPT_MAX_BYTES = 64 * 1024;
-
 /**
- * Reads one operation's receipt, or undefined while the job has not finished: no file, a file
- * over `UPGRADE_RECEIPT_MAX_BYTES`, one that is not JSON, or one with no known status. The
- * installer's "held" receipt means it stopped the operation on purpose, so it settles as a failed
- * one, carrying the receipt's `error` and any `errorCode`; the wire has no held status.
+ * Reads one operation's receipt, or undefined while the job has not finished: no file, or a file
+ * the shared reader refuses (over the size cap, not JSON, no known shape, another operation's).
+ * The installer's "held" receipt means it stopped the operation on purpose; the shared reader
+ * settles it as a failed one, carrying the receipt's `error` and any `errorCode`.
  */
 export async function readComputerUpgradeReceipt(
   requestId: string,
   options: ComputerUpgradeReceiptOptions = {},
 ): Promise<ComputerUpgradeReceipt | undefined> {
   if (options.readReceipt) return options.readReceipt(requestId);
-  const file = Bun.file(computerUpgradeResultPath(requestId, options.homeDirectory));
-  if (!(await file.exists())) return undefined;
-  let value: unknown;
+  let file: Awaited<ReturnType<typeof readUpgradeReceipt>>;
   try {
-    // One byte past the cap tells an oversized file apart without reading the rest of it.
-    const bytes = await file.slice(0, UPGRADE_RECEIPT_MAX_BYTES + 1).bytes();
-    if (bytes.byteLength > UPGRADE_RECEIPT_MAX_BYTES) return undefined;
-    value = JSON.parse(new TextDecoder().decode(bytes));
+    file = await readUpgradeReceipt(
+      options.installRoot ?? resolveComputerInstallDirectory(),
+      requestId,
+    );
   } catch {
     return undefined;
   }
-  if (!value || typeof value !== "object") return undefined;
-  const receipt = value as Record<string, unknown>;
-  // A receipt that names a different operation belongs to someone else's file.
-  if (typeof receipt.request_id === "string" && receipt.request_id !== requestId) return undefined;
-  if (receipt.status !== "succeeded" && receipt.status !== "failed" && receipt.status !== "held")
-    return undefined;
+  if (!file) return undefined;
+  const { result } = file;
   return {
     requestId,
-    status: receipt.status === "held" ? "failed" : receipt.status,
-    ...(typeof receipt.version === "string" && receipt.version ? { version: receipt.version } : {}),
-    ...(typeof receipt.error === "string" && receipt.error ? { error: receipt.error } : {}),
-    ...(typeof receipt.errorCode === "string" && receipt.errorCode
-      ? { errorCode: receipt.errorCode }
+    status: result.status,
+    ...(typeof result.version === "string" && result.version ? { version: result.version } : {}),
+    ...(typeof result.error === "string" && result.error ? { error: result.error } : {}),
+    ...(typeof result.errorCode === "string" && result.errorCode
+      ? { errorCode: result.errorCode }
       : {}),
-    at: file.lastModified > 0 ? file.lastModified : Date.now(),
+    at: file.modifiedAt > 0 ? file.modifiedAt : Date.now(),
   };
 }
 

@@ -2,8 +2,8 @@
 
 Verified on 2026-09-14 with a local host-platform package, not a published release:
 
-1. The production `__install-local` bootstrap entry verified manifest and gzip
-   identities and installed the unified Computer executable in its version store.
+1. The production bootstrap fetched `coforge-installer`, which verified the manifest
+   and gzip identities and installed the unified Computer executable in its version store.
 2. The installed `setup --workspace dev-user --json` used real browser device-code
    approval and returned `server_registration_created: true`, `daemon_started: true`.
 3. Both Coordinator and Workspace systemd services were active; the Computers
@@ -40,8 +40,8 @@ export COFORGE_E2E_WORKSPACE_SLUG=dev-user
 COFORGE_E2E_ALLOW_INSTALL=1 scripts/e2e/run-computer-setup.sh
 ```
 
-The script builds a unique fixture version, packages it, calls the real installer,
-then invokes setup from `install/active`. It extracts the registration path from
+The script builds a unique fixture version, packages it, installs it with
+`coforge-installer install --version <v> --from-directory <release dir>`, then invokes setup from `install/active`. It extracts the registration path from
 the CLI result and runs the browser test against that Computer. The test selects
 Pi and DeepSeek V4.1 Flash through the UI, creates a uniquely named Agent, sends a
 unique `NATIVE_E2E_...` marker request, and requires an exact reply from the Agent's
@@ -63,3 +63,18 @@ Oracle found no blockers in this incremental change. Channel SSR/live DOM checks
 also observed disabled-before-hydration and enabled-after-hydration behavior.
 Thread entry and send-error recovery remain manual regression checklist items;
 this direct-chat E2E does not claim to cover them.
+
+## Installer and upgrade E2E
+
+`scripts/e2e/installer-linux.sh` proves the Linux installer and upgrade path with six
+scenarios: fresh install, the `coforge-daemon.service` supervisor unit, upgrade with replay,
+rollback of a broken release, SIGKILL recovery, and `coforge-computer upgrade` through a
+loopback HTTP/1.0 feed. It runs only inside `coforge-linux`: it first stops the
+`coforge-daemon.service` unit and deletes `~/.coforge`, the unit file, and the shim there.
+
+```sh
+orb -m coforge-linux bash -lc '<checkout>/scripts/e2e/installer-linux.sh'
+```
+
+The artifact is `<checkout>/.amp/e2e/installer-linux/<UTC>/summary.md`;
+exit 0 means every row passed.

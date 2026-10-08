@@ -537,7 +537,7 @@ fn validate(fields: &ReceiptFields) -> Result<(), InvalidReceipt> {
 /// An RFC 9562 UUID in either case, as the product's `request_id` pattern reads it
 /// (`RFC_UUID_PATTERN`, case-insensitive): a `1`-`8` version digit and an `8`, `9`, `a`, or `b`
 /// variant digit.
-fn is_request_id(value: &str) -> bool {
+pub fn is_request_id(value: &str) -> bool {
     let groups: Vec<&str> = value.split('-').collect();
     let lengths = [8, 4, 4, 4, 12];
     groups.len() == lengths.len()

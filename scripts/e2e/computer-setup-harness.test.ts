@@ -15,9 +15,15 @@ const managedInfra = await readFile(new URL("./managed-infra.sh", import.meta.ur
 const managedWeb = await readFile(new URL("./managed-web.sh", import.meta.url), "utf8");
 
 test("Computer setup harness exercises the compiled CLI and real daemon path", () => {
-  expect(harness).toContain(".amp/e2e/bin/coforge-computer");
-  expect(harness.indexOf("__install-local")).toBeGreaterThan(-1);
-  expect(harness.indexOf("__install-local")).toBeLessThan(harness.indexOf("setup --workspace"));
+  expect(harness).toContain(".amp/e2e/native-package");
+  expect(harness).not.toContain("__install-local");
+  // The installer is built from this checkout, then installs the local package before setup runs.
+  expect(harness.indexOf("cargo build --locked --release")).toBeGreaterThan(-1);
+  expect(harness).toContain('coforge-installer" install --version "$version" --from-directory');
+  expect(harness.indexOf("cargo build --locked --release")).toBeLessThan(
+    harness.indexOf("--from-directory"),
+  );
+  expect(harness.indexOf("--from-directory")).toBeLessThan(harness.indexOf("setup --workspace"));
   expect(harness).not.toContain("dist/coforge-daemon");
   expect(harness).not.toContain("COFORGE_E2E_DAEMON_EXECUTABLE");
   expect(harness).not.toContain("COFORGE_E2E_ALLOW_DEVICE_AUTH=1");

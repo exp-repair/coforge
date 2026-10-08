@@ -376,14 +376,14 @@ export type AgentRuntimeProviderConfig =
  *   job is still alive). Covers what would otherwise be a separate "genuinely in flight" code -
  *   the Coordinator has no way to probe the external job's liveness, only whether a receipt or
  *   the pending TTL has arrived, so one code covers both until that changes.
- * - `LAUNCHES_PAUSED`: refused because this machine is mid-upgrade (`MachineSupervisor#assertMutable`).
+ * - `LAUNCHES_PAUSED`: reserved by the installer contract; no current path refuses with it.
  * - `LAUNCH_FAILED`: `recordUpgrade` accepted the request but the external upgrade job itself
  *   could not be started.
  * - `UPDATE_*`: reused verbatim from `packages/computer/src/updater.ts`'s `UpdateError.code`,
  *   surfaced when the job fails before any switch and there is no previous version to roll back
  *   to.
  * - `ROLLED_BACK` / `ROLLBACK_FAILED`: the job attempted a switch, it failed, and it either
- *   restored the previous version or could not (`upgrade-coordinator.ts`'s `switchRuntime`).
+ *   restored the previous version or could not (`coforge-installer`'s upgrade transaction).
  * - `EXPIRED_WITHOUT_RECEIPT`: the job never left a receipt before the pending TTL passed
  *   (`computer-upgrade-receipts.ts`).
  * - `INSTALLER_UNAVAILABLE` / `INSTALLER_INCOMPATIBLE`: `coforge-installer` never ran an
@@ -438,7 +438,7 @@ export const COMPUTER_CLI_COMMANDS = [
   "setup",
   "install",
   "upgrade",
-  "rollback",
+  "recover",
   "start",
   "stop",
   "restart",

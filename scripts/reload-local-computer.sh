@@ -17,8 +17,8 @@ usage() {
   cat <<'EOF'
 Usage: scripts/reload-local-computer.sh [options]
 
-Compile the local Computer/Daemon fixture, install it with __install-local,
-and restart the user systemd Daemon service.
+Compile the local Computer/Daemon fixture, install it with a coforge-installer built
+from this checkout (install --from-directory), and restart the user systemd Daemon service.
 
 Environment:
   COFORGE_E2E_WEB_URL              Local Web/backend URL baked into the fixture.
@@ -84,6 +84,14 @@ run_bun() {
   fi
 }
 
+run_cargo() {
+  if command -v mise >/dev/null 2>&1; then
+    mise exec -- cargo "$@"
+  else
+    cargo "$@"
+  fi
+}
+
 bindings_file="${HOME}/.coforge/daemon/bindings.json"
 default_web_url=http://localhost:8789
 if [ -f "$bindings_file" ]; then
@@ -134,8 +142,11 @@ if [ ! -x "$fixture_bin" ] || [ ! -f "$manifest" ]; then
 fi
 
 version=$(run_bun -e 'console.log((await Bun.file(Bun.argv[1]).json()).version)' "$manifest")
+installer_bin="$root/target/release/coforge-installer"
+echo "==> Building coforge-installer from this checkout"
+(CDPATH='' cd -- "$root/crates/installer" && run_cargo build --locked --release)
 echo "==> Installing local package version $version"
-if ! "$fixture_bin" __install-local --version "$version" --directory "$package_dir"; then
+if ! "$installer_bin" install --version "$version" --from-directory "$package_dir"; then
   echo "$name: local install failed" >&2
   echo "  If you see 'no healthy supervisor', the fixture Web URL likely does not" >&2
   echo "  match the running Daemon origin. Current COFORGE_E2E_WEB_URL=$COFORGE_E2E_WEB_URL" >&2

@@ -17,6 +17,7 @@ use flate2::bufread::MultiGzDecoder;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use ureq::tls::{RootCerts, TlsConfig};
 use ureq::unversioned::resolver::DefaultResolver;
 
 use crate::digest::hex;
@@ -93,23 +94,41 @@ impl FetchError {
     }
 }
 
-/// The production agent: HTTPS only, rustls with the webpki (Mozilla) roots, no transparent
-/// content decoding, no redirects, and a non-2xx status reported as an error.
-pub fn https_agent() -> ureq::Agent {
-    agent(true)
+/// How a release feed is reached. Chosen once, from the compiled feed URL (see
+/// `compiled_feed`), so a production build has no way to ask for a plain-HTTP agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// Production: HTTPS only, verified against the operating system's trust store.
+    Https,
+    /// A local end-to-end build against a loopback feed, and the tests. Plain HTTP only.
+    LoopbackHttp,
 }
 
-pub(crate) fn agent(https_only: bool) -> ureq::Agent {
-    agent_with_idle_timeout(https_only, IDLE_TIMEOUT)
+/// The agent for `transport`: no redirects, no transparent content decoding, a non-2xx status
+/// reported as an error, and the idle timeout. An HTTPS agent verifies the server with the
+/// platform verifier (`rustls-platform-verifier`: the macOS Security framework, Windows
+/// CryptoAPI, the Linux system CA bundle), so a network that re-signs TLS with its own CA works
+/// as it does for the Bun-based Computer.
+pub fn agent(transport: Transport) -> ureq::Agent {
+    agent_with_idle_timeout(transport, IDLE_TIMEOUT)
 }
 
 /// An agent whose transfers fail once they have received nothing for `idle`.
-pub(crate) fn agent_with_idle_timeout(https_only: bool, idle: Duration) -> ureq::Agent {
+pub(crate) fn agent_with_idle_timeout(transport: Transport, idle: Duration) -> ureq::Agent {
+    let tls = TlsConfig::builder()
+        .root_certs(RootCerts::PlatformVerifier)
+        .build();
     let config = ureq::Agent::config_builder()
-        .https_only(https_only)
+        .https_only(transport == Transport::Https)
+        .tls_config(tls)
         // install.sh and install.ps1 refuse every redirect when preparing for the updater, so a
         // 3xx is an error here, not a hop.
         .max_redirects(0)
+        // No pooled connections. ureq reuses a connection after an HTTP/1.0 response with a
+        // Content-Length and no `Connection: keep-alive`, but RFC 9112 section 9.3 closes it, and
+        // HTTP/1.0 servers such as `python3 -m http.server` do; the second request then fails.
+        .max_idle_connections(0)
+        .max_idle_connections_per_host(0)
         .timeout_connect(Some(Duration::from_secs(30)))
         .timeout_recv_response(Some(Duration::from_secs(60)))
         .build();

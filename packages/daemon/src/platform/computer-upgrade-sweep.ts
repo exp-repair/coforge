@@ -1,5 +1,4 @@
 import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
 import { LaunchdJob, launchdJobs, type LaunchdJobPlatform } from "./launchd-job";
@@ -7,6 +6,8 @@ import {
   computerUpgradeTaskName,
   type WindowsUpgradeTaskRunner,
 } from "./computer-upgrade-launcher";
+import { resolveComputerInstallDirectory } from "./computer-install-directory";
+import { upgradeReceiptPath, upgradeResultsDirectory } from "./upgrade-receipt-file";
 
 const UPGRADE_JOB_LABEL =
   /^cn\.coforge\.upgrade\.([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
@@ -18,7 +19,8 @@ export type SweepLeftoverComputerUpgradeJobsOptions = {
   /** The daemon's own state directory; matches the directory launchComputerUpgrade wrote the
    * plist into (`<stateDirectory>/upgrade-jobs`). */
   stateDirectory: string;
-  homeDirectory?: string;
+  /** The install root whose `upgrade-results` holds the receipts. Defaults to this machine's. */
+  installRoot?: string;
   /** Injectable native launchd access, for tests only. */
   jobPlatform?: LaunchdJobPlatform;
   /** Injectable result-file check, for tests only. */
@@ -51,21 +53,11 @@ export async function sweepLeftoverComputerUpgradeJobs(
 }
 
 async function sweepDarwin(options: SweepLeftoverComputerUpgradeJobsOptions): Promise<void> {
-  const home = options.homeDirectory ?? homedir();
+  const installRoot = options.installRoot ?? resolveComputerInstallDirectory();
   const directory = join(options.stateDirectory, "upgrade-jobs");
   const resultExists =
     options.resultExists ??
-    ((requestId: string) =>
-      Bun.file(
-        join(
-          home,
-          ".coforge",
-          "computer",
-          "install",
-          "upgrade-results",
-          `${requestId}.result.json`,
-        ),
-      ).exists());
+    ((requestId: string) => Bun.file(upgradeReceiptPath(installRoot, requestId)).exists());
   const logger = getLogger(["coforge", "daemon", "supervisor"]);
   const jobs = await (options.jobPlatform ? options.jobPlatform.jobs() : launchdJobs());
   for (const label of jobs.keys()) {
@@ -90,12 +82,12 @@ async function sweepDarwin(options: SweepLeftoverComputerUpgradeJobsOptions): Pr
 }
 
 async function sweepWindows(options: SweepLeftoverComputerUpgradeJobsOptions): Promise<void> {
-  const home = options.homeDirectory ?? homedir();
+  const installRoot = options.installRoot ?? resolveComputerInstallDirectory();
   const logger = getLogger(["coforge", "daemon", "supervisor"]);
   const run = options.windowsTaskRunner ?? defaultSchtasks;
   const requestIds =
     (await options.listCompletedRequestIds?.()) ??
-    (await listCompletedUpgradeRequestIds(home, options.resultExists));
+    (await listCompletedUpgradeRequestIds(installRoot, options.resultExists));
   if (requestIds.length === 0) return;
   // Result files accumulate across many local reloads; the Scheduled Task is often already gone.
   // One Query + skip-missing avoids serial schtasks /Delete (each ~1s) blocking Coordinator
@@ -145,10 +137,10 @@ async function listRegisteredWindowsUpgradeTaskNames(): Promise<Set<string>> {
 }
 
 async function listCompletedUpgradeRequestIds(
-  home: string,
+  installRoot: string,
   resultExists?: (requestId: string) => Promise<boolean>,
 ): Promise<string[]> {
-  const directory = join(home, ".coforge", "computer", "install", "upgrade-results");
+  const directory = upgradeResultsDirectory(installRoot);
   let names: string[];
   try {
     names = await readdir(directory);
