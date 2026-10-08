@@ -107,6 +107,8 @@ export type MessageView = {
   actionCard?: ActionCardView;
   weeklyReportSuggestion?: WeeklyReportMessageSuggestion;
   weeklyReportDisplayBody?: string;
+  /** Platform wake stored for the Agent. The conversation pane omits the row. */
+  weeklyReportHidden?: boolean;
 };
 
 export const GROUPING_WINDOW_MS = 5 * 60 * 1000;
