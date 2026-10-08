@@ -48,7 +48,6 @@ export function WeeklyReportMessageCard(props: {
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [sent, setSent] = useState(false);
   const [cancelled, setCancelled] = useState(false);
 
   useEffect(() => {
@@ -79,12 +78,13 @@ export function WeeklyReportMessageCard(props: {
   }
 
   async function confirmSend() {
-    if (suggestion.type !== "send-prompt" || busy || sent || props.disabled) return;
+    if (suggestion.type !== "send-prompt" || busy || applied || props.disabled) return;
     setBusy(true);
     setError(null);
     try {
       await confirmSendPrompt({ data: { reportId: suggestion.reportId } });
-      setSent(true);
+      setApplied(true);
+      writeAppliedSuggestionIds(cardKey, [props.messageId]);
       setConfirmOpen(false);
       await router.invalidate({ sync: true });
     } catch (cause) {
@@ -113,36 +113,28 @@ export function WeeklyReportMessageCard(props: {
   if (!loaded) return <p className="text-sm text-tertiary">{m.records_collect_run_loading()}</p>;
 
   if (suggestion.type === "send-prompt") {
-    const settled = sent || cancelled;
     return (
       <div className="mt-3 space-y-3">
-        {sent ? (
-          <p className="text-sm text-secondary">{m.records_report_send_succeeded()}</p>
-        ) : null}
-        {cancelled ? (
-          <p className="text-sm text-tertiary">{m.records_assistant_cancel_week()}</p>
-        ) : null}
-        {settled ? null : (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              color="primary"
-              className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
-              isDisabled={busy || props.disabled}
-              onPress={() => setConfirmOpen(true)}
-            >
-              {m.records_assistant_confirm_send()}
-            </Button>
-            <Button
-              size="sm"
-              color="secondary"
-              isDisabled={busy || props.disabled}
-              onPress={() => void cancelWeek()}
-            >
-              {m.records_assistant_cancel_week()}
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            color="primary"
+            className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
+            isDisabled={busy || applied || props.disabled}
+            isLoading={busy && !confirmOpen}
+            onPress={() => setConfirmOpen(true)}
+          >
+            {m.records_assistant_confirm_send()}
+          </Button>
+          <Button
+            size="sm"
+            color="secondary"
+            isDisabled={busy || cancelled || props.disabled}
+            onPress={() => void cancelWeek()}
+          >
+            {m.records_assistant_cancel_week()}
+          </Button>
+        </div>
         {error ? <p className="text-sm text-error-primary">{error}</p> : null}
         <WeeklySendConfirmDialog
           open={confirmOpen}

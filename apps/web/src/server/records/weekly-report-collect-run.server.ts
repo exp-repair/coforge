@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "#src/generated/prisma/client";
 import { AppError } from "#src/lib/app-error";
+import { getComputerStatusCache } from "#src/server/centrifugo/computer-status.server";
 import { collectorRuntimeConfigured } from "./weekly-report-collector.server";
 
 export const COLLECT_RUN_STATUS = {
@@ -24,6 +25,9 @@ export const COLLECT_SLOT_STALL_MS = 15 * 60_000;
 
 export const COLLECT_SLOT_STALL_REASON =
   "采集超时：采集 Agent 在限定时间内未上报结果（常见原因：模型接口失败或进程异常）。";
+
+export const COLLECT_SLOT_OFFLINE_REASON =
+  "电脑离线：采集 Agent 所在电脑的运行时不在线，无法开始采集。";
 
 export type CollectWindowKind = "week" | "month" | "quarter" | "year" | "custom";
 
@@ -373,13 +377,16 @@ export async function acceptCollectSlotReport(
 
 /**
  * ADR 0032 safety ceiling: overdue `running` slots become `stalled`, then an
- * empty wave leaves `collecting`. Called from the User-facing load path so the
- * side-chat card can settle without a separate cron.
+ * empty wave leaves `collecting`. A computer whose runtime is already offline
+ * fails immediately — the collector never starts, so the card must not stay on
+ * 「采集中」 until the stall ceiling. Called from the User-facing load path so
+ * the side-chat card can settle without a separate cron.
  */
 export async function settleStaleCollectRun(
   db: PrismaClient,
   input: { workspaceId: string; userId: string; runId: string },
   nowMs: number = Date.now(),
+  isComputerOnline?: (computerId: string) => Promise<boolean>,
 ): Promise<CollectRunView> {
   const run = await db.weeklyReportCollectRun.findFirst({
     where: {
@@ -391,17 +398,35 @@ export async function settleStaleCollectRun(
   });
   if (!run) throw new AppError("NOT_FOUND");
   if (run.status !== COLLECT_RUN_STATUS.collecting || !run.startedAt) return toRunView(run);
-  if (nowMs - run.startedAt.getTime() < COLLECT_SLOT_STALL_MS) return toRunView(run);
 
-  const stalled = await db.weeklyReportCollectSlot.updateMany({
-    where: { runId: run.id, status: COLLECT_SLOT_STATUS.running },
-    data: {
-      status: COLLECT_SLOT_STATUS.stalled,
-      failureReason: COLLECT_SLOT_STALL_REASON,
-    },
-  });
-  if (stalled.count === 0) {
-    // Slots may already be terminal; still close an empty wave left on collecting.
+  const offlineComputerIds = await offlineRunningComputerIds(run.slots, isComputerOnline);
+  for (const computerId of offlineComputerIds) {
+    await db.weeklyReportCollectSlot.updateMany({
+      where: {
+        runId: run.id,
+        status: COLLECT_SLOT_STATUS.running,
+        computerId,
+      },
+      data: {
+        status: COLLECT_SLOT_STATUS.failed,
+        failureReason: COLLECT_SLOT_OFFLINE_REASON,
+        // A later submit from a queued wake must not reopen this slot.
+        requestId: crypto.randomUUID(),
+      },
+    });
+  }
+
+  const overdue = nowMs - run.startedAt.getTime() >= COLLECT_SLOT_STALL_MS;
+  if (offlineComputerIds.length === 0 && !overdue) return toRunView(run);
+
+  if (overdue) {
+    await db.weeklyReportCollectSlot.updateMany({
+      where: { runId: run.id, status: COLLECT_SLOT_STATUS.running },
+      data: {
+        status: COLLECT_SLOT_STATUS.stalled,
+        failureReason: COLLECT_SLOT_STALL_REASON,
+      },
+    });
   }
 
   let refreshed = await db.weeklyReportCollectRun.findFirstOrThrow({
@@ -481,11 +506,37 @@ export function collectFailRequestId(turnRequestId: string, slotId: string): str
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+async function offlineRunningComputerIds(
+  slots: Array<{ computerId: string; status: string }>,
+  isComputerOnline: ((computerId: string) => Promise<boolean>) | undefined,
+): Promise<string[]> {
+  if (!isComputerOnline) return [];
+  const running = slots.filter((slot) => slot.status === COLLECT_SLOT_STATUS.running);
+  const offline: string[] = [];
+  for (const slot of running) {
+    if (await isComputerOnline(slot.computerId)) continue;
+    offline.push(slot.computerId);
+  }
+  return offline;
+}
+
+/** Missing or unreadable presence counts as offline, matching the Computer list. A lookup
+ * failure stays online so a Redis blip cannot cancel a wave that may still be running. */
+async function computerRuntimeOnline(workspaceId: string, computerId: string): Promise<boolean> {
+  try {
+    return await getComputerStatusCache().get({ workspaceId, computerId });
+  } catch {
+    return true;
+  }
+}
+
 export async function getCollectRun(
   db: PrismaClient,
   input: { workspaceId: string; userId: string; runId: string },
 ): Promise<CollectRunView> {
-  return settleStaleCollectRun(db, input);
+  return settleStaleCollectRun(db, input, Date.now(), (computerId) =>
+    computerRuntimeOnline(input.workspaceId, computerId),
+  );
 }
 
 export type CollectRunSlotDetail = CollectRunSlotView & {
@@ -502,7 +553,9 @@ export async function getCollectRunWithPacks(
   db: PrismaClient,
   input: { workspaceId: string; userId: string; runId: string },
 ): Promise<CollectRunDetailView> {
-  await settleStaleCollectRun(db, input);
+  await settleStaleCollectRun(db, input, Date.now(), (computerId) =>
+    computerRuntimeOnline(input.workspaceId, computerId),
+  );
   const run = await db.weeklyReportCollectRun.findFirst({
     where: {
       id: input.runId,
