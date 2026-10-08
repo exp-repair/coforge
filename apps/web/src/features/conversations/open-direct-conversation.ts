@@ -9,9 +9,10 @@ import { openDirectConversation } from "./conversations.functions";
 
 /**
  * Opens the viewer's direct conversation with an Agent or a member (starting it on first use) and
- * goes to its page. A failure says why in a toast.
+ * goes to its page. Returns whether it opened; a caller may handle failure inline, otherwise the
+ * existing entry points report it in a toast.
  */
-export function useOpenDirectConversation() {
+export function useOpenDirectConversation(onError?: () => void) {
   const open = useServerFn(openDirectConversation);
   const navigate = useNavigate();
   const workspaceSlug = useWorkspaceSlug();
@@ -24,10 +25,13 @@ export function useOpenDirectConversation() {
           to: "/w/$workspaceSlug/dm/$dmId",
           params: { workspaceSlug, dmId: conversationId },
         });
+        return true;
       } catch {
-        toast.error(m.conversation_open_error());
+        if (onError) onError();
+        else toast.error(m.conversation_open_error());
+        return false;
       }
     },
-    [open, navigate, workspaceSlug, toast],
+    [open, navigate, workspaceSlug, toast, onError],
   );
 }

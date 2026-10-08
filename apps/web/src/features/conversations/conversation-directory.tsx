@@ -223,6 +223,7 @@ export function ConversationDirectory({
   selectedDmId,
   selectedSaved,
   onCreateChannel,
+  onStartDirectMessage,
 }: {
   channels: DirectoryChannel[];
   agents: LiveAgent[];
@@ -238,6 +239,8 @@ export function ConversationDirectory({
   selectedSaved?: boolean;
   /** Opens the create-channel flow from the "+" next to the CHANNELS caption. */
   onCreateChannel?: () => void;
+  /** Opens the Agent and Human picker from the "+" next to DIRECT MESSAGES. */
+  onStartDirectMessage?: () => void;
 }) {
   const unreadCounts = useChannelUnreadCounts();
   const savedCount = useSavedEntries()?.length;
@@ -466,7 +469,8 @@ export function ConversationDirectory({
       <div
         className={cx(
           "mt-4",
-          directorySectionHideable({ itemCount: base.agents.length, dragging: drag.dragging }) &&
+          !onStartDirectMessage &&
+            directorySectionHideable({ itemCount: base.agents.length, dragging: drag.dragging }) &&
             EMPTY_SECTION_HIDDEN_CLASS,
         )}
       >
@@ -474,6 +478,19 @@ export function ConversationDirectory({
           label={m.messages_agents_action()}
           expanded={!collapsed.includes("agents")}
           onToggle={() => toggle("agents")}
+          action={
+            onStartDirectMessage ? (
+              <ButtonUtility
+                icon={Plus}
+                size="xs"
+                color="tertiary"
+                tooltip={m.conversation_start_direct()}
+                aria-label={m.conversation_start_direct()}
+                onClick={onStartDirectMessage}
+                className="shrink-0 hover:bg-transparent!"
+              />
+            ) : undefined
+          }
         >
           <div className="px-4 pb-3">
             <DirectoryDropList

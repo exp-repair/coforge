@@ -24,12 +24,14 @@ These rules apply to `src/features/conversations/`.
 - Direct messages list the viewer's existing DM conversations only, with
   Agents and members mixed in the order they started: a conversation starts
   from a "Message" affordance (`useOpenDirectConversation`, which opens or
-  starts it and goes to `dm/<conversationId>`), never from the sidebar. Link to
+  starts it and goes to `dm/<conversationId>`). The Direct messages "+" opens
+  a searchable Agent and Human picker in Chat, using that same seam. Link to
   a DM by its conversation id; only a "start" affordance knows just an Agent or
   a member.
   Every DM row, its pin, menu actions, unread badge and read-cursor key go by
   conversation id (`dm:<conversationId>` for the cursor); only the live Agent
   activity strip looks a DM up by its Agent.
+  Headers with creation actions stay visible even when their lists are empty.
 - The sidebar's channel and DM lists live in `sidebar-collections.ts` (collections and changes,
   tested without React) and `sidebar-lists.ts` (hooks). The chat layout's (`_chat`) loader fetches
   them, in the browser, into the TanStack Query cache (a later page load restores the browser's
