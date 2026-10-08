@@ -196,6 +196,8 @@ export class AgentMessageAttentionIndex {
       shouldHold(agentId: string): boolean;
       enqueue(agentId: string, message: AgentMessageDelivery): void;
       busy(agentId: string): void;
+      /** Admission resolved or rejected; this is not a turn outcome. */
+      noticeSettled?(agentId: string): void;
       /** The deliveries held for this Agent that it has not been shown yet. The notice counts
        * these, so its number is always a count of messages the daemon is holding right now rather
        * than a running total it would have to invalidate later. Concrete deliveries rather than a
@@ -454,7 +456,11 @@ ${INBOX_DRAIN_HINT}]`,
     );
     // Same synchronous-busy rule as `#notify` — this is also a `session.notify` call.
     this.hold.busy(agentId);
-    await session.notify(notice);
+    try {
+      await session.notify(notice);
+    } finally {
+      if (this.#runtimes.session(agentId) === session) this.hold.noticeSettled?.(agentId);
+    }
     if (this.#generations.get(agentId) !== generation) return;
     this.#attention.set(agentId, byTarget);
     for (const message of recoveredMessages) {
@@ -626,6 +632,8 @@ ${INBOX_DRAIN_HINT}]`,
         throw error;
       })
       .finally(() => {
+        if (this.#runtimes.session(message.agentId) === session)
+          this.hold.noticeSettled?.(message.agentId);
         if (this.#generations.get(message.agentId) === generation)
           generation.notificationAttempts.delete(message.deliveryId);
       });

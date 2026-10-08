@@ -282,6 +282,10 @@ class KiroSession implements AgentSession {
     return this.notify(message);
   }
 
+  get hasLiveTurn(): boolean {
+    return !this.#disposed && this.#turn !== undefined;
+  }
+
   /**
    * Idle sends a fresh `session/prompt`, exactly as before. Busy (`#turn` set) steers the live
    * turn through Kiro's own ACP `_session/steer` extension instead — CoForge's default `steer`

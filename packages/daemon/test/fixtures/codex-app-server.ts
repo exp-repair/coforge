@@ -315,6 +315,19 @@ function handle(request: Request): void {
     turn += 1;
     active = true;
     const turnId = `turn-${turn}`;
+    if (
+      ["finish-before-response", "stale-before-response"].includes(textInput(request.params) ?? "")
+    ) {
+      if (textInput(request.params) === "stale-before-response")
+        finishWithLateEvents(`turn-${turn - 1}`);
+      write({
+        method: "item/agentMessage/delta",
+        params: { threadId, turnId, delta: "Completed response" },
+      });
+      finishWithLateEvents(turnId);
+      write({ id: request.id, result: { turn: { id: turnId, status: "completed" } } });
+      return;
+    }
     write({
       id: request.id,
       result: { turn: { id: turnId, status: "inProgress" } },
@@ -379,6 +392,17 @@ function handle(request: Request): void {
       method: "item/agentMessage/delta",
       params: { turnId, itemId: "message-1", delta: "Codex response" },
     });
+    if (textInput(request.params) === "hold-tool") {
+      write({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
+          item: { id: "current-command", type: "commandExecution", command: "printf current" },
+        },
+      });
+      return;
+    }
     if (
       textInput(request.params) === "finish" ||
       textInput(request.params) === "New message available. Run coforge message check."
@@ -441,6 +465,12 @@ function handle(request: Request): void {
       throw new Error("wrong steering session or turn");
     }
     const text = textInput(request.params);
+    if (text === "finish-with-late-events") {
+      finishWithLateEvents(`turn-${turn}`);
+      // The acknowledgement fences all preceding notifications for the test.
+      write({ id: request.id, result: { turnId: `turn-${turn}` } });
+      return;
+    }
     if (text === "wrong-turn-response") {
       write({ id: request.id, result: { turnId: "wrong-turn" } });
       return;
@@ -488,6 +518,45 @@ function textInput(params: Record<string, unknown> | undefined): string | undefi
   const first = input[0];
   if (first === null || typeof first !== "object") return undefined;
   return (first as { text?: string }).text;
+}
+
+function finishWithLateEvents(turnId: string): void {
+  write({
+    method: "turn/completed",
+    params: { threadId, turn: { id: turnId, status: "completed" } },
+  });
+  write({
+    method: "item/started",
+    params: {
+      threadId,
+      turnId,
+      item: { id: "late-command", type: "commandExecution", command: "printf late" },
+    },
+  });
+  write({
+    method: "item/commandExecution/outputDelta",
+    params: { threadId, turnId, itemId: "late-command", delta: "late output" },
+  });
+  write({
+    method: "item/completed",
+    params: {
+      threadId,
+      turnId,
+      item: { id: "late-command", type: "commandExecution", exitCode: 0 },
+    },
+  });
+  write({
+    method: "item/agentMessage/delta",
+    params: { threadId, turnId, delta: "late response" },
+  });
+  write({
+    method: "item/reasoning/summaryTextDelta",
+    params: { threadId, turnId, delta: "late summary" },
+  });
+  write({
+    method: "item/reasoning/textDelta",
+    params: { threadId, turnId, delta: "late reasoning" },
+  });
 }
 
 function hasAgentInstructions(value: unknown): boolean {

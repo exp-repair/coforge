@@ -163,6 +163,9 @@ export type AgentRuntimeEvent =
  * deliveries the notice carries; a provider only echoes them on `notice-undelivered`. */
 export type AgentNoticeOptions = { deliveryIds?: readonly string[] };
 export interface AgentSession {
+  /** Provider-observed work, including pending admission and interruption.
+   * Undefined means the adapter cannot determine it; never infer idle from silence. */
+  readonly hasLiveTurn?: boolean;
   sendMessage(message: string): Promise<void>;
   readSessionIdentity?(): Promise<AgentSessionIdentity | undefined>;
   /**

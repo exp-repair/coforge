@@ -175,6 +175,7 @@ class CodexAgentSession implements AgentSession {
   readonly #listeners = new Set<(event: AgentRuntimeEvent) => void>();
   readonly #commandOutputBytes = new Map<string, number>();
   #state: CodexSessionState = { type: "idle" };
+  #lastCompletedTurnId: string | undefined;
   #starting: Promise<void> | undefined;
   #identity: AgentSessionIdentity;
 
@@ -215,6 +216,14 @@ class CodexAgentSession implements AgentSession {
     } finally {
       if (this.#starting === starting) this.#starting = undefined;
     }
+  }
+
+  get hasLiveTurn(): boolean {
+    return (
+      this.#state.type === "running" ||
+      this.#state.type === "interrupting" ||
+      (this.#state.type === "starting" && this.#state.completedTurnIds.size === 0)
+    );
   }
 
   async #startTurn(text: string): Promise<void> {
@@ -328,6 +337,14 @@ class CodexAgentSession implements AgentSession {
 
   #accept(record: Record<string, unknown>): void {
     const params = asRecord(record.params);
+    // Item notifications can arrive after turn/completed. They must not revive
+    // Activity for an idle session, including completion before turn/start replies.
+    if (
+      typeof record.method === "string" &&
+      record.method.startsWith("item/") &&
+      !this.#acceptsTurnItem(params)
+    )
+      return;
     if (record.method === "error") {
       const error = asRecord(params?.error);
       if (
@@ -439,6 +456,7 @@ class CodexAgentSession implements AgentSession {
     if (record.method === "turn/completed") {
       const turn = asRecord(params?.turn);
       if (typeof turn?.id !== "string") return;
+      if (turn.id === this.#lastCompletedTurnId) return;
       if (this.#state.type === "starting") this.#state.completedTurnIds.add(turn.id);
       else if (
         (this.#state.type === "running" || this.#state.type === "interrupting") &&
@@ -448,6 +466,8 @@ class CodexAgentSession implements AgentSession {
       } else {
         return;
       }
+      this.#commandOutputBytes.clear();
+      this.#lastCompletedTurnId = turn.id;
       const status =
         turn.status === "interrupted"
           ? "interrupted"
@@ -484,6 +504,16 @@ class CodexAgentSession implements AgentSession {
 
   #emit(event: AgentRuntimeEvent): void {
     for (const listener of this.#listeners) listener(event);
+  }
+
+  #acceptsTurnItem(params: Record<string, unknown> | undefined): boolean {
+    if (params?.threadId !== undefined && params.threadId !== this.#threadId) return false;
+    const state = this.#state;
+    if (state.type === "idle" || state.type === "disposed") return false;
+    if (typeof params?.turnId !== "string") return true;
+    if (params.turnId === this.#lastCompletedTurnId) return false;
+    if (state.type === "starting") return !state.completedTurnIds.has(params.turnId);
+    return params.turnId === state.turnId;
   }
 
   #setIdentity(state: AgentSessionIdentity["state"]): void {

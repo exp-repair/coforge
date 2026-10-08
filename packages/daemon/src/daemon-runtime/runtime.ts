@@ -338,6 +338,7 @@ type ActivityLaunch = {
   launchId: string;
   clientSeq: number;
   stopping: boolean;
+  trajectory?: ActivityTrajectory;
   // The most recent `error` event not yet resolved by a `completed` event, if any (cleared on
   // `completed`). Read by the process-exit handler to decide `runtime_crashed` vs `idle` wording
   // — `AgentSession.onExit` itself carries no exit code/signal, so this is the only fact the
@@ -378,6 +379,19 @@ const BUSY_ACTIVITY_DETAIL_KINDS = new Set<string>([
   AGENT_ACTIVITY_DETAIL_KIND.REVIEW_STALE,
   AGENT_ACTIVITY_DETAIL_KIND.STALLED_RECOVERY,
   AGENT_ACTIVITY_DETAIL_KIND.SYSTEM_MESSAGE,
+]);
+
+const TURN_ACTIVITY_EVENT_TYPES = new Set<AgentRuntimeEvent["type"]>([
+  "text-delta",
+  "thinking-delta",
+  "tool-start",
+  "tool-output",
+  "tool-end",
+  "progress",
+  "reconnecting",
+  "compaction-started",
+  "compaction-finished",
+  "compaction-interrupted",
 ]);
 
 /** `SEND_DRAFT_EXPIRED`: nothing is sent. The entry is gone, so the discarded body travels once,
@@ -687,6 +701,8 @@ export class DaemonRuntime {
               },
             ),
           );
+          const launch = this.#currentActivityLaunches.get(agentId);
+          if (launch) this.#reconcileIdleTurn(agentId, launch);
         } catch {
           // Best-effort observation must not turn accepted input into failed delivery.
         }
@@ -696,6 +712,10 @@ export class DaemonRuntime {
         queued: (agentId) => this.#deliveryQueue.pending(agentId),
         enqueue: (agentId, message) => this.#deliveryQueue.enqueue(agentId, message),
         busy: (agentId) => this.#deliveryQueue.busy(agentId),
+        noticeSettled: (agentId) => {
+          const launch = this.#currentActivityLaunches.get(agentId);
+          if (launch) this.#reconcileIdleTurn(agentId, launch);
+        },
         // The consumed cursor outlives the process, in a `consumed-seqs.json` file: what an Agent
         // has already reviewed decides the next hold, the `seenUpToSeq` a fresh send inherits, and
         // whether a top-level send under a thread-read parent needs confirming. It lives beside
@@ -2283,7 +2303,15 @@ export class DaemonRuntime {
       const trajectory = new ActivityTrajectory((event) =>
         this.#observeRuntimeEvent(agentId, launch, config, runtime, Boolean(control), event),
       );
-      const unsubscribe = runtime.session.subscribe((event) => trajectory.accept(event));
+      launch.trajectory = trajectory;
+      const unsubscribe = runtime.session.subscribe((event) => {
+        const turnActivity =
+          event.type === "activity"
+            ? BUSY_ACTIVITY_DETAIL_KINDS.has(event.activity.detailKind)
+            : TURN_ACTIVITY_EVENT_TYPES.has(event.type);
+        if (turnActivity && this.#reconcileIdleTurn(agentId, launch)) return;
+        trajectory.accept(event);
+      });
       runtime.session.onExit(() => {
         trajectory.dispose();
         // No leaked watchdog timer, and a later launch for this Agent starts clean.
@@ -2491,11 +2519,15 @@ export class DaemonRuntime {
     controlled: boolean,
     event: AgentRuntimeEvent,
   ): void {
-    // Every event but "session"/"usage"/"completed" means the runtime is mid-turn
-    // (activity, a tool call, compaction, a content-free liveness ping, a reconnect, or an
-    // error the runtime keeps running past). "completed" is the only idle transition, handled
-    // below with the rest of the turn-end Activity.
-    if (event.type !== "session" && event.type !== "usage" && event.type !== "completed")
+    // Runtime work marks busy unless the provider knows it has no live turn.
+    // "completed" supplies the turn outcome below; native-state reconciliation
+    // repairs observation and delivery gating without inventing that outcome.
+    if (
+      event.type !== "session" &&
+      event.type !== "usage" &&
+      event.type !== "completed" &&
+      runtime.session.hasLiveTurn !== false
+    )
       this.#deliveryQueue.busy(agentId);
     if (event.type === "session") {
       if (controlled)
@@ -2705,14 +2737,7 @@ export class DaemonRuntime {
     if (event.status === "completed") this.#resetRuntimeErrorRecovery(agentId);
     // Release whatever a queue_until_idle provider held while this turn ran, as one
     // coalesced notice for the next turn — never blocking this turn-end Activity on it.
-    const held = this.#deliveryQueue.idle(agentId);
-    if (held.length) this.#flushHeldDeliveries(agentId, held);
-    // Checked after the flush call above, not before: `flush` (via `#notify`) marks busy again
-    // synchronously, in the same tick, whenever it actually has something to deliver — so a held
-    // app item correctly re-holds itself (via `#notifyAppItem`'s own `shouldHold` check) for the
-    // *next* turn end instead of racing the notice the flush just started sending.
-    this.#releaseHeldAppItems(agentId);
-    this.#releaseFallbackNotices(agentId);
+    this.#releaseTurnEndHolds(agentId);
     // Tracked mentions told during this turn end with it.
     void this.#mentionDeliveries.settleTurnEnd(agentId);
     // A turn ending means a still-open compaction is done; report that before the turn's own
@@ -3545,6 +3570,7 @@ export class DaemonRuntime {
       this.#activityHeartbeatTimers.delete(agentId);
       const remembered = this.#lastBusyActivity.get(agentId);
       if (!remembered || remembered.launch !== launch) return;
+      if (this.#reconcileIdleTurn(agentId, launch)) return;
       this.#emitAgentActivity(agentId, launch, {
         ...remembered.activity,
         isHeartbeat: true,
@@ -3561,6 +3587,37 @@ export class DaemonRuntime {
       this.#activityHeartbeatTimers.delete(agentId);
     }
     this.#lastBusyActivity.delete(agentId);
+  }
+
+  /** Restore observation and delivery gating only; this is no proof of a turn outcome. */
+  #reconcileIdleTurn(agentId: string, launch: ActivityLaunch): boolean {
+    if (
+      this.#currentActivityLaunches.get(agentId) !== launch ||
+      this.#agentProcessManager.session(agentId)?.hasLiveTurn !== false
+    )
+      return false;
+    // Preserve output accepted while the turn was live before publishing its final Idle.
+    // Otherwise the pending trajectory timer could publish it after Idle and rearm Busy.
+    launch.trajectory?.flush();
+    this.#compactionTracker.dispose(agentId);
+    if (this.#lastBusyActivity.has(agentId) || this.#deliveryQueue.isBusy(agentId)) {
+      this.#emitAgentActivity(
+        agentId,
+        launch,
+        this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.IDLE, "info", ""),
+      );
+      this.#releaseTurnEndHolds(agentId);
+    }
+    return true;
+  }
+
+  #releaseTurnEndHolds(agentId: string): void {
+    const held = this.#deliveryQueue.idle(agentId);
+    if (held.length) this.#flushHeldDeliveries(agentId, held);
+    // Flush first: notifying marks busy synchronously, so app items re-hold for the next
+    // turn rather than racing the notice that just started it.
+    this.#releaseHeldAppItems(agentId);
+    this.#releaseFallbackNotices(agentId);
   }
 
   #sendAgentStatus(agentId: string, status: "active" | "inactive"): void {
@@ -4728,7 +4785,13 @@ export class DaemonRuntime {
         return false;
       }
       this.#deliveryQueue.busy(agentId);
-      await session.notify("New app item available. Run coforge inbox check.");
+      const launch = this.#currentActivityLaunches.get(agentId);
+      try {
+        await session.notify("New app item available. Run coforge inbox check.");
+      } finally {
+        if (launch && this.#agentProcessManager.session(agentId) === session)
+          this.#reconcileIdleTurn(agentId, launch);
+      }
       return true;
     });
     notified.set(itemId, pending);

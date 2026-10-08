@@ -277,6 +277,10 @@ class AgentSessionImpl implements AgentSession {
       throw error;
     }
   }
+
+  get hasLiveTurn(): boolean {
+    return !this.#disposed && (this.#runtime.session.isStreaming || this.#pendingPrompts.size > 0);
+  }
   async notify(notice: string) {
     if (this.#disposed || this.#interrupting) {
       throw new Error("code agent cannot accept a notification");

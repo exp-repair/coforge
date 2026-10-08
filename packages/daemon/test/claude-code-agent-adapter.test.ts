@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { ClaudeCodeProvider } from "#src/code-agent/claude-code/provider";
 import { AGENT_RUNTIME_EVENT_TYPE, type AgentRuntimeEvent } from "#src/code-agent/contract";
+import { PROCESS_TREE_EXIT_GRACE_MS } from "#src/code-agent/process-tree-cleanup";
 
 const TEST_AGENT_INSTRUCTIONS = "Test Agent instructions.";
 
@@ -1035,6 +1036,39 @@ test("Claude Code ignores late user echoes after a completed turn", async () => 
   }
 });
 
+test(
+  "Claude late tool and message events cannot restart a completed turn",
+  async () => {
+    const fixture = await controlledClaude();
+    const { session, emit } = fixture;
+    const events: AgentRuntimeEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.sendMessage("wait");
+      await emit({ type: "result", subtype: "success" });
+      events.length = 0;
+      await emit(
+        {
+          type: "user",
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "late-tool", content: "late output" }],
+          },
+        },
+        { type: "stream_event", event: { type: "message_start" } },
+        {
+          type: "assistant",
+          message: { content: [{ type: "tool_use", id: "late-tool", name: "Bash", input: {} }] },
+        },
+      );
+      expect(events.filter((event) => event.type !== "usage")).toEqual([]);
+      await session.sendMessage("wait");
+    } finally {
+      await fixture.dispose();
+    }
+  },
+  5_000 + 2 * PROCESS_TREE_EXIT_GRACE_MS,
+);
+
 test("Claude Code observes the next native turn after a busy notification was written", async () => {
   const fixture = await controlledClaude();
   const { session, emit } = fixture;
@@ -1228,24 +1262,24 @@ async function controlledClaude(
     if (event.type === "text-delta" && event.text === "fixture-input-observed")
       initialInput.resolve();
     if (event.type === "text-delta") markers.get(event.text)?.();
+    if (event.type === "usage" && event.snapshot.primary?.resetsAt)
+      markers.get(event.snapshot.primary.resetsAt)?.();
   });
   return {
     session,
     sessionId: nativeSessionId,
     async emit(...records: Record<string, unknown>[]) {
       await initialInput.promise;
-      const marker = `fixture-boundary-${++serial}`;
+      const resetsAt = 1_900_000_000 + ++serial;
+      const marker = new Date(resetsAt * 1000).toISOString();
       const observed = new Promise<void>((resolve) => {
         markers.set(marker, resolve);
       });
       const response = Response.json([
         ...records,
         {
-          type: "stream_event",
-          event: {
-            type: "content_block_delta",
-            delta: { type: "text_delta", text: marker },
-          },
+          type: "rate_limit_event",
+          rate_limit_info: { status: "allowed", rateLimitType: "five_hour", resetsAt },
         },
       ]);
       if (waiting) {

@@ -111,6 +111,10 @@ class PerTurnAgentSession implements AgentSession {
     return this.#deliver(text);
   }
 
+  get hasLiveTurn(): boolean {
+    return this.#state !== "disposed" && this.#currentTurn !== undefined;
+  }
+
   async notify(text: string): Promise<void> {
     return this.#deliver(text);
   }

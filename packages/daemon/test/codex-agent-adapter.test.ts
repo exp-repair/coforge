@@ -5,8 +5,38 @@ import { join } from "node:path";
 
 import { CodexProvider } from "#src/code-agent/codex/provider";
 import type { AgentRuntimeEvent } from "#src/code-agent/contract";
+import { PROCESS_TREE_EXIT_GRACE_MS } from "#src/code-agent/process-tree-cleanup";
 
 const TEST_AGENT_INSTRUCTIONS = "Test Agent instructions.";
+
+test(
+  "Codex fences the previous completed turn while a new start is awaiting its reply",
+  async () => {
+    const session = await new CodexProvider({
+      command: [
+        process.execPath,
+        new URL("./fixtures/codex-app-server.ts", import.meta.url).pathname,
+      ],
+    }).createAgentSession({
+      agentWorkspaceDirectory: tmpdir(),
+      instructions: TEST_AGENT_INSTRUCTIONS,
+    });
+    const events: AgentRuntimeEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.sendMessage("finish-before-response");
+      events.length = 0;
+      await session.sendMessage("stale-before-response");
+      expect(events.filter((event) => event.type !== "session")).toEqual([
+        { type: "text-delta", text: "Completed response" },
+        { type: "completed", status: "completed" },
+      ]);
+    } finally {
+      await session.dispose();
+    }
+  },
+  5_000 + 2 * PROCESS_TREE_EXIT_GRACE_MS,
+);
 
 test("Codex resumes or starts fresh only for the native missing-thread error", async () => {
   const adapter = new CodexProvider({

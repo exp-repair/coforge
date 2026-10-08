@@ -4,8 +4,16 @@ import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { DaemonRuntime, type WorkspaceConfig } from "#src/daemon-runtime/runtime";
-import type { AgentRuntimeConfig, AgentRuntimeEvent, AgentSession } from "#src/code-agent/contract";
+import type {
+  AgentRuntimeConfig,
+  AgentRuntimeEvent,
+  AgentSession,
+  CodeAgentProvider,
+} from "#src/code-agent/contract";
 import { InMemoryDaemonCredentialStore } from "#src/credentials/credential-store";
+import { CodexProvider } from "#src/code-agent/codex/provider";
+import { PROCESS_TREE_EXIT_GRACE_MS } from "#src/code-agent/process-tree-cleanup";
+import { DAEMON_SHUTDOWN_NOTICE_TIMEOUT_MS } from "#src/connection/shutdown-notice-timeout";
 import type { AgentActivity, AgentActivityDetailKind } from "@lrm/coforge-sdk/internal";
 
 // macOS tmpdir lives under /var, a symlink; the state store rejects linked ancestors.
@@ -58,25 +66,26 @@ const emptyCodeAgentDiscovery = {
 };
 
 /** Boots a runtime whose one Agent session hands the test direct control over runtime events. */
-async function harness() {
+async function harness(provider?: CodeAgentProvider) {
   const credentials = new InMemoryDaemonCredentialStore();
   await credentials.save(connection.workspaceId, connection.computerId, "token-a");
   const activities: AgentActivity[] = [];
   let listener: Parameters<AgentSession["subscribe"]>[0] = () => undefined;
   const runtime = new DaemonRuntime(
     connection,
-    () => ({
-      provider: "pi",
-      async createAgentSession() {
-        return {
-          ...sessionSpy(),
-          subscribe(next) {
-            listener = next;
-            return () => undefined;
-          },
-        };
+    () =>
+      provider ?? {
+        provider: "pi",
+        async createAgentSession() {
+          return {
+            ...sessionSpy(),
+            subscribe(next) {
+              listener = next;
+              return () => undefined;
+            },
+          };
+        },
       },
-    }),
     credentials,
     {
       create: () => ({
@@ -96,9 +105,13 @@ async function harness() {
     emptyCodeAgentDiscovery,
   );
   await runtime.start(connection);
-  await runtime.startAgent("agent-a", config);
+  const agent = await runtime.startAgent(
+    "agent-a",
+    provider ? { ...config, provider: provider.provider } : config,
+  );
   return {
     runtime,
+    session: agent.session,
     activities,
     emit(activity: {
       detailKind: AgentActivityDetailKind;
@@ -114,6 +127,197 @@ async function harness() {
       listener(event);
     },
   };
+}
+
+for (const completionOrder of ["running", "before-start-response"] as const) {
+  test(
+    `Codex late items cannot restart Busy or its heartbeat (${completionOrder})`,
+    async () => {
+      const provider = new CodexProvider({
+        command: [
+          process.execPath,
+          new URL("./fixtures/codex-app-server.ts", import.meta.url).pathname,
+        ],
+      });
+      const { runtime, session, activities } = await harness(provider);
+      try {
+        jest.useFakeTimers();
+        activities.length = 0;
+        if (completionOrder === "running") {
+          await session.sendMessage("hold");
+          await session.notify!("finish-with-late-events");
+        } else {
+          await session.sendMessage("finish-before-response");
+        }
+        const idleIndex = activities.findIndex((activity) => activity.detailKind === "idle");
+        expect(idleIndex).toBeGreaterThanOrEqual(0);
+        expect(activities.slice(idleIndex + 1)).toEqual([]);
+        expect(runtime.busyAgents()).toEqual([]);
+
+        const countAfterCompletion = activities.length;
+        jest.advanceTimersByTime(600_000);
+        expect(activities).toHaveLength(countAfterCompletion);
+        jest.useRealTimers();
+
+        // The session remains usable: an idle notice starts a fresh native turn.
+        activities.length = 0;
+        let unsubscribe = () => {};
+        const responded = new Promise<void>((resolve) => {
+          unsubscribe = session.subscribe((event) => {
+            if (event.type === "tool-start" && event.id === "current-command") resolve();
+          });
+        });
+        try {
+          await session.notify!("hold-tool");
+          await responded;
+        } finally {
+          unsubscribe();
+        }
+        expect(runtime.busyAgents().map((agent) => agent.agentId)).toEqual(["agent-a"]);
+        expect(activities.some((activity) => activity.detailKind === "running_command")).toBe(true);
+      } finally {
+        jest.useRealTimers();
+        await runtime.stop();
+      }
+    },
+    5_000 + 2 * PROCESS_TREE_EXIT_GRACE_MS + DAEMON_SHUTDOWN_NOTICE_TIMEOUT_MS,
+  );
+}
+
+for (const event of [
+  { type: "tool-start", id: "real-tool", name: "Read" },
+  { type: "compaction-started", occurredAt: new Date().toISOString() },
+] satisfies AgentRuntimeEvent[]) {
+  test(`heartbeat verifies live turn state before extending Busy (${event.type})`, async () => {
+    let live = true;
+    let listener: Parameters<AgentSession["subscribe"]>[0] = () => {};
+    const { runtime, activities } = await harness({
+      provider: "pi",
+      async createAgentSession() {
+        return {
+          ...sessionSpy(),
+          get hasLiveTurn() {
+            return live;
+          },
+          subscribe(next) {
+            listener = next;
+            return () => {};
+          },
+        };
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      activities.length = 0;
+      listener(event);
+      jest.advanceTimersByTime(60_000);
+      expect(activities.at(-1)?.isHeartbeat).toBe(true);
+      live = false; // The adapter finished; its normalized completion was lost.
+      jest.advanceTimersByTime(60_000);
+      expect(activities.at(-1)?.detailKind).toBe("idle");
+      expect(runtime.busyAgents()).toEqual([]);
+      const count = activities.length;
+      listener({ type: "tool-end", id: "real-tool", isError: false });
+      listener({ type: "thinking-delta", text: "late summary" });
+      jest.advanceTimersByTime(600_000);
+      expect(activities).toHaveLength(count);
+    } finally {
+      await runtime.stop();
+    }
+  });
+}
+
+for (const type of ["text-delta", "thinking-delta"] as const) {
+  test(`native Idle flushes valid buffered ${type} before discarding late events`, async () => {
+    let live = true;
+    let listener: Parameters<AgentSession["subscribe"]>[0] = () => {};
+    const { runtime, activities } = await harness({
+      provider: "pi",
+      async createAgentSession() {
+        return {
+          ...sessionSpy(),
+          get hasLiveTurn() {
+            return live;
+          },
+          subscribe(next) {
+            listener = next;
+            return () => {};
+          },
+        };
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      activities.length = 0;
+      listener({ type, text: "valid final output" });
+      live = false;
+      listener({ type: "tool-end", id: "late-tool", isError: false });
+      expect(activities.at(-1)?.detailKind).toBe("idle");
+      expect(
+        activities.some((activity) =>
+          activity.entries?.some(
+            (entry) =>
+              (entry.kind === "text" || entry.kind === "thinking") &&
+              entry.text === "valid final output",
+          ),
+        ),
+      ).toBe(true);
+      const count = activities.length;
+      jest.advanceTimersByTime(600_000);
+      expect(activities).toHaveLength(count);
+      expect(runtime.busyAgents()).toEqual([]);
+    } finally {
+      await runtime.stop();
+    }
+  });
+}
+
+for (const stillLive of [false, true]) {
+  test(`a rejected notice restores Idle only if the provider has no live turn (${stillLive})`, async () => {
+    let live = true;
+    let listener: Parameters<AgentSession["subscribe"]>[0] = () => {};
+    const { runtime, activities } = await harness({
+      provider: "pi",
+      async createAgentSession() {
+        return {
+          ...sessionSpy(),
+          get hasLiveTurn() {
+            return live;
+          },
+          subscribe(next) {
+            listener = next;
+            return () => {};
+          },
+          async notify() {
+            throw new Error("notice rejected");
+          },
+        };
+      },
+    });
+    try {
+      listener({ type: "tool-start", id: "tool", name: "Read" });
+      live = stillLive;
+      await expect(
+        runtime.handleAgentMessage({
+          protocolMajor: 1,
+          requestId: "request",
+          messageId: "message",
+          deliveryId: "delivery",
+          sequence: 1,
+          workspaceId: connection.workspaceId,
+          conversationId: "conversation",
+          agentId: "agent-a",
+          body: "hello",
+          method: "agent:v1:message:deliver",
+          target: "@agent",
+        }),
+      ).rejects.toThrow("notice rejected");
+      expect(runtime.busyAgents().length).toBe(stillLive ? 1 : 0);
+      if (!stillLive) expect(activities.at(-1)?.detailKind).toBe("idle");
+    } finally {
+      await runtime.stop();
+    }
+  });
 }
 
 test("re-sends the last busy Activity every heartbeat interval while the Agent stays busy", async () => {

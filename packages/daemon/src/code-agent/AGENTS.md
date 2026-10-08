@@ -5,14 +5,14 @@ Rules for the provider seam and adapters in `src/code-agent/`. They extend
 
 ## Provider seam
 
-- `CodeAgentProvider` is the sole public runtime seam. A Provider creates
-  one-session `AgentSession` instances and owns its runtime discovery, model
-  catalog, and usage capabilities; it may compose them from provider-internal
-  modules.
-- The registry returns Providers, never lifecycle wrappers or forwarding
-  adapters.
+- `CodeAgentProvider` is the sole public runtime seam: it creates one-session `AgentSession`
+  instances and owns discovery, model catalog, and usage, composed from provider-internal modules.
+- The registry returns Providers, never lifecycle wrappers or forwarding adapters.
 - Higher layers consume normalized status and Activity messages and must not
   parse Claude Code, Codex, Pi, or any other provider's output.
+- Every shipped session exposes `hasLiveTurn` from native turn/admission state or its owned turn process.
+  Never derive it from recent output or a timeout. Daemon filters idle-turn Activity and checks it
+  before renewing Busy; an unknown value preserves the observation rather than claiming Idle.
 - A Provider that knows why a launch cannot start throws a typed launch error
   from `contract.ts` (`RuntimeVersionUnsupportedError`,
   `RuntimeModelNotFoundError`, `ModelProviderSettingError`), keeping any SDK

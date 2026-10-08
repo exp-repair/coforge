@@ -136,6 +136,7 @@ class ClaudeCodeAgentSession implements AgentSession {
   readonly #removePrompt: () => Promise<void>;
   readonly #listeners = new Set<(event: AgentRuntimeEvent) => void>();
   #state: "idle" | "running" | "interrupting" | "disposed" = "idle";
+  #nativeTurnQueued = false;
   #initialized = false;
   #nativeIdentityObserved = false;
   #initialization: { process: JsonlProcess; promise: Promise<void> } | undefined;
@@ -358,11 +359,18 @@ class ClaudeCodeAgentSession implements AgentSession {
     await this.#sendInput(text);
   }
 
+  get hasLiveTurn(): boolean {
+    return this.#state === "running" || this.#state === "interrupting";
+  }
+
   async #sendInput(text: string): Promise<void> {
     if (this.#inputFailure) throw this.#inputFailure;
     this.#firstInput ??= text;
     // Reserve the turn before writing; a native result can arrive during flush.
-    if (this.#state === "idle") this.#state = "running";
+    if (this.#state === "idle") {
+      this.#state = "running";
+      this.#nativeTurnQueued = false;
+    } else this.#nativeTurnQueued = true;
     this.#setIdentity("unknown");
     await this.#process.send({
       type: "user",
@@ -435,6 +443,18 @@ class ClaudeCodeAgentSession implements AgentSession {
 
   #accept(record: Readonly<Record<string, unknown>>): void {
     if (this.#recoveryFailed || this.#state === "disposed") return;
+    if (
+      this.#state === "idle" &&
+      ["stream_event", "assistant", "user"].includes(String(record.type))
+    ) {
+      const nativeStart =
+        record.parent_tool_use_id == null &&
+        (record.type === "assistant" ||
+          (record.type === "stream_event" && asRecord(record.event)?.type === "message_start"));
+      if (!this.#nativeTurnQueued || !nativeStart) return;
+      this.#nativeTurnQueued = false;
+      this.#state = "running";
+    }
     if (
       ["stream_event", "assistant", "user", "result"].includes(String(record.type)) ||
       (record.type === "system" && record.subtype === "init")
