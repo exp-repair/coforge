@@ -12,6 +12,10 @@ import {
 import { attachmentFileNameSummary } from "#src/features/conversations/attachment-file-name";
 import type { ActionCardView } from "./action-cards.server";
 import {
+  isWeeklyReportPlatformTurn,
+  weeklyReportAssistantDisplayBody,
+} from "#src/server/records/weekly-report-assistant-request.server";
+import {
   parseWeeklyReportAssistantSuggestion,
   weeklyReportAssistantSuggestionDisplayBody,
 } from "#src/server/records/weekly-report-assistant-suggestion.server";
@@ -59,13 +63,18 @@ export function mapBrowserMessage(message: BrowserMessageRow, workspaceId: strin
     suggestion?.type === "send-prompt"
       ? suggestion
       : null;
+  const fromUser = Boolean(message.sender?.userId);
+  const weeklyReportHidden = fromUser && isWeeklyReportPlatformTurn(message.body);
+  const contextDisplay = fromUser ? weeklyReportAssistantDisplayBody(message.body) : "";
+  const weeklyReportDisplayBody = weeklyReportSuggestion
+    ? weeklyReportAssistantSuggestionDisplayBody(message.body)
+    : fromUser && !weeklyReportHidden && contextDisplay !== message.body.trim()
+      ? contextDisplay
+      : undefined;
   return {
-    ...(weeklyReportSuggestion
-      ? {
-          weeklyReportSuggestion,
-          weeklyReportDisplayBody: weeklyReportAssistantSuggestionDisplayBody(message.body),
-        }
-      : {}),
+    ...(weeklyReportSuggestion ? { weeklyReportSuggestion } : {}),
+    ...(weeklyReportDisplayBody ? { weeklyReportDisplayBody } : {}),
+    ...(weeklyReportHidden ? { weeklyReportHidden: true as const } : {}),
     id: message.id,
     sequence: message.sequence,
     threadRootId: message.threadRootId ?? undefined,

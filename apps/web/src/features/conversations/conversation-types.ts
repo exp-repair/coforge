@@ -63,6 +63,8 @@ export type DirectConversationView = {
     senderDeleted?: boolean;
     senderAvatarUrl?: string | null;
     body: string;
+    /** Set when a weekly-report platform wake is stored for the Agent and omitted from the chat. */
+    weeklyReportHidden?: boolean;
     createdAt: Date | string;
     /** Resolved mention rows for the body's embedded `<@kind:uuid>` tokens. */
     mentions?: {

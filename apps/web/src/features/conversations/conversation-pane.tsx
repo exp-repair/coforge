@@ -377,16 +377,20 @@ export function ConversationPane({
   // Runs of consecutive system messages fold into one summary line (system-message-groups.ts). A
   // run never crosses a day divider or the unread divider, so both stay drawn, and the message the
   // pane opens on (the unread boundary) is always a group's first message or a row of its own.
+  const visibleMessages = useMemo(
+    () => conversation.messages.filter((message) => message.weeklyReportHidden !== true),
+    [conversation.messages],
+  );
   const streamItems = useMemo(
     () =>
       groupSystemMessages(
-        conversation.messages,
+        visibleMessages,
         (message, previous) =>
           message.sequence === openBoundary?.sequence ||
           dayLabel(message.createdAt, dateLocale, timeZone) !==
             dayLabel(previous.createdAt, dateLocale, timeZone),
       ),
-    [conversation.messages, openBoundary, dateLocale, timeZone],
+    [visibleMessages, openBoundary, dateLocale, timeZone],
   );
   /** System message ids whose folded group is open. A group is open while any of its messages is
    * here, so a group that grows (a new notice, older history) stays open for the reader. */
@@ -863,7 +867,7 @@ export function ConversationPane({
               thread pane is already narrow and keeps none. */}
           <div className={root ? undefined : MESSAGE_COLUMN_CLASS}>
             {rootSlot}
-            {root && !rootSlot && (
+            {root && !rootSlot && root.weeklyReportHidden !== true && (
               <div
                 aria-label={m.conversation_thread_root()}
                 className="border-b border-secondary py-3"
@@ -904,7 +908,7 @@ export function ConversationPane({
               <div className="px-4 pt-2 text-center text-sm text-tertiary md:px-6">
                 <p className="pb-1">{m.conversation_thread_beginning()}</p>
                 <p className="border-b border-secondary pb-2">
-                  {replyCountLabel(conversation.messages.length + shownOutbox.length)}
+                  {replyCountLabel(visibleMessages.length + shownOutbox.length)}
                 </p>
               </div>
             )}
@@ -935,7 +939,7 @@ export function ConversationPane({
                   <Loading02 aria-hidden className="size-full motion-safe:animate-spin" />
                 </ProgressBar>
               </div>
-            ) : conversation.messages.length === 0 && shownOutbox.length === 0 ? (
+            ) : visibleMessages.length === 0 && shownOutbox.length === 0 ? (
               <Empty
                 className={
                   root

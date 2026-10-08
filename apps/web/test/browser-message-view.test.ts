@@ -4,6 +4,8 @@ import {
   mapBrowserMessage,
   type BrowserMessageRow,
 } from "#src/server/conversations/conversation-history.server";
+import { buildWeeklyReportAssistantRequestBody } from "#src/server/records/weekly-report-assistant-request.server";
+import { buildPersonalKeyPointWakeText } from "#src/server/records/weekly-report-key-points.server";
 
 const WORKSPACE_ID = "11111111-2222-4333-8444-555555555555";
 
@@ -67,6 +69,97 @@ test("a send-prompt envelope is a confirm card and the chat hides the fence", ()
   expect(view.weeklyReportSuggestion).toEqual(suggestion);
   expect(view.weeklyReportDisplayBody).toBe("请点下方确认发送。");
   expect(view.body).toBe(message.body);
+});
+
+test("a weekly-report context block stays on the message and leaves the chat text", () => {
+  const body = buildWeeklyReportAssistantRequestBody({
+    subjectType: "report",
+    subjectId: "11111111-1111-4111-8111-111111111111",
+    sessionId: "22222222-2222-4222-8222-222222222222",
+    userText: "帮我把摘要写短一点",
+    contextManifest: { subjectType: "report", kind: "member" },
+  });
+  const view = mapBrowserMessage(
+    row({
+      body,
+      sender: {
+        userId: "user-1",
+        agentId: null,
+        user: {
+          username: "lijian",
+          displayName: "lijian",
+          fullName: null,
+          avatarObjectKey: null,
+        },
+        agent: null,
+      },
+    }),
+    WORKSPACE_ID,
+  );
+  expect(view.body).toBe(body);
+  expect(view.body).toContain("[weekly-report-context]");
+  expect(view.weeklyReportDisplayBody).toBe("帮我把摘要写短一点");
+  expect(view.weeklyReportHidden).toBeUndefined();
+});
+
+test("a weekly-report platform turn stays stored and is hidden from the chat", () => {
+  const body = buildWeeklyReportAssistantRequestBody({
+    subjectType: "report",
+    subjectId: "11111111-1111-4111-8111-111111111111",
+    sessionId: "22222222-2222-4222-8222-222222222222",
+    userText: buildPersonalKeyPointWakeText({
+      reportId: "11111111-1111-4111-8111-111111111111",
+      prompt: "请阅读该成员本周已提交的周报全文。",
+      authorDisplayName: "lijian",
+      year: 2026,
+      week: 41,
+    }),
+    contextManifest: { subjectType: "report", kind: "member" },
+    platformTurn: true,
+  });
+  const view = mapBrowserMessage(
+    row({
+      body,
+      sender: {
+        userId: "user-1",
+        agentId: null,
+        user: {
+          username: "lijian",
+          displayName: "lijian",
+          fullName: null,
+          avatarObjectKey: null,
+        },
+        agent: null,
+      },
+    }),
+    WORKSPACE_ID,
+  );
+  expect(view.body).toContain("[weekly-report-context]");
+  expect(view.body).toContain("[weekly-report-platform-turn]");
+  expect(view.weeklyReportHidden).toBe(true);
+});
+
+test("an ordinary chat message is not treated as a weekly-report envelope", () => {
+  const view = mapBrowserMessage(
+    row({
+      body: "今天的周报我自己来写。",
+      sender: {
+        userId: "user-1",
+        agentId: null,
+        user: {
+          username: "lijian",
+          displayName: "lijian",
+          fullName: null,
+          avatarObjectKey: null,
+        },
+        agent: null,
+      },
+    }),
+    WORKSPACE_ID,
+  );
+  expect(view.weeklyReportDisplayBody).toBeUndefined();
+  expect(view.weeklyReportHidden).toBeUndefined();
+  expect(view.body).toBe("今天的周报我自己来写。");
 });
 
 function row(overrides: Partial<BrowserMessageRow>): BrowserMessageRow {
