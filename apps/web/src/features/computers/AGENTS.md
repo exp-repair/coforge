@@ -11,3 +11,6 @@ These rules apply to `src/features/computers/`.
   render as plain, non-focusable identities without usage health dots; a
   Computer runtime's Public switch still opens its footer controls. A supported
   reader's account-specific `unsupported` result remains visible in its popover.
+- Adding a cloud Computer chooses an online host and creates it through
+  `POST /api/hosts/$hostId/jobs`. The existing Computer list shows it; it
+  becomes online when its Daemon connects.

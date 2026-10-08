@@ -33,6 +33,9 @@ import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
 import { Route as ApiAttachmentsAttachmentIdRouteImport } from './routes/api/attachments.$attachmentId'
 import { Route as ApiComputerAttachRouteImport } from './routes/api/computer/attach'
 import { Route as ApiComputerWorkspaceRouteImport } from './routes/api/computer/workspace'
+import { Route as ApiHostsIndexRouteImport } from './routes/api/hosts/index'
+import { Route as ApiHostsHeartbeatRouteImport } from './routes/api/hosts/heartbeat'
+import { Route as ApiHostsRegisterRouteImport } from './routes/api/hosts/register'
 import { Route as ApiInternalCentrifugoRouteImport } from './routes/api/internal/centrifugo'
 import { Route as ApiInternalCentrifugoAgentActivityRouteImport } from './routes/api/internal/centrifugo-agent-activity'
 import { Route as ApiInternalCentrifugoConnectRouteImport } from './routes/api/internal/centrifugo-connect'
@@ -64,6 +67,8 @@ import { Route as ApiAgentV1WeeklyReportsRouteImport } from './routes/api/agent/
 import { Route as ApiAgentV1WorkspaceRouteImport } from './routes/api/agent/v1/workspace'
 import { Route as ApiComputersComputerIdCreatorAvatarRouteImport } from './routes/api/computers/$computerId/creator-avatar'
 import { Route as ApiE2eWorkspacesSlugRouteImport } from './routes/api/e2e/workspaces.$slug'
+import { Route as ApiHostsHostIdJobsRouteImport } from './routes/api/hosts/$hostId/jobs'
+import { Route as ApiHostsJobsClaimRouteImport } from './routes/api/hosts/jobs/claim'
 import { Route as ApiIntegrationsGithubCallbackRouteImport } from './routes/api/integrations/github/callback'
 import { Route as ApiIntegrationsGithubWebhookRouteImport } from './routes/api/integrations/github/webhook'
 import { Route as ApiOpenvikingWorkspaceIdSplatRouteImport } from './routes/api/openviking/$workspaceId/$'
@@ -92,6 +97,7 @@ import { Route as ApiAgentV1MentionActionsExecuteRouteImport } from './routes/ap
 import { Route as ApiAgentV1MentionActionsPendingRouteImport } from './routes/api/agent/v1/mention-actions_.pending'
 import { Route as ApiAgentV1MessagesSearchRouteImport } from './routes/api/agent/v1/messages_.search'
 import { Route as ApiAgentV1UsersNameRouteImport } from './routes/api/agent/v1/users/$name'
+import { Route as ApiHostsJobsJobIdReportRouteImport } from './routes/api/hosts/jobs/$jobId/report'
 import { Route as ApiProjectsProjectIdRawSplatRouteImport } from './routes/api/projects.$projectId.raw.$'
 import { Route as WWorkspaceSlugChatChannelChannelIdRouteImport } from './routes/w.$workspaceSlug/_chat.channel.$channelId'
 import { Route as WWorkspaceSlugChatDmDmIdRouteImport } from './routes/w.$workspaceSlug/_chat.dm.$dmId'
@@ -236,6 +242,21 @@ const ApiComputerAttachRoute = ApiComputerAttachRouteImport.update({
 const ApiComputerWorkspaceRoute = ApiComputerWorkspaceRouteImport.update({
   id: '/api/computer/workspace',
   path: '/api/computer/workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHostsIndexRoute = ApiHostsIndexRouteImport.update({
+  id: '/api/hosts/',
+  path: '/api/hosts/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHostsHeartbeatRoute = ApiHostsHeartbeatRouteImport.update({
+  id: '/api/hosts/heartbeat',
+  path: '/api/hosts/heartbeat',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHostsRegisterRoute = ApiHostsRegisterRouteImport.update({
+  id: '/api/hosts/register',
+  path: '/api/hosts/register',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiInternalCentrifugoRoute = ApiInternalCentrifugoRouteImport.update({
@@ -400,6 +421,16 @@ const ApiE2eWorkspacesSlugRoute = ApiE2eWorkspacesSlugRouteImport.update({
   path: '/api/e2e/workspaces/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHostsHostIdJobsRoute = ApiHostsHostIdJobsRouteImport.update({
+  id: '/api/hosts/$hostId/jobs',
+  path: '/api/hosts/$hostId/jobs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHostsJobsClaimRoute = ApiHostsJobsClaimRouteImport.update({
+  id: '/api/hosts/jobs/claim',
+  path: '/api/hosts/jobs/claim',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiIntegrationsGithubCallbackRoute =
   ApiIntegrationsGithubCallbackRouteImport.update({
     id: '/api/integrations/github/callback',
@@ -562,6 +593,11 @@ const ApiAgentV1MessagesSearchRoute =
 const ApiAgentV1UsersNameRoute = ApiAgentV1UsersNameRouteImport.update({
   id: '/api/agent/v1/users/$name',
   path: '/api/agent/v1/users/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHostsJobsJobIdReportRoute = ApiHostsJobsJobIdReportRouteImport.update({
+  id: '/api/hosts/jobs/$jobId/report',
+  path: '/api/hosts/jobs/$jobId/report',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiProjectsProjectIdRawSplatRoute =
@@ -730,6 +766,8 @@ export interface FileRoutesByFullPath {
   '/api/attachments/$attachmentId': typeof ApiAttachmentsAttachmentIdRoute
   '/api/computer/attach': typeof ApiComputerAttachRoute
   '/api/computer/workspace': typeof ApiComputerWorkspaceRoute
+  '/api/hosts/heartbeat': typeof ApiHostsHeartbeatRoute
+  '/api/hosts/register': typeof ApiHostsRegisterRoute
   '/api/internal/centrifugo': typeof ApiInternalCentrifugoRoute
   '/api/internal/centrifugo-agent-activity': typeof ApiInternalCentrifugoAgentActivityRoute
   '/api/internal/centrifugo-connect': typeof ApiInternalCentrifugoConnectRoute
@@ -742,6 +780,7 @@ export interface FileRoutesByFullPath {
   '/w/$workspaceSlug/search': typeof WWorkspaceSlugSearchRoute
   '/w/$workspaceSlug/settings': typeof WWorkspaceSlugSettingsRoute
   '/w/$workspaceSlug/tasks': typeof WWorkspaceSlugTasksRoute
+  '/api/hosts/': typeof ApiHostsIndexRoute
   '/api/agent/v1/channels': typeof ApiAgentV1ChannelsRoute
   '/api/agent/v1/events': typeof ApiAgentV1EventsRoute
   '/api/agent/v1/github-commit-trailers': typeof ApiAgentV1GithubCommitTrailersRoute
@@ -759,6 +798,8 @@ export interface FileRoutesByFullPath {
   '/api/agent/v1/workspace': typeof ApiAgentV1WorkspaceRoute
   '/api/computers/$computerId/creator-avatar': typeof ApiComputersComputerIdCreatorAvatarRoute
   '/api/e2e/workspaces/$slug': typeof ApiE2eWorkspacesSlugRoute
+  '/api/hosts/$hostId/jobs': typeof ApiHostsHostIdJobsRoute
+  '/api/hosts/jobs/claim': typeof ApiHostsJobsClaimRoute
   '/api/integrations/github/callback': typeof ApiIntegrationsGithubCallbackRoute
   '/api/integrations/github/webhook': typeof ApiIntegrationsGithubWebhookRoute
   '/api/openviking/$workspaceId/$': typeof ApiOpenvikingWorkspaceIdSplatRoute
@@ -785,6 +826,7 @@ export interface FileRoutesByFullPath {
   '/api/agent/v1/mention-actions/pending': typeof ApiAgentV1MentionActionsPendingRoute
   '/api/agent/v1/messages/search': typeof ApiAgentV1MessagesSearchRoute
   '/api/agent/v1/users/$name': typeof ApiAgentV1UsersNameRoute
+  '/api/hosts/jobs/$jobId/report': typeof ApiHostsJobsJobIdReportRoute
   '/api/projects/$projectId/raw/$': typeof ApiProjectsProjectIdRawSplatRoute
   '/w/$workspaceSlug/channel/$channelId': typeof WWorkspaceSlugChatChannelChannelIdRoute
   '/w/$workspaceSlug/dm/$dmId': typeof WWorkspaceSlugChatDmDmIdRoute
@@ -836,6 +878,8 @@ export interface FileRoutesByTo {
   '/api/attachments/$attachmentId': typeof ApiAttachmentsAttachmentIdRoute
   '/api/computer/attach': typeof ApiComputerAttachRoute
   '/api/computer/workspace': typeof ApiComputerWorkspaceRoute
+  '/api/hosts/heartbeat': typeof ApiHostsHeartbeatRoute
+  '/api/hosts/register': typeof ApiHostsRegisterRoute
   '/api/internal/centrifugo': typeof ApiInternalCentrifugoRoute
   '/api/internal/centrifugo-agent-activity': typeof ApiInternalCentrifugoAgentActivityRoute
   '/api/internal/centrifugo-connect': typeof ApiInternalCentrifugoConnectRoute
@@ -847,6 +891,7 @@ export interface FileRoutesByTo {
   '/w/$workspaceSlug/search': typeof WWorkspaceSlugSearchRoute
   '/w/$workspaceSlug/settings': typeof WWorkspaceSlugSettingsRoute
   '/w/$workspaceSlug/tasks': typeof WWorkspaceSlugTasksRoute
+  '/api/hosts': typeof ApiHostsIndexRoute
   '/api/agent/v1/channels': typeof ApiAgentV1ChannelsRoute
   '/api/agent/v1/events': typeof ApiAgentV1EventsRoute
   '/api/agent/v1/github-commit-trailers': typeof ApiAgentV1GithubCommitTrailersRoute
@@ -864,6 +909,8 @@ export interface FileRoutesByTo {
   '/api/agent/v1/workspace': typeof ApiAgentV1WorkspaceRoute
   '/api/computers/$computerId/creator-avatar': typeof ApiComputersComputerIdCreatorAvatarRoute
   '/api/e2e/workspaces/$slug': typeof ApiE2eWorkspacesSlugRoute
+  '/api/hosts/$hostId/jobs': typeof ApiHostsHostIdJobsRoute
+  '/api/hosts/jobs/claim': typeof ApiHostsJobsClaimRoute
   '/api/integrations/github/callback': typeof ApiIntegrationsGithubCallbackRoute
   '/api/integrations/github/webhook': typeof ApiIntegrationsGithubWebhookRoute
   '/api/openviking/$workspaceId/$': typeof ApiOpenvikingWorkspaceIdSplatRoute
@@ -889,6 +936,7 @@ export interface FileRoutesByTo {
   '/api/agent/v1/mention-actions/pending': typeof ApiAgentV1MentionActionsPendingRoute
   '/api/agent/v1/messages/search': typeof ApiAgentV1MessagesSearchRoute
   '/api/agent/v1/users/$name': typeof ApiAgentV1UsersNameRoute
+  '/api/hosts/jobs/$jobId/report': typeof ApiHostsJobsJobIdReportRoute
   '/api/projects/$projectId/raw/$': typeof ApiProjectsProjectIdRawSplatRoute
   '/w/$workspaceSlug/channel/$channelId': typeof WWorkspaceSlugChatChannelChannelIdRoute
   '/w/$workspaceSlug/dm/$dmId': typeof WWorkspaceSlugChatDmDmIdRoute
@@ -941,6 +989,8 @@ export interface FileRoutesById {
   '/api/attachments/$attachmentId': typeof ApiAttachmentsAttachmentIdRoute
   '/api/computer/attach': typeof ApiComputerAttachRoute
   '/api/computer/workspace': typeof ApiComputerWorkspaceRoute
+  '/api/hosts/heartbeat': typeof ApiHostsHeartbeatRoute
+  '/api/hosts/register': typeof ApiHostsRegisterRoute
   '/api/internal/centrifugo': typeof ApiInternalCentrifugoRoute
   '/api/internal/centrifugo-agent-activity': typeof ApiInternalCentrifugoAgentActivityRoute
   '/api/internal/centrifugo-connect': typeof ApiInternalCentrifugoConnectRoute
@@ -955,6 +1005,7 @@ export interface FileRoutesById {
   '/w/$workspaceSlug/search': typeof WWorkspaceSlugSearchRoute
   '/w/$workspaceSlug/settings': typeof WWorkspaceSlugSettingsRoute
   '/w/$workspaceSlug/tasks': typeof WWorkspaceSlugTasksRoute
+  '/api/hosts/': typeof ApiHostsIndexRoute
   '/api/agent/v1/channels': typeof ApiAgentV1ChannelsRoute
   '/api/agent/v1/events': typeof ApiAgentV1EventsRoute
   '/api/agent/v1/github-commit-trailers': typeof ApiAgentV1GithubCommitTrailersRoute
@@ -972,6 +1023,8 @@ export interface FileRoutesById {
   '/api/agent/v1/workspace': typeof ApiAgentV1WorkspaceRoute
   '/api/computers/$computerId/creator-avatar': typeof ApiComputersComputerIdCreatorAvatarRoute
   '/api/e2e/workspaces/$slug': typeof ApiE2eWorkspacesSlugRoute
+  '/api/hosts/$hostId/jobs': typeof ApiHostsHostIdJobsRoute
+  '/api/hosts/jobs/claim': typeof ApiHostsJobsClaimRoute
   '/api/integrations/github/callback': typeof ApiIntegrationsGithubCallbackRoute
   '/api/integrations/github/webhook': typeof ApiIntegrationsGithubWebhookRoute
   '/api/openviking/$workspaceId/$': typeof ApiOpenvikingWorkspaceIdSplatRoute
@@ -998,6 +1051,7 @@ export interface FileRoutesById {
   '/api/agent/v1/mention-actions_/pending': typeof ApiAgentV1MentionActionsPendingRoute
   '/api/agent/v1/messages_/search': typeof ApiAgentV1MessagesSearchRoute
   '/api/agent/v1/users/$name': typeof ApiAgentV1UsersNameRoute
+  '/api/hosts/jobs/$jobId/report': typeof ApiHostsJobsJobIdReportRoute
   '/api/projects/$projectId/raw/$': typeof ApiProjectsProjectIdRawSplatRoute
   '/w/$workspaceSlug/_chat/channel/$channelId': typeof WWorkspaceSlugChatChannelChannelIdRoute
   '/w/$workspaceSlug/_chat/dm/$dmId': typeof WWorkspaceSlugChatDmDmIdRoute
@@ -1051,6 +1105,8 @@ export interface FileRouteTypes {
     | '/api/attachments/$attachmentId'
     | '/api/computer/attach'
     | '/api/computer/workspace'
+    | '/api/hosts/heartbeat'
+    | '/api/hosts/register'
     | '/api/internal/centrifugo'
     | '/api/internal/centrifugo-agent-activity'
     | '/api/internal/centrifugo-connect'
@@ -1063,6 +1119,7 @@ export interface FileRouteTypes {
     | '/w/$workspaceSlug/search'
     | '/w/$workspaceSlug/settings'
     | '/w/$workspaceSlug/tasks'
+    | '/api/hosts/'
     | '/api/agent/v1/channels'
     | '/api/agent/v1/events'
     | '/api/agent/v1/github-commit-trailers'
@@ -1080,6 +1137,8 @@ export interface FileRouteTypes {
     | '/api/agent/v1/workspace'
     | '/api/computers/$computerId/creator-avatar'
     | '/api/e2e/workspaces/$slug'
+    | '/api/hosts/$hostId/jobs'
+    | '/api/hosts/jobs/claim'
     | '/api/integrations/github/callback'
     | '/api/integrations/github/webhook'
     | '/api/openviking/$workspaceId/$'
@@ -1106,6 +1165,7 @@ export interface FileRouteTypes {
     | '/api/agent/v1/mention-actions/pending'
     | '/api/agent/v1/messages/search'
     | '/api/agent/v1/users/$name'
+    | '/api/hosts/jobs/$jobId/report'
     | '/api/projects/$projectId/raw/$'
     | '/w/$workspaceSlug/channel/$channelId'
     | '/w/$workspaceSlug/dm/$dmId'
@@ -1157,6 +1217,8 @@ export interface FileRouteTypes {
     | '/api/attachments/$attachmentId'
     | '/api/computer/attach'
     | '/api/computer/workspace'
+    | '/api/hosts/heartbeat'
+    | '/api/hosts/register'
     | '/api/internal/centrifugo'
     | '/api/internal/centrifugo-agent-activity'
     | '/api/internal/centrifugo-connect'
@@ -1168,6 +1230,7 @@ export interface FileRouteTypes {
     | '/w/$workspaceSlug/search'
     | '/w/$workspaceSlug/settings'
     | '/w/$workspaceSlug/tasks'
+    | '/api/hosts'
     | '/api/agent/v1/channels'
     | '/api/agent/v1/events'
     | '/api/agent/v1/github-commit-trailers'
@@ -1185,6 +1248,8 @@ export interface FileRouteTypes {
     | '/api/agent/v1/workspace'
     | '/api/computers/$computerId/creator-avatar'
     | '/api/e2e/workspaces/$slug'
+    | '/api/hosts/$hostId/jobs'
+    | '/api/hosts/jobs/claim'
     | '/api/integrations/github/callback'
     | '/api/integrations/github/webhook'
     | '/api/openviking/$workspaceId/$'
@@ -1210,6 +1275,7 @@ export interface FileRouteTypes {
     | '/api/agent/v1/mention-actions/pending'
     | '/api/agent/v1/messages/search'
     | '/api/agent/v1/users/$name'
+    | '/api/hosts/jobs/$jobId/report'
     | '/api/projects/$projectId/raw/$'
     | '/w/$workspaceSlug/channel/$channelId'
     | '/w/$workspaceSlug/dm/$dmId'
@@ -1261,6 +1327,8 @@ export interface FileRouteTypes {
     | '/api/attachments/$attachmentId'
     | '/api/computer/attach'
     | '/api/computer/workspace'
+    | '/api/hosts/heartbeat'
+    | '/api/hosts/register'
     | '/api/internal/centrifugo'
     | '/api/internal/centrifugo-agent-activity'
     | '/api/internal/centrifugo-connect'
@@ -1275,6 +1343,7 @@ export interface FileRouteTypes {
     | '/w/$workspaceSlug/search'
     | '/w/$workspaceSlug/settings'
     | '/w/$workspaceSlug/tasks'
+    | '/api/hosts/'
     | '/api/agent/v1/channels'
     | '/api/agent/v1/events'
     | '/api/agent/v1/github-commit-trailers'
@@ -1292,6 +1361,8 @@ export interface FileRouteTypes {
     | '/api/agent/v1/workspace'
     | '/api/computers/$computerId/creator-avatar'
     | '/api/e2e/workspaces/$slug'
+    | '/api/hosts/$hostId/jobs'
+    | '/api/hosts/jobs/claim'
     | '/api/integrations/github/callback'
     | '/api/integrations/github/webhook'
     | '/api/openviking/$workspaceId/$'
@@ -1318,6 +1389,7 @@ export interface FileRouteTypes {
     | '/api/agent/v1/mention-actions_/pending'
     | '/api/agent/v1/messages_/search'
     | '/api/agent/v1/users/$name'
+    | '/api/hosts/jobs/$jobId/report'
     | '/api/projects/$projectId/raw/$'
     | '/w/$workspaceSlug/_chat/channel/$channelId'
     | '/w/$workspaceSlug/_chat/dm/$dmId'
@@ -1369,11 +1441,14 @@ export interface RootRouteChildren {
   WorkspacesNewRoute: typeof WorkspacesNewRoute
   ApiComputerAttachRoute: typeof ApiComputerAttachRoute
   ApiComputerWorkspaceRoute: typeof ApiComputerWorkspaceRoute
+  ApiHostsHeartbeatRoute: typeof ApiHostsHeartbeatRoute
+  ApiHostsRegisterRoute: typeof ApiHostsRegisterRoute
   ApiInternalCentrifugoRoute: typeof ApiInternalCentrifugoRoute
   ApiInternalCentrifugoAgentActivityRoute: typeof ApiInternalCentrifugoAgentActivityRoute
   ApiInternalCentrifugoConnectRoute: typeof ApiInternalCentrifugoConnectRoute
   ApiInternalWeeklyReportScheduleRoute: typeof ApiInternalWeeklyReportScheduleRoute
   ApiWorkspacesSlugRoute: typeof ApiWorkspacesSlugRoute
+  ApiHostsIndexRoute: typeof ApiHostsIndexRoute
   ApiAgentV1ChannelsRoute: typeof ApiAgentV1ChannelsRoute
   ApiAgentV1EventsRoute: typeof ApiAgentV1EventsRoute
   ApiAgentV1GithubCommitTrailersRoute: typeof ApiAgentV1GithubCommitTrailersRoute
@@ -1391,6 +1466,8 @@ export interface RootRouteChildren {
   ApiAgentV1WorkspaceRoute: typeof ApiAgentV1WorkspaceRoute
   ApiComputersComputerIdCreatorAvatarRoute: typeof ApiComputersComputerIdCreatorAvatarRoute
   ApiE2eWorkspacesSlugRoute: typeof ApiE2eWorkspacesSlugRoute
+  ApiHostsHostIdJobsRoute: typeof ApiHostsHostIdJobsRoute
+  ApiHostsJobsClaimRoute: typeof ApiHostsJobsClaimRoute
   ApiIntegrationsGithubCallbackRoute: typeof ApiIntegrationsGithubCallbackRoute
   ApiIntegrationsGithubWebhookRoute: typeof ApiIntegrationsGithubWebhookRoute
   ApiOpenvikingWorkspaceIdSplatRoute: typeof ApiOpenvikingWorkspaceIdSplatRoute
@@ -1406,6 +1483,7 @@ export interface RootRouteChildren {
   ApiAgentV1MentionActionsPendingRoute: typeof ApiAgentV1MentionActionsPendingRoute
   ApiAgentV1MessagesSearchRoute: typeof ApiAgentV1MessagesSearchRoute
   ApiAgentV1UsersNameRoute: typeof ApiAgentV1UsersNameRoute
+  ApiHostsJobsJobIdReportRoute: typeof ApiHostsJobsJobIdReportRoute
   ApiProjectsProjectIdRawSplatRoute: typeof ApiProjectsProjectIdRawSplatRoute
   ApiAgentV1AttachmentUploadSessionsIndexRoute: typeof ApiAgentV1AttachmentUploadSessionsIndexRoute
   ApiAgentV1AttachmentsIndexRoute: typeof ApiAgentV1AttachmentsIndexRoute
@@ -1587,6 +1665,27 @@ declare module '@tanstack/react-router' {
       path: '/api/computer/workspace'
       fullPath: '/api/computer/workspace'
       preLoaderRoute: typeof ApiComputerWorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hosts/': {
+      id: '/api/hosts/'
+      path: '/api/hosts'
+      fullPath: '/api/hosts/'
+      preLoaderRoute: typeof ApiHostsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hosts/heartbeat': {
+      id: '/api/hosts/heartbeat'
+      path: '/api/hosts/heartbeat'
+      fullPath: '/api/hosts/heartbeat'
+      preLoaderRoute: typeof ApiHostsHeartbeatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hosts/register': {
+      id: '/api/hosts/register'
+      path: '/api/hosts/register'
+      fullPath: '/api/hosts/register'
+      preLoaderRoute: typeof ApiHostsRegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/internal/centrifugo': {
@@ -1806,6 +1905,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiE2eWorkspacesSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/hosts/$hostId/jobs': {
+      id: '/api/hosts/$hostId/jobs'
+      path: '/api/hosts/$hostId/jobs'
+      fullPath: '/api/hosts/$hostId/jobs'
+      preLoaderRoute: typeof ApiHostsHostIdJobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hosts/jobs/claim': {
+      id: '/api/hosts/jobs/claim'
+      path: '/api/hosts/jobs/claim'
+      fullPath: '/api/hosts/jobs/claim'
+      preLoaderRoute: typeof ApiHostsJobsClaimRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/integrations/github/callback': {
       id: '/api/integrations/github/callback'
       path: '/api/integrations/github/callback'
@@ -2000,6 +2113,13 @@ declare module '@tanstack/react-router' {
       path: '/api/agent/v1/users/$name'
       fullPath: '/api/agent/v1/users/$name'
       preLoaderRoute: typeof ApiAgentV1UsersNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/hosts/jobs/$jobId/report': {
+      id: '/api/hosts/jobs/$jobId/report'
+      path: '/api/hosts/jobs/$jobId/report'
+      fullPath: '/api/hosts/jobs/$jobId/report'
+      preLoaderRoute: typeof ApiHostsJobsJobIdReportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/projects/$projectId/raw/$': {
@@ -2356,12 +2476,15 @@ const rootRouteChildren: RootRouteChildren = {
   WorkspacesNewRoute: WorkspacesNewRoute,
   ApiComputerAttachRoute: ApiComputerAttachRoute,
   ApiComputerWorkspaceRoute: ApiComputerWorkspaceRoute,
+  ApiHostsHeartbeatRoute: ApiHostsHeartbeatRoute,
+  ApiHostsRegisterRoute: ApiHostsRegisterRoute,
   ApiInternalCentrifugoRoute: ApiInternalCentrifugoRoute,
   ApiInternalCentrifugoAgentActivityRoute:
     ApiInternalCentrifugoAgentActivityRoute,
   ApiInternalCentrifugoConnectRoute: ApiInternalCentrifugoConnectRoute,
   ApiInternalWeeklyReportScheduleRoute: ApiInternalWeeklyReportScheduleRoute,
   ApiWorkspacesSlugRoute: ApiWorkspacesSlugRoute,
+  ApiHostsIndexRoute: ApiHostsIndexRoute,
   ApiAgentV1ChannelsRoute: ApiAgentV1ChannelsRoute,
   ApiAgentV1EventsRoute: ApiAgentV1EventsRoute,
   ApiAgentV1GithubCommitTrailersRoute: ApiAgentV1GithubCommitTrailersRoute,
@@ -2380,6 +2503,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiComputersComputerIdCreatorAvatarRoute:
     ApiComputersComputerIdCreatorAvatarRoute,
   ApiE2eWorkspacesSlugRoute: ApiE2eWorkspacesSlugRoute,
+  ApiHostsHostIdJobsRoute: ApiHostsHostIdJobsRoute,
+  ApiHostsJobsClaimRoute: ApiHostsJobsClaimRoute,
   ApiIntegrationsGithubCallbackRoute: ApiIntegrationsGithubCallbackRoute,
   ApiIntegrationsGithubWebhookRoute: ApiIntegrationsGithubWebhookRoute,
   ApiOpenvikingWorkspaceIdSplatRoute: ApiOpenvikingWorkspaceIdSplatRoute,
@@ -2398,6 +2523,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAgentV1MentionActionsPendingRoute: ApiAgentV1MentionActionsPendingRoute,
   ApiAgentV1MessagesSearchRoute: ApiAgentV1MessagesSearchRoute,
   ApiAgentV1UsersNameRoute: ApiAgentV1UsersNameRoute,
+  ApiHostsJobsJobIdReportRoute: ApiHostsJobsJobIdReportRoute,
   ApiProjectsProjectIdRawSplatRoute: ApiProjectsProjectIdRawSplatRoute,
   ApiAgentV1AttachmentUploadSessionsIndexRoute:
     ApiAgentV1AttachmentUploadSessionsIndexRoute,

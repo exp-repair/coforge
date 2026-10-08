@@ -33,6 +33,7 @@ export const Route = createFileRoute("/w/$workspaceSlug/_computers")({
 
 function ComputersPage() {
   const { computers, installOrigin } = Route.useLoaderData();
+  const router = useRouter();
   const { data: latestComputerVersion } = useQuery(latestComputerVersionQuery());
   const { currentWorkspace } = appRoute.useLoaderData();
   const params = useParams({
@@ -41,7 +42,6 @@ function ComputersPage() {
   });
   const [addComputerOpen, setAddComputerOpen] = useState(false);
   const [connectedComputerName, setConnectedComputerName] = useState<string | null>(null);
-  const router = useRouter();
   const computersWhenAddOpened = useRef<ReadonlySet<string> | null>(null);
 
   useEffect(() => {
@@ -102,6 +102,16 @@ function ComputersPage() {
         installOrigin={installOrigin}
         workspaceSlug={currentWorkspace?.slug ?? null}
         connectedComputerName={connectedComputerName}
+        onCreated={async (computerId) => {
+          const workspaceSlug = currentWorkspace?.slug;
+          setAddComputerOpen(false);
+          await router.invalidate();
+          if (!workspaceSlug) return;
+          await router.navigate({
+            to: "/w/$workspaceSlug/computer/$computerId",
+            params: { workspaceSlug, computerId },
+          });
+        }}
       />
     </>
   );

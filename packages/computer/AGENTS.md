@@ -45,6 +45,7 @@ relative to `src/`.
 | `local-config.ts`                    | Reading and validating the persisted profile                                                  |
 | `release-channel.ts`                 | Compiled official feed/server mapping                                                         |
 | `daemon-client/`                     | Daemon lifecycle requests (`start`, `stop`, `restart`) through the supervisor                 |
+| `host/`                              | Host process: register, heartbeat, claim container runs, and report them                      |
 | `status/`                            | Read-only `status` report through per-platform ports                                          |
 | `logging/`                           | Computer LogTape configuration and the `logs` follower                                        |
 | `updater.ts`                         | Reads the installed version; zod contract schemas and launcher text shared with the installer |
@@ -123,6 +124,10 @@ that environment; login, setup, and lifecycle adapters share that public seam.
   encode RPC.
 - `setup/` owns the Computer setup business flow. It coordinates domain ports
   without knowing Commander or terminal output formatting.
+- `host/` polls the server over HTTPS and runs containers. It does not open a
+  Daemon WebSocket or interpret Workspace messages. A container's `foreground`
+  start writes only the Daemon API key and one enabled workspace binding.
+  `docker/Dockerfile` is the local image; its entrypoint is `coforge-computer foreground`.
 - `workspace/` owns the direct Workspace lookup used by setup intent. Computer
   never lists or interactively selects Workspaces; do not add a picker or a
   list-selection flow.

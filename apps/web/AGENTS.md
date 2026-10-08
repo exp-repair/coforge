@@ -148,6 +148,7 @@ responsibility.
 - `server/computers/` — Computer registration, metadata, restart and upgrade
   operations, runtime visibility, explicit model catalog refresh, and what the server remembers across a
   daemon's shutdown and return.
+- `server/hosts/` — host-node enrollment, registration, heartbeat, the global online list, and container-computer jobs.
 - `server/conversations/` — public channels, channel authority, stopping and resuming a channel's Agents, direct messages, history, message search, action cards, reactions, tracked @mention delivery outcomes (`mention-deliveries`), and conversation realtime.
 - `server/db/` — the Prisma client, repositories (a DM's list preferences apart from its messages; the Agent attention rule in `agent-attention`), and the shared unique-violation check.
 - `server/errors/` — public error mapping and request error handling.
@@ -191,6 +192,7 @@ it, so a deletion trips this as easily as an addition. Reproduce what CI sees be
 - Rules for `src/server/agents/` → [`src/server/agents/AGENTS.md`](src/server/agents/AGENTS.md)
 - Rules for `src/server/centrifugo/` → [`src/server/centrifugo/AGENTS.md`](src/server/centrifugo/AGENTS.md)
 - Rules for `src/server/computers/` → [`src/server/computers/AGENTS.md`](src/server/computers/AGENTS.md)
+- Rules for `src/server/hosts/` → [`src/server/hosts/AGENTS.md`](src/server/hosts/AGENTS.md)
 - Rules for `src/server/conversations/` → [`src/server/conversations/AGENTS.md`](src/server/conversations/AGENTS.md)
 - Rules for `src/server/db/` → [`src/server/db/AGENTS.md`](src/server/db/AGENTS.md)
 - Rules for `src/server/integrations/` → [`src/server/integrations/AGENTS.md`](src/server/integrations/AGENTS.md)
