@@ -38,6 +38,37 @@ test("Agent collection cards survive message history reads without exposing the 
   ).toBeUndefined();
 });
 
+test("a send-prompt envelope is a confirm card and the chat hides the fence", () => {
+  const suggestion = {
+    type: "send-prompt" as const,
+    reportId: "11111111-1111-4111-8111-111111111111",
+  };
+  const message = row({
+    body: [
+      "请点下方确认发送。",
+      "",
+      "[weekly-report-suggestion]",
+      JSON.stringify(suggestion),
+      "[/weekly-report-suggestion]",
+    ].join("\n"),
+    sender: {
+      userId: null,
+      agentId: "assistant",
+      user: null,
+      agent: {
+        name: "weekly-report",
+        displayName: "周报助手",
+        deletedAt: null,
+        avatarObjectKey: null,
+      },
+    },
+  });
+  const view = mapBrowserMessage(message, WORKSPACE_ID);
+  expect(view.weeklyReportSuggestion).toEqual(suggestion);
+  expect(view.weeklyReportDisplayBody).toBe("请点下方确认发送。");
+  expect(view.body).toBe(message.body);
+});
+
 function row(overrides: Partial<BrowserMessageRow>): BrowserMessageRow {
   return {
     id: "message-1",

@@ -2945,3 +2945,45 @@ test("member edits after submit stay off the leader copy until resend", async ()
   if (resent.type !== "report") throw new Error("expected report subject");
   expect(resent.report.content.tabs).toEqual({ Summary: { markdown: "重新发送" } });
 });
+
+test("confirmPromptedSend submits a member report instead of requiring a template", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const db = {
+    workspaceMembership: { findUnique: async () => ({ role: "member" }) },
+    weeklyReport: {
+      findFirst: async () => ({
+        id: "assignment-1",
+        authorId: "author-1",
+        kind: "member",
+        status: "submitted",
+        hiddenFromAuthor: false,
+        settingsId: null,
+        content: { tabs: { Summary: { markdown: "done" } } },
+        cycle: { year: 2026, week: 41 },
+        submissions: [],
+      }),
+      update: async (query: { data: Record<string, unknown> }) => {
+        updates.push(query.data);
+        return {
+          id: "assignment-1",
+          status: "submitted",
+          updatedAt: new Date("2026-10-08T06:00:00.000Z"),
+        };
+      },
+    },
+    weeklyReportTemplate: {
+      findFirst: async () => {
+        throw new Error("member send must not look up template settings");
+      },
+    },
+  } as unknown as PrismaClient;
+
+  const result = await new RecordCatalog(db).confirmPromptedSend({
+    workspaceId: "workspace-1",
+    userId: "author-1",
+    reportId: "assignment-1",
+  });
+
+  expect(result).toMatchObject({ status: "submitted" });
+  expect(updates[0]?.status).toBe("submitted");
+});

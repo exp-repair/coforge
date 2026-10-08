@@ -54,7 +54,11 @@ export function mapBrowserMessage(message: BrowserMessageRow, workspaceId: strin
     ? parseWeeklyReportAssistantSuggestion(message.body)
     : null;
   const weeklyReportSuggestion =
-    suggestion?.type === "collect-plan" || suggestion?.type === "body-edit" ? suggestion : null;
+    suggestion?.type === "collect-plan" ||
+    suggestion?.type === "body-edit" ||
+    suggestion?.type === "send-prompt"
+      ? suggestion
+      : null;
   return {
     ...(weeklyReportSuggestion
       ? {

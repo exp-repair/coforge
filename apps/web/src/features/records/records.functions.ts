@@ -310,6 +310,17 @@ export const markWeeklyAssignmentOpened = createServerFn({ method: "POST" })
     });
   });
 
+export const confirmWeeklyReportSend = createServerFn({ method: "POST" })
+  .middleware([workspaceUserMiddleware])
+  .validator(z.object({ reportId: z.uuid() }))
+  .handler(async ({ data, context: { user, db, workspaceId } }) => {
+    return recordCatalog(db).confirmPromptedSend({
+      workspaceId,
+      userId: user.id,
+      reportId: data.reportId,
+    });
+  });
+
 export const sendWeeklyReportAssignments = createServerFn({ method: "POST" })
   .middleware([workspaceUserMiddleware])
   .validator(

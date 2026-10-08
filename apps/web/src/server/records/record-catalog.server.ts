@@ -1019,6 +1019,47 @@ export class RecordCatalog {
   }
 
   /**
+   * The assistant send card confirms whichever report it names: a member report is
+   * submitted, a template is distributed to its recipients.
+   */
+  async confirmPromptedSend(input: {
+    workspaceId: string;
+    userId: string;
+    reportId: string;
+    now?: Date;
+  }) {
+    await requireMembership(this.db, input.workspaceId, input.userId);
+    const report = await this.db.weeklyReport.findFirst({
+      where: {
+        id: input.reportId,
+        workspaceId: input.workspaceId,
+        authorId: input.userId,
+      },
+      select: { id: true, kind: true, content: true },
+    });
+    if (!report) throw new AppError("NOT_FOUND");
+    if (report.kind === "member") {
+      return this.saveReportContent({
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        reportId: report.id,
+        content: normalizeReportContent(asReportContent(report.content)),
+        status: "submitted",
+        now: input.now,
+      });
+    }
+    if (report.kind === "template") {
+      return this.sendWeeklyAssignments({
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        sourceReportId: report.id,
+        now: input.now,
+      });
+    }
+    throw new AppError("NOT_FOUND");
+  }
+
+  /**
    * Leader manual send: persist source content, create a new weekly parent for the
    * current cycle, and open unread assignments for configured recipients (ADR 0011).
    */
