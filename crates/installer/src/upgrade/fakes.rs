@@ -238,12 +238,17 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     pub(crate) fn new(label: &str) -> Self {
+        Self::with_latest(label, NEW)
+    }
+
+    /// A fixture whose feed's `latest` pointer names `latest` (one of [`OLD`] and [`NEW`]).
+    pub(crate) fn with_latest(label: &str, latest: &str) -> Self {
         let scratch = Scratch::new(label);
         let mut routes = Release::new(OLD, TARGET).routes();
         routes.extend(Release::new(NEW, TARGET).routes());
         routes.insert(
             "/latest".to_owned(),
-            crate::test_support::Response::ok(format!("{NEW}\n")),
+            crate::test_support::Response::ok(format!("{latest}\n")),
         );
         let server = Server::start(routes);
         let root = scratch.path().join("install");

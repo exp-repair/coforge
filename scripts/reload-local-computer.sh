@@ -146,7 +146,7 @@ installer_bin="$root/target/release/coforge-installer"
 echo "==> Building coforge-installer from this checkout"
 (CDPATH='' cd -- "$root/crates/installer" && run_cargo build --locked --release)
 echo "==> Installing local package version $version"
-if ! "$installer_bin" install --version "$version" --from-directory "$package_dir"; then
+if ! "$installer_bin" install --version "$version" --from-directory "$package_dir" --allow-downgrade; then
   echo "$name: local install failed" >&2
   echo "  If you see 'no healthy supervisor', the fixture Web URL likely does not" >&2
   echo "  match the running Daemon origin. Current COFORGE_E2E_WEB_URL=$COFORGE_E2E_WEB_URL" >&2

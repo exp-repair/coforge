@@ -14,6 +14,11 @@ export type UpgradeOperation = {
   /** The release selector, or "latest". */
   selection: string;
   origin: UpgradeOperationOrigin;
+  /**
+   * Lets the installer activate a version older than the installed one. Set only by the CLI
+   * boundary (`createLocalUpgradeOperation`); a remote operation never carries it.
+   */
+  allowDowngrade?: boolean;
 };
 
 export function assertUpgradeRequestId(value: unknown): asserts value is string {
@@ -35,6 +40,14 @@ export function parseRemoteUpgradeOperation(argv: readonly string[]): UpgradeOpe
 }
 
 /** Builds the operation an interactive `upgrade` or `install` command runs. */
-export function createLocalUpgradeOperation(selection: string): UpgradeOperation {
-  return { requestId: crypto.randomUUID(), selection, origin: "cli" };
+export function createLocalUpgradeOperation(
+  selection: string,
+  options: { allowDowngrade: boolean },
+): UpgradeOperation {
+  return {
+    requestId: crypto.randomUUID(),
+    selection,
+    origin: "cli",
+    allowDowngrade: options.allowDowngrade,
+  };
 }

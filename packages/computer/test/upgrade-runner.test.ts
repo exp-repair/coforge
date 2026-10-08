@@ -14,7 +14,7 @@ import {
   type UpgradeRunnerOptions,
 } from "#src/release/upgrade-runner";
 import { UpgradeFailedError } from "#src/release/upgrade-receipt";
-import type { UpgradeOperation } from "#src/release/upgrade-operation";
+import { parseRemoteUpgradeOperation, type UpgradeOperation } from "#src/release/upgrade-operation";
 
 const runner = join(import.meta.dir, "..", "src", "release", "upgrade-runner.ts");
 const temporaryDirectories: string[] = [];
@@ -318,5 +318,57 @@ test("recover runs the installer's recover with this process as the caller, stdi
       stdout: "inherit",
       stderr: "inherit",
     },
+  ]);
+});
+
+test("only a CLI operation that allows a downgrade passes --allow-downgrade to the installer", async () => {
+  const directory = await scratch();
+  const installer = await fakeInstaller(directory, {
+    exitCode: 0,
+    receipt: receiptOf("__ID__", { status: "succeeded", exit_code: 0, version: "9.9.9" }),
+  });
+  const spawned: InstallerSpawn[] = [];
+  const recording = async (spawn: InstallerSpawn) => {
+    spawned.push(spawn);
+    return defaultSpawnInstaller(spawn);
+  };
+  const allowed = { ...operation("cli"), allowDowngrade: true };
+  const refused = operation("cli");
+  const remote = parseRemoteUpgradeOperation([
+    "__remote-upgrade",
+    "--request-id",
+    crypto.randomUUID(),
+    "--version",
+    "9.9.9",
+    "--allow-downgrade",
+  ]);
+
+  await runUpgradeOperation(
+    allowed,
+    runnerOptions(directory, installer, { spawnInstaller: recording }),
+  );
+  await runUpgradeOperation(
+    refused,
+    runnerOptions(directory, installer, { spawnInstaller: recording }),
+  );
+  await runUpgradeOperation(
+    remote,
+    runnerOptions(directory, installer, { spawnInstaller: recording }),
+  );
+
+  expect(spawned.map((spawn) => spawn.args.includes("--allow-downgrade"))).toEqual([
+    true,
+    false,
+    false,
+  ]);
+  expect(spawned[0]?.args).toEqual([
+    "upgrade",
+    "--request-id",
+    allowed.requestId,
+    "--version",
+    "9.9.9",
+    "--caller-pid",
+    String(process.pid),
+    "--allow-downgrade",
   ]);
 });

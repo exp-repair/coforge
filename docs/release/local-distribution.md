@@ -33,8 +33,10 @@ lock; see [Upgrade operations](upgrade-operations.md). Computer fetches the
 installer through the same embedded scripts and then runs it.
 
 Local builds are installed the same way, with
-`coforge-installer install --version <v> --from-directory <release dir>`, where the
-directory has the layout above.
+`coforge-installer install --version <v> --from-directory <release dir> --allow-downgrade`,
+where the directory has the layout above. Local builds may carry a lower version than the
+installed one, so the developer scripts pass `--allow-downgrade`; without it the installer
+refuses an older version ([Upgrade operations](upgrade-operations.md)).
 
 Both entry points detect the platform before resolving the version. Normal output
 is limited to platform/version, curl download progress, installation location, and

@@ -3,9 +3,9 @@
 //!
 //! Commands:
 //!   coforge-installer --version
-//!   coforge-installer install --version <latest|X.Y.Z> [--from-directory <dir>]
+//!   coforge-installer install --version <latest|X.Y.Z> [--from-directory <dir>] [--allow-downgrade]
 //!   coforge-installer upgrade --request-id <uuid> --version <latest|X.Y.Z> [--caller-pid <pid>]
-//!                             [--from-directory <dir>]
+//!                             [--from-directory <dir>] [--allow-downgrade]
 //!   coforge-installer recover [--caller-pid <pid>]
 //!   coforge-installer status [--json]
 //!
@@ -39,12 +39,14 @@ enum Command {
     Install {
         selection: String,
         from_directory: Option<PathBuf>,
+        allow_downgrade: bool,
     },
     Upgrade {
         request_id: String,
         selection: String,
         caller_pid: Option<u32>,
         from_directory: Option<PathBuf>,
+        allow_downgrade: bool,
     },
     Recover {
         caller_pid: Option<u32>,
@@ -72,13 +74,29 @@ fn main() -> ExitCode {
         Command::Install {
             selection,
             from_directory,
-        } => transaction(&setup, &new_request_id(), &selection, None, from_directory),
+            allow_downgrade,
+        } => transaction(
+            &setup,
+            &new_request_id(),
+            &selection,
+            None,
+            from_directory,
+            allow_downgrade,
+        ),
         Command::Upgrade {
             request_id,
             selection,
             caller_pid,
             from_directory,
-        } => transaction(&setup, &request_id, &selection, caller_pid, from_directory),
+            allow_downgrade,
+        } => transaction(
+            &setup,
+            &request_id,
+            &selection,
+            caller_pid,
+            from_directory,
+            allow_downgrade,
+        ),
         Command::Recover { caller_pid } => recover(&setup, caller_pid),
         Command::Status { json } => status(&setup, json),
     }
@@ -101,10 +119,17 @@ fn transaction(
     selection: &str,
     caller_pid: Option<u32>,
     from_directory: Option<PathBuf>,
+    allow_downgrade: bool,
 ) -> ExitCode {
     let origin = from_directory.map_or(ReleaseOrigin::Feed, ReleaseOrigin::Directory);
     match installation::transaction(
-        setup, request_id, selection, caller_pid, &origin, &mut stage,
+        setup,
+        request_id,
+        selection,
+        caller_pid,
+        &origin,
+        allow_downgrade,
+        &mut stage,
     ) {
         Ok(Outcome::Receipt(receipt)) => report_receipt(&receipt),
         Ok(Outcome::NoReceipt { exit, message }) => {
@@ -197,10 +222,12 @@ fn parse_install(mut parser: lexopt::Parser) -> Result<Command, String> {
 
     let mut selection = None;
     let mut from_directory = None;
+    let mut allow_downgrade = false;
     while let Some(arg) = parser.next().map_err(|error| error.to_string())? {
         match arg {
             Long("version") => selection = Some(selection_value(&mut parser)?),
             Long("from-directory") => from_directory = Some(directory_value(&mut parser)?),
+            Long("allow-downgrade") => allow_downgrade = true,
             other => return Err(other.unexpected().to_string()),
         }
     }
@@ -209,6 +236,7 @@ fn parse_install(mut parser: lexopt::Parser) -> Result<Command, String> {
     Ok(Command::Install {
         selection,
         from_directory,
+        allow_downgrade,
     })
 }
 
@@ -219,12 +247,14 @@ fn parse_upgrade(mut parser: lexopt::Parser) -> Result<Command, String> {
     let mut selection = None;
     let mut caller_pid = None;
     let mut from_directory = None;
+    let mut allow_downgrade = false;
     while let Some(arg) = parser.next().map_err(|error| error.to_string())? {
         match arg {
             Long("request-id") => request_id = Some(value(&mut parser)?),
             Long("version") => selection = Some(selection_value(&mut parser)?),
             Long("caller-pid") => caller_pid = Some(caller_pid_value(&mut parser)?),
             Long("from-directory") => from_directory = Some(directory_value(&mut parser)?),
+            Long("allow-downgrade") => allow_downgrade = true,
             other => return Err(other.unexpected().to_string()),
         }
     }
@@ -239,6 +269,7 @@ fn parse_upgrade(mut parser: lexopt::Parser) -> Result<Command, String> {
         selection,
         caller_pid,
         from_directory,
+        allow_downgrade,
     })
 }
 
@@ -435,6 +466,51 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn allow_downgrade_is_a_plain_flag_on_install_and_upgrade() {
+        assert!(matches!(
+            parse(args(&[
+                "upgrade",
+                "--request-id",
+                "0b7d2c9e-3a1f-4c8e-9d2b-5f6a7b8c9d0e",
+                "--version",
+                "0.1.0",
+                "--allow-downgrade",
+            ])),
+            Ok(Command::Upgrade {
+                allow_downgrade: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(args(&[
+                "upgrade",
+                "--request-id",
+                "0b7d2c9e-3a1f-4c8e-9d2b-5f6a7b8c9d0e",
+                "--version",
+                "0.1.0",
+            ])),
+            Ok(Command::Upgrade {
+                allow_downgrade: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse(args(&[
+                "install",
+                "--version",
+                "0.1.0",
+                "--allow-downgrade"
+            ])),
+            Ok(Command::Install {
+                allow_downgrade: true,
+                ..
+            })
+        ));
+        assert!(parse(args(&["recover", "--allow-downgrade"])).is_err());
+        assert!(parse(args(&["status", "--allow-downgrade"])).is_err());
     }
 
     #[test]

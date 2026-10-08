@@ -52,6 +52,12 @@ The module map is in [`src/AGENTS.md`](src/AGENTS.md), next to the modules it de
   in one directory, the layout of the Computer's local package. It needs a concrete version, never
   `latest` (usage error, exit 1). Every check the feed path makes applies. It is for local builds
   (`scripts/`), not for users.
+- `--allow-downgrade` (install and upgrade): a plain flag that lets the target be older than the
+  active version. Without it, a target that orders below the active version by SemVer precedence
+  (`version.rs`) is a failed receipt, `UPGRADE_DOWNGRADE_REFUSED`, exit 1, decided after the target
+  resolves and before anything changes; a version that is not SemVer cannot be ordered and is refused
+  the same way. The same or a newer version and a machine with nothing installed are never gated.
+  The flag is not in the request record, so a replay ignores it. `recover` and rollback are not gated.
 - `coforge-installer recover [--caller-pid <pid>]`: settles an unfinished upgrade (the journal).
   `--caller-pid` is the `coforge-computer recover` process that launched this installer and waits
   for it, verified and never stopped, as for `upgrade`.

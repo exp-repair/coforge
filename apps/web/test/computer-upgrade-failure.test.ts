@@ -85,6 +85,19 @@ test("a pending operation's copy names its exact recovery commands in order", ()
   ]);
 });
 
+test("a refused downgrade tells the person to run the upgrade on that machine with the flag", () => {
+  const view = describeComputerUpgradeFailure({
+    reason: "reported",
+    errorCode: "UPGRADE_DOWNGRADE_REFUSED",
+  });
+
+  expect(view.headline).toBe(m.computer_upgrade_code_downgrade_refused());
+  expect(view.steps).toEqual([
+    { text: m.computer_upgrade_step_check_status(), command: "coforge-computer status" },
+    { text: m.computer_upgrade_step_downgrade_on_computer(), command: "coforge-computer upgrade" },
+  ]);
+});
+
 test("an unknown or not-yet-understood error code falls back to the generic reported copy plus the Computer's own text", () => {
   const view = describeComputerUpgradeFailure({
     reason: "reported",

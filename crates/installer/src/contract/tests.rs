@@ -340,6 +340,10 @@ fn upgrade_error_codes() {
     assert_eq!(codes.codes["ROLLED_BACK"], ERROR_CODE_ROLLED_BACK);
     assert_eq!(codes.codes["ROLLBACK_FAILED"], ERROR_CODE_ROLLBACK_FAILED);
     assert_eq!(
+        codes.codes["DOWNGRADE_REFUSED"],
+        ERROR_CODE_DOWNGRADE_REFUSED
+    );
+    assert_eq!(
         codes.codes["INSTALLER_UNAVAILABLE"],
         "UPGRADE_INSTALLER_UNAVAILABLE"
     );
@@ -439,6 +443,16 @@ fn constructed_receipts() -> Vec<(&'static str, UpgradeReceipt)> {
                 failed(
                     "This version needs a newer installer",
                     Some("UPGRADE_INSTALLER_INCOMPATIBLE"),
+                ),
+                vec![],
+            ),
+        ),
+        (
+            "failed-downgrade-refused",
+            new(
+                failed(
+                    "CoForge Computer 0.1.0 is older than the installed 0.2.0. Nothing was changed. To go back, run `coforge-computer upgrade --version 0.1.0 --allow-downgrade`.",
+                    Some(ERROR_CODE_DOWNGRADE_REFUSED),
                 ),
                 vec![],
             ),

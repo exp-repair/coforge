@@ -59,7 +59,7 @@ module: its file and single responsibility. Update it before adding or reorganiz
 - `src/paths/node_path.rs`: `path.posix.join` and `path.win32.join` ported from
   Node's `lib/path.js` as Bun runs them, so `paths.rs` writes the same strings
   as the Computer's `paths.ts`.
-- `src/version.rs`: which release version strings are acceptable.
+- `src/version.rs`: which release version strings are acceptable, and their SemVer precedence.
 - `src/active.rs`: the active version. Reads `<install root>/active.json`, writes it, and
   points the `active` link (symlink; NTFS junction on Windows) and the
   `coforge-computer` PATH shim at that version. It trusts the caller to have verified the

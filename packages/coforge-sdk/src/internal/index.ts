@@ -384,6 +384,9 @@ export type AgentRuntimeProviderConfig =
  *   to.
  * - `ROLLED_BACK` / `ROLLBACK_FAILED`: the job attempted a switch, it failed, and it either
  *   restored the previous version or could not (`coforge-installer`'s upgrade transaction).
+ * - `DOWNGRADE_REFUSED`: the requested version is older than the installed one, and the
+ *   upgrade did not pass `--allow-downgrade` (`coforge-installer`'s upgrade transaction). Nothing
+ *   changed; the same request with the flag is the way to go back to an older version.
  * - `EXPIRED_WITHOUT_RECEIPT`: the job never left a receipt before the pending TTL passed
  *   (`computer-upgrade-receipts.ts`).
  * - `INSTALLER_UNAVAILABLE` / `INSTALLER_INCOMPATIBLE`: `coforge-installer` never ran an
@@ -402,6 +405,7 @@ export const UPGRADE_ERROR_CODE = {
   UPDATE_UNSUPPORTED_TARGET: "UPDATE_UNSUPPORTED_TARGET",
   ROLLED_BACK: "UPGRADE_ROLLED_BACK",
   ROLLBACK_FAILED: "UPGRADE_ROLLBACK_FAILED",
+  DOWNGRADE_REFUSED: "UPGRADE_DOWNGRADE_REFUSED",
   EXPIRED_WITHOUT_RECEIPT: "UPGRADE_EXPIRED_WITHOUT_RECEIPT",
   INSTALLER_UNAVAILABLE: "UPGRADE_INSTALLER_UNAVAILABLE",
   INSTALLER_INCOMPATIBLE: "UPGRADE_INSTALLER_INCOMPATIBLE",

@@ -29,11 +29,22 @@ fn run(
     selection: &str,
     caller: Option<VerifiedCaller>,
 ) -> (Outcome, Vec<String>) {
+    run_with(ports, request_id, selection, caller, false)
+}
+
+fn run_with(
+    ports: &Ports<'_>,
+    request_id: &str,
+    selection: &str,
+    caller: Option<VerifiedCaller>,
+    allow_downgrade: bool,
+) -> (Outcome, Vec<String>) {
     let mut stages = Vec::new();
     let request = UpgradeRequest {
         request_id,
         selection,
         caller,
+        allow_downgrade,
     };
     let outcome = upgrade(ports, &request, &mut |stage| stages.push(stage.to_owned()));
     (outcome, stages)
@@ -697,4 +708,106 @@ fn inside_the_supervisor_service_with_it_stopped_the_upgrade_proceeds() {
 
     assert_eq!(exit_of(&outcome), 0);
     assert_eq!(active(&fixture), active_state(NEW, Some(OLD)));
+}
+
+/// Installs [`NEW`] as the active version, the state every downgrade starts from.
+fn install_new(fixture: &Fixture) {
+    fixture.install(NEW);
+    fixture.activate(NEW, None);
+}
+
+#[test]
+fn an_older_version_is_refused_without_the_flag_before_anything_changes() {
+    let fixture = Fixture::new("upgrade-downgrade-refused");
+    install_new(&fixture);
+    let clock = VirtualClock::new();
+    let table = FakeTable::new(&clock);
+    table.spawn(100, 1, &fixture.canonical_computer(NEW));
+    let service = FakeService::new(ServiceState::Running { pid: Some(100) });
+    let lifecycle = FakeLifecycle::default();
+    let ports = fixture.ports(&lifecycle, &service, &table, &clock);
+
+    let (outcome, stages) = run(&ports, REQUEST, OLD, None);
+
+    assert_eq!(exit_of(&outcome), 1);
+    let receipt = receipt(&outcome);
+    assert_eq!(receipt.status(), ReceiptStatus::Failed);
+    assert_eq!(receipt.error_code(), Some("UPGRADE_DOWNGRADE_REFUSED"));
+    assert_eq!(
+        receipt.error(),
+        Some(
+            "CoForge Computer 0.1.0 is older than the installed 0.2.0. Nothing was changed. To go back, run `coforge-computer upgrade --version 0.1.0 --allow-downgrade`."
+        )
+    );
+    assert_eq!(stages, ["Preparing CoForge Computer 0.1.0"]);
+    assert_eq!(active(&fixture), active_state(NEW, None));
+    assert_eq!(Journal::new(fixture.root()).read().unwrap(), None);
+    assert!(!fixture.computer(OLD).exists());
+    assert!(service.calls().is_empty());
+    assert!(table.signals().is_empty());
+    committed(&fixture, &outcome);
+}
+
+#[test]
+fn an_older_version_moves_back_when_the_flag_is_given() {
+    let fixture = Fixture::new("upgrade-downgrade-allowed");
+    install_new(&fixture);
+    let clock = VirtualClock::new();
+    let table = FakeTable::new(&clock);
+    table.spawn(100, 1, &fixture.canonical_computer(NEW));
+    let service = FakeService::new(ServiceState::Running { pid: Some(100) });
+    let lifecycle = FakeLifecycle::default();
+    lifecycle.answers_protocol(&fixture.computer(OLD), vec![Some(protocol(OLD))]);
+    lifecycle.answers_status(&fixture.computer(NEW), vec![Some(running(NEW, "new-id"))]);
+    lifecycle.answers_status(
+        &fixture.computer(OLD),
+        vec![Some(stopped(OLD)), Some(running(OLD, "old-id"))],
+    );
+    let ports = fixture.ports(&lifecycle, &service, &table, &clock);
+
+    let (outcome, _) = run_with(&ports, REQUEST, OLD, None, true);
+
+    assert_eq!(exit_of(&outcome), 0);
+    assert_eq!(receipt(&outcome).version(), Some(OLD));
+    assert_eq!(active(&fixture), active_state(OLD, Some(NEW)));
+    assert_eq!(service.calls(), ["state", "stop", "start"]);
+    committed(&fixture, &outcome);
+}
+
+#[test]
+fn a_latest_pointer_older_than_the_installed_version_is_refused_without_the_flag() {
+    let fixture = Fixture::with_latest("upgrade-downgrade-latest", OLD);
+    install_new(&fixture);
+    let clock = VirtualClock::new();
+    let table = FakeTable::new(&clock);
+    table.spawn(100, 1, &fixture.canonical_computer(NEW));
+    let service = FakeService::new(ServiceState::Running { pid: Some(100) });
+    let lifecycle = FakeLifecycle::default();
+    let ports = fixture.ports(&lifecycle, &service, &table, &clock);
+
+    let (outcome, _) = run(&ports, REQUEST, "latest", None);
+
+    assert_eq!(exit_of(&outcome), 1);
+    let receipt = receipt(&outcome);
+    assert_eq!(receipt.error_code(), Some("UPGRADE_DOWNGRADE_REFUSED"));
+    assert!(receipt.error().is_some_and(|error| {
+        error.starts_with("CoForge Computer 0.1.0 is older than the installed 0.2.0.")
+            && error.ends_with("run `coforge-computer upgrade --version 0.1.0 --allow-downgrade`.")
+    }));
+    assert_eq!(active(&fixture), active_state(NEW, None));
+    assert!(service.calls().is_empty());
+    committed(&fixture, &outcome);
+}
+
+#[test]
+fn a_version_without_semver_precedence_is_refused_without_the_flag() {
+    assert!(downgrade_refusal("1.0", "0.1.0", false).is_some());
+    assert!(downgrade_refusal("1.0", "0.1.0", true).is_none());
+    assert!(downgrade_refusal("0.2.0", "0.2.0", false).is_none());
+    assert!(downgrade_refusal("0.2.0", "0.1.0", false).is_none());
+}
+
+#[test]
+fn the_same_version_is_never_gated_even_without_semver_precedence() {
+    assert!(downgrade_refusal("1.0", "1.0", false).is_none());
 }

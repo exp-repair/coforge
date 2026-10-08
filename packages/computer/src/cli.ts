@@ -62,11 +62,16 @@ export interface SetupCommand {
   run(workspaceSlug: string | undefined, options: { json: boolean }): Promise<void>;
 }
 
+/** `--allow-downgrade`: the target may be older than the installed version. */
+export interface UpdateOptions {
+  allowDowngrade: boolean;
+}
+
 export interface UpdateCommand {
   resolveVersion(selector: string): Promise<string>;
   getCurrentVersion(): Promise<string | null>;
-  install(version: string): Promise<void>;
-  upgrade(version: string): Promise<void>;
+  install(version: string, options: UpdateOptions): Promise<void>;
+  upgrade(version: string, options: UpdateOptions): Promise<void>;
   /** Resolves to the installer's exit status. */
   recover(): Promise<number>;
 }
@@ -158,16 +163,21 @@ export async function runCli(
     .command("install")
     .description("Install one verified Computer version for the current user.")
     .option("--version <selector>", "latest|<version>", "latest")
-    .action((options: { version: string }) =>
-      requireUpdater(dependencies).install(options.version),
+    .option("--allow-downgrade", "Allow --version to be older than the installed Computer")
+    .action((options: { version: string; allowDowngrade?: boolean }) =>
+      requireUpdater(dependencies).install(options.version, {
+        allowDowngrade: options.allowDowngrade === true,
+      }),
     );
   program
     .command("upgrade")
     .description(
-      "Atomically move to one verified Computer version, newer or older (--version <older> downgrades).",
+      "Atomically move to one verified Computer version, newer or older (an older --version needs --allow-downgrade).",
     )
     .option("--version <selector>", "latest|<version>", "latest")
-    .action(async (options: { version: string }) => {
+    .option("--allow-downgrade", "Allow --version to be older than the installed Computer")
+    .action(async (options: { version: string; allowDowngrade?: boolean }) => {
+      const allowDowngrade = options.allowDowngrade === true;
       const updater = requireUpdater(dependencies);
       const target = await updater.resolveVersion(options.version);
       if ((await updater.getCurrentVersion()) === target) {
@@ -181,7 +191,7 @@ export async function runCli(
         io.stdout("Upgrade cancelled.");
         return;
       }
-      return updater.upgrade(target);
+      return updater.upgrade(target, { allowDowngrade });
     });
   program
     .command("recover")
@@ -683,22 +693,23 @@ export function createUpdateCommand(io: {
 }): UpdateCommand {
   const { installRoot, target } = resolveUpgradeRunnerPaths();
   const updater = new ComputerUpdater({ installRoot });
-  const run = (selection: string) => runUpgradeOperation(createLocalUpgradeOperation(selection));
+  const run = (selection: string, options: UpdateOptions) =>
+    runUpgradeOperation(createLocalUpgradeOperation(selection, options));
   return {
     resolveVersion: (selection) =>
       runInstallationSource({ baseUrl: COFORGE_RELEASE_FEED_URL, target, selection }),
     getCurrentVersion: () => updater.getCurrentVersion(),
-    async install(version) {
-      const result = await run(version);
+    async install(version, options) {
+      const result = await run(version, options);
       io.stdout(`CoForge Computer ${result.version} installed successfully.`);
       reportStoppedWorkspaces(io, result);
     },
-    async upgrade(version) {
+    async upgrade(version, options) {
       const current = await updater.getCurrentVersion();
       io.stdout(`==> Updating CoForge Computer${current ? ` from ${current}` : ""} to ${version}`);
       let result: Awaited<ReturnType<typeof run>>;
       try {
-        result = await run(version);
+        result = await run(version, options);
       } catch (error) {
         // The reason is already on stderr from `UpdateError`/`UpgradeFailedError` handling
         // in `runCli`'s catch below; this only adds the next command, never changes what is

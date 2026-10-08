@@ -105,13 +105,15 @@ fn with_ports<T>(
 }
 
 /// Runs one upgrade (or install) request. `caller_pid` is the `upgrade` command that launched
-/// this installer; it is verified before anything is done and never stopped.
+/// this installer; it is verified before anything is done and never stopped. `allow_downgrade`
+/// lets the target be older than the installed version.
 pub fn transaction(
     setup: &Setup,
     request_id: &str,
     selection: &str,
     caller_pid: Option<u32>,
     origin: &ReleaseOrigin,
+    allow_downgrade: bool,
     stage: &mut dyn FnMut(&str),
 ) -> Result<Outcome, String> {
     with_ports(setup, origin, |ports| {
@@ -128,6 +130,7 @@ pub fn transaction(
             request_id,
             selection,
             caller,
+            allow_downgrade,
         };
         upgrade(ports, &request, stage)
     })

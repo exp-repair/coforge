@@ -85,7 +85,7 @@ export async function runUpgradeOperation(
 ): Promise<UpgradeResult> {
   const options = { ...defaultUpgradeRunnerOptions(), ...overrides };
   await assertOutsideManagedSupervisor();
-  const { requestId, origin, selection } = operation;
+  const { requestId, origin, selection, allowDowngrade } = operation;
   const launch = {
     feedUrl: options.feedUrl,
     target: options.target,
@@ -114,6 +114,7 @@ export async function runUpgradeOperation(
         selection,
         "--caller-pid",
         String(process.pid),
+        ...(allowDowngrade ? ["--allow-downgrade"] : []),
       ],
       stdin: "ignore",
       stdout: origin === "remote" ? "ignore" : "inherit",

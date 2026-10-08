@@ -170,6 +170,13 @@ const CODE_COPY: Record<UpgradeErrorCode, () => UpgradeFailureView> = {
       { text: m.computer_upgrade_step_manual_recovery() },
     ],
   }),
+  [UPGRADE_ERROR_CODE.DOWNGRADE_REFUSED]: () => ({
+    headline: m.computer_upgrade_code_downgrade_refused(),
+    steps: [
+      { text: m.computer_upgrade_step_check_status(), command: COMMAND.status },
+      { text: m.computer_upgrade_step_downgrade_on_computer(), command: COMMAND.upgrade },
+    ],
+  }),
   [UPGRADE_ERROR_CODE.EXPIRED_WITHOUT_RECEIPT]: () => ({
     headline: m.computer_upgrade_code_expired_without_receipt(),
     steps: [

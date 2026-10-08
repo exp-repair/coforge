@@ -60,6 +60,7 @@ dependencies = [
  "lexopt",
  "libc",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

@@ -20,6 +20,8 @@ test("Computer setup harness exercises the compiled CLI and real daemon path", (
   // The installer is built from this checkout, then installs the local package before setup runs.
   expect(harness.indexOf("cargo build --locked --release")).toBeGreaterThan(-1);
   expect(harness).toContain('coforge-installer" install --version "$version" --from-directory');
+  // The local build may be older than the installed Computer, so it names the downgrade it means.
+  expect(harness).toContain('--from-directory "$root/.amp/e2e/native-package" --allow-downgrade');
   expect(harness.indexOf("cargo build --locked --release")).toBeLessThan(
     harness.indexOf("--from-directory"),
   );

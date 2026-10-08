@@ -540,7 +540,7 @@ $Name`: Web backend is not reachable at $webUrl
     Write-Host "==> Installing local package version $version"
     # The installer prints progress on stdout; Out-Host keeps it visible without
     # polluting this function's return value under Set-StrictMode.
-    & $installerBin install --version $version --from-directory $packageDir | Out-Host
+    & $installerBin install --version $version --from-directory $packageDir --allow-downgrade | Out-Host
     if ($LASTEXITCODE -ne 0) {
       throw @"
 $Name`: local install failed (exit $LASTEXITCODE; exit 3 means run 'coforge-computer recover').

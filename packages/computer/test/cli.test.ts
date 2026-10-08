@@ -767,3 +767,38 @@ test("a status failure that cannot even read the install reports exit code 1, hu
     },
   });
 });
+
+test("upgrade and install pass --allow-downgrade to the updater only when it is given", async () => {
+  const calls: Array<{ operation: string; version: string; allowDowngrade: boolean }> = [];
+  const updater = {
+    async resolveVersion(selector: string) {
+      return selector;
+    },
+    async getCurrentVersion() {
+      return "1.0.17";
+    },
+    async install(version: string, options: { allowDowngrade: boolean }) {
+      calls.push({ operation: "install", version, allowDowngrade: options.allowDowngrade });
+    },
+    async upgrade(version: string, options: { allowDowngrade: boolean }) {
+      calls.push({ operation: "upgrade", version, allowDowngrade: options.allowDowngrade });
+    },
+    async recover() {
+      return 0;
+    },
+  };
+  const dependencies = { login: { async run() {} }, setup: { async run() {} }, updater };
+  const io = { stdout: () => {}, stderr: () => {}, prompt: () => "y" };
+
+  await runCli(["upgrade", "--version", "1.0.16", "--allow-downgrade"], dependencies, io);
+  await runCli(["upgrade", "--version", "1.0.16"], dependencies, io);
+  await runCli(["install", "--version", "1.0.16", "--allow-downgrade"], dependencies, io);
+  await runCli(["install", "--version", "1.0.16"], dependencies, io);
+
+  expect(calls).toEqual([
+    { operation: "upgrade", version: "1.0.16", allowDowngrade: true },
+    { operation: "upgrade", version: "1.0.16", allowDowngrade: false },
+    { operation: "install", version: "1.0.16", allowDowngrade: true },
+    { operation: "install", version: "1.0.16", allowDowngrade: false },
+  ]);
+});

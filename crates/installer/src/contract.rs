@@ -225,6 +225,9 @@ pub enum ReceiptStatus {
 pub const ERROR_CODE_ROLLED_BACK: &str = "UPGRADE_ROLLED_BACK";
 /// `error_code` of a receipt whose rollback failed.
 pub const ERROR_CODE_ROLLBACK_FAILED: &str = "UPGRADE_ROLLBACK_FAILED";
+/// `error_code` of a failed receipt that refused an upgrade to an older version without
+/// `--allow-downgrade`. Nothing changed.
+pub const ERROR_CODE_DOWNGRADE_REFUSED: &str = "UPGRADE_DOWNGRADE_REFUSED";
 
 /// How an upgrade ended. It fixes a receipt's status, error code, and exit code together, so a
 /// receipt cannot pair them wrongly (`InstallerReceiptSchema` in the product has the table).

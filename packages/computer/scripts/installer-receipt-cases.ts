@@ -86,6 +86,16 @@ export const ALLOWED_RECEIPTS = [
     },
   },
   {
+    slug: "failed-downgrade-refused",
+    fields: {
+      status: "failed",
+      error:
+        "CoForge Computer 0.1.0 is older than the installed 0.2.0. Nothing was changed. To go back, run `coforge-computer upgrade --version 0.1.0 --allow-downgrade`.",
+      errorCode: "UPGRADE_DOWNGRADE_REFUSED",
+      exit_code: 1,
+    },
+  },
+  {
     slug: "failed",
     fields: { status: "failed", error: "Could not create the staging directory", exit_code: 1 },
   },

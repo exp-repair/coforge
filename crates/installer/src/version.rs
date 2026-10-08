@@ -4,6 +4,19 @@
 //! safe path segment: 1 to 100 of `A-Z a-z 0-9 . + -`, not `.` alone, no `..` anywhere (no
 //! traversal), and no leading `-` (never mistaken for a flag).
 
+use std::cmp::Ordering;
+
+use semver::Version;
+
+/// How `target` orders against `installed` by SemVer precedence (a pre-release is below its
+/// release, and numeric pre-release identifiers compare as numbers). `None` when either is not a
+/// SemVer version, so the order is unknown.
+pub fn precedence(target: &str, installed: &str) -> Option<Ordering> {
+    let target = Version::parse(target).ok()?;
+    let installed = Version::parse(installed).ok()?;
+    Some(target.cmp_precedence(&installed))
+}
+
 pub fn is_valid_release_version(value: &str) -> bool {
     (1..=100).contains(&value.len())
         && value

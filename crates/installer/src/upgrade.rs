@@ -9,12 +9,13 @@
 //! cleared only once the machine is on a known good version. A failed rollback keeps the journal,
 //! which refuses every other operation until `recover` settles it (`recover.rs`).
 
+use std::cmp::Ordering;
 use std::path::PathBuf;
 
 use crate::active::{ActiveError, read_active};
 use crate::contract::{
-    ActiveState, EXIT_FAILED, EXIT_HELD, EXIT_UNRESOLVED, LifecycleStatus, ReceiptOutcome,
-    RuntimeState, UpgradeReceipt,
+    ActiveState, ERROR_CODE_DOWNGRADE_REFUSED, EXIT_FAILED, EXIT_HELD, EXIT_UNRESOLVED,
+    LifecycleStatus, ReceiptOutcome, RuntimeState, UpgradeReceipt,
 };
 use crate::journal::{Journal, Transaction};
 use crate::lock::{LockError, MachineMutationLock};
@@ -24,6 +25,7 @@ use crate::receipts::{Begin, ReceiptStore};
 use crate::service::{ServiceError, ServiceState};
 use crate::switch::{ActiveSwitch, Plan, Ports, Target, refusal_inside_service};
 use crate::update_error::UpdateError;
+use crate::version::precedence;
 
 /// The SDK's code for a candidate whose bytes do not describe the version it claims
 /// (`upgrade-error-codes.json`).
@@ -35,6 +37,8 @@ pub struct UpgradeRequest<'a> {
     pub selection: &'a str,
     /// The `upgrade` command that launched this installer, which must not be stopped.
     pub caller: Option<VerifiedCaller>,
+    /// `--allow-downgrade`: an older target than the installed version is allowed.
+    pub allow_downgrade: bool,
 }
 
 /// How a request ended: a receipt, or a refusal that wrote none.
@@ -104,6 +108,7 @@ pub fn upgrade(
         receipts: &receipts,
         journal: &journal,
         request_id: request.request_id,
+        allow_downgrade: request.allow_downgrade,
         switch: ActiveSwitch::new(ports, stage, request.caller),
     };
     run.execute(request.selection)
@@ -155,6 +160,34 @@ impl From<ActiveError> for Refusal {
     }
 }
 
+/// The refusal for activating `target` over the installed `installed` without `--allow-downgrade`.
+/// A target that is older by SemVer precedence is refused; so is one whose order is unknown,
+/// because a version that is not SemVer cannot be shown to be newer. The same version and a newer
+/// one pass.
+fn downgrade_refusal(target: &str, installed: &str, allow_downgrade: bool) -> Option<Refusal> {
+    // The same version is a reinstall, whether or not it can be ordered.
+    if allow_downgrade || target == installed {
+        return None;
+    }
+    let reason = match precedence(target, installed) {
+        Some(Ordering::Less) => {
+            format!("CoForge Computer {target} is older than the installed {installed}.")
+        }
+        Some(Ordering::Equal | Ordering::Greater) => return None,
+        None => format!(
+            "CoForge Computer {target} cannot be ordered against the installed {installed}, \
+             because one of them is not a SemVer version."
+        ),
+    };
+    Some(Refusal {
+        error: format!(
+            "{reason} Nothing was changed. To go back, run `coforge-computer upgrade --version \
+             {target} --allow-downgrade`."
+        ),
+        code: Some(ERROR_CODE_DOWNGRADE_REFUSED),
+    })
+}
+
 /// The version `active.json` named before the upgrade, and what its supervisor was doing.
 struct Installed {
     version: String,
@@ -187,6 +220,7 @@ struct Run<'r, 'p> {
     receipts: &'r ReceiptStore,
     journal: &'r Journal,
     request_id: &'r str,
+    allow_downgrade: bool,
     switch: ActiveSwitch<'r, 'p>,
 }
 
@@ -226,6 +260,15 @@ impl Run<'_, '_> {
         }
         self.switch
             .say(&format!("Preparing CoForge Computer {selection}"));
+        // The target is resolved before anything is installed, so a refused downgrade leaves no
+        // version directory behind.
+        let target = self.ports.release.resolve_version(selection)?;
+        if let Some(installed) = &active
+            && let Some(refusal) =
+                downgrade_refusal(&target, &installed.current, self.allow_downgrade)
+        {
+            return Err(refusal);
+        }
         // The active version was verified above under this lock; a same-version upgrade must not
         // hash it again.
         let verified = active.as_ref().map(|active| active.current.as_str());
@@ -233,7 +276,7 @@ impl Run<'_, '_> {
             self.lock,
             self.ports.release,
             self.ports.store,
-            selection,
+            &target,
             verified,
         )?
         .version;

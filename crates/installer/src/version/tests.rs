@@ -18,3 +18,20 @@ fn agrees_with_the_computer_on_every_contract_case() {
         );
     }
 }
+
+#[test]
+fn orders_release_versions_by_semver_precedence() {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+
+    assert_eq!(precedence("0.1.0-e2e.2", "0.1.0-e2e.10"), Some(Less));
+    assert_eq!(precedence("0.1.0-e2e.10", "0.1.0"), Some(Less));
+    assert_eq!(precedence("0.1.0", "0.1.0-e2e.10"), Some(Greater));
+    assert_eq!(precedence("0.1.0", "0.2.0"), Some(Less));
+    assert_eq!(precedence("0.2.0", "0.2.0"), Some(Equal));
+}
+
+#[test]
+fn a_version_that_is_not_semver_has_no_precedence() {
+    assert_eq!(precedence("1.0", "0.1.0"), None);
+    assert_eq!(precedence("0.1.0", "v0.2"), None);
+}

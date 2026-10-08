@@ -222,6 +222,7 @@ fn a_rollback_that_failed_is_completed_by_recover_without_a_second_receipt() {
             request_id: REQUEST,
             selection: NEW,
             caller: None,
+            allow_downgrade: false,
         };
         let outcome = upgrade(&ports, &request, &mut sink);
         assert!(matches!(outcome, Outcome::Receipt(ref receipt) if receipt.exit_code() == 3));
@@ -324,6 +325,7 @@ fn a_success_whose_receipt_could_not_be_written_is_kept_by_recover() {
             request_id: REQUEST,
             selection: NEW,
             caller: None,
+            allow_downgrade: false,
         };
         match upgrade(&ports, &request, &mut block) {
             Outcome::NoReceipt { exit, message } => {

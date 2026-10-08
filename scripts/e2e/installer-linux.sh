@@ -17,6 +17,8 @@
 #   2  the Computer's supervisor runs as the coforge-daemon.service user unit
 #   3  upgrade with a running supervisor, deadProcessIdentities, and same-id replay
 #   4  upgrade to a broken release rolls back (UPGRADE_ROLLED_BACK) and restores the supervisor
+#      and a downgrade without --allow-downgrade is refused (UPGRADE_DOWNGRADE_REFUSED) with
+#      nothing changed
 #   5  SIGKILL during activation, a refused new upgrade (exit 3), and `coforge-installer recover`
 #   6  `coforge-computer upgrade` obtains the installer and the release from a loopback
 #      http://127.0.0.1 feed compiled into both binaries
@@ -380,6 +382,20 @@ LC_RUNNING=$(json_eval "$OUT/steps/s4-after/lifecycle.json" "d.get('supervisor',
 record S4 "supervisor running 0.1.0-e2e.2 again" "running=$LC_RUNNING version=$LC_VERSION" "$([[ "$LC_RUNNING" == True && "$LC_VERSION" == 0.1.0-e2e.2 ]] && echo 0 || echo 1)" "steps/s4-after/lifecycle.json"
 record S4 "journal gone after the verified rollback" "$([[ -e "$ROOT/installer-transaction.json" ]] && echo present || echo absent)" "$([[ -e "$ROOT/installer-transaction.json" ]] && echo 1 || echo 0)" "steps/s4-after/state.txt"
 
+# The installed version is 0.1.0-e2e.2 after the rollback, so an upgrade to 0.1.0-e2e.1 is a
+# downgrade: without --allow-downgrade the installer refuses it before anything changes.
+snapshot "$OUT/steps/s4-downgrade-before"
+DOWN_PID_BEFORE=$(main_pid)
+cp "$ROOT/active.json" "$OUT/steps/s4-downgrade-before/active.json"
+RID4D=$(uuid)
+step s4-downgrade timeout 120 "$INSTALLER" upgrade --request-id "$RID4D" --version 0.1.0-e2e.1 --from-directory "$PKG/0.1.0-e2e.1"
+record S4 "downgrade to 0.1.0-e2e.1 without --allow-downgrade exits 1" "exit $STEP_RC: $(clean <"$OUT/steps/s4-downgrade/stderr" | cut -c1-200)" "$([[ $STEP_RC == 1 ]] && echo 0 || echo 1)" "steps/s4-downgrade"
+RES4D="$ROOT/upgrade-results/$RID4D.result.json"
+record S4 "refused downgrade receipt: failed, errorCode UPGRADE_DOWNGRADE_REFUSED" "status=$(json_eval "$RES4D" "d.get('status')"), errorCode=$(json_eval "$RES4D" "d.get('errorCode')")" "$([[ "$(json_eval "$RES4D" "d.get('status')")" == failed && "$(json_eval "$RES4D" "d.get('errorCode')")" == UPGRADE_DOWNGRADE_REFUSED ]] && echo 0 || echo 1)" "steps/s4-downgrade/receipts"
+DOWN_SAME=1
+cmp -s "$OUT/steps/s4-downgrade-before/active.json" "$ROOT/active.json" && [[ "$(main_pid)" == "$DOWN_PID_BEFORE" ]] && [[ ! -e "$ROOT/installer-transaction.json" ]] && DOWN_SAME=0
+record S4 "refused downgrade changes nothing: active.json unchanged, supervisor pid unchanged, no journal" "active=$(json_eval "$ROOT/active.json" "d['current']"), pid=$(main_pid), before=$DOWN_PID_BEFORE" "$DOWN_SAME" "steps/s4-downgrade"
+
 # ---------------------------------------------------------------------------------------------
 # Scenario 5: SIGKILL right after "Switching the active executable", then recover
 # ---------------------------------------------------------------------------------------------
@@ -389,7 +405,7 @@ RID5=$(uuid)
 mkdir -p "$OUT/steps/s5-killed"
 printf '%s\n' "kill -9 the upgrade to 0.1.0-e2e.1 after its 'Switching the active executable' line" >"$OUT/steps/s5-killed/command.txt"
 "$INSTALLER" upgrade --request-id "$RID5" --version 0.1.0-e2e.1 --from-directory "$PKG/0.1.0-e2e.1" \
-  >"$OUT/steps/s5-killed/stdout" 2>"$OUT/steps/s5-killed/stderr" &
+  --allow-downgrade >"$OUT/steps/s5-killed/stdout" 2>"$OUT/steps/s5-killed/stderr" &
 KILL_PID=$!
 for _ in $(seq 1 1000); do
   grep -q "Switching the active executable" "$OUT/steps/s5-killed/stdout" 2>/dev/null && break

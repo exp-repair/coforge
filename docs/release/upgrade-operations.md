@@ -21,8 +21,9 @@ For each operation, `release/upgrade-runner.ts` then:
    `<install root>/installer/<sha256>/`, so an installer fix reaches the next
    upgrade without a Computer release;
 2. runs `coforge-installer upgrade --request-id <id> --version <selection>
-   --caller-pid <pid>`. The caller pid is verified by the installer as the parent
-   and is never stopped;
+   --caller-pid <pid>`, adding `--allow-downgrade` only when a CLI operation was
+   given it. The caller pid is verified by the installer as the parent and is never
+   stopped;
 3. reads `<install root>/upgrade-results/<id>.result.json`.
 
 If the installer cannot be obtained, or exits without a receipt, Computer writes
@@ -64,7 +65,20 @@ else); 3 unresolved, which needs `coforge-computer recover`.
 ## Downgrade and recovery
 
 There is no `rollback` command. Moving to an older version is
-`coforge-computer upgrade --version <older>`.
+`coforge-computer upgrade --version <older> --allow-downgrade`.
+
+The installer decides this before anything changes. A target older than the active
+version (SemVer precedence, so `0.1.0-e2e.2` is older than `0.1.0-e2e.10`) is refused
+without the flag: the receipt is failed with `UPGRADE_DOWNGRADE_REFUSED`, the exit
+status is 1, and the message names both versions and the command with the flag. The
+same applies to `install` and to `latest` when the feed's pointer is older than the
+installed version. A version that is not SemVer cannot be ordered, so it is refused
+the same way. The same or a newer version, and a machine with nothing installed, need
+no flag. `coforge-computer upgrade` and `install` pass the flag only from the CLI; a
+server-triggered upgrade (`__remote-upgrade`) never does, so it refuses a downgrade.
+
+`recover` and the installer's internal rollback are not gated: they restore a version
+by design.
 
 `coforge-computer recover` runs `coforge-installer recover`, which settles an
 unfinished upgrade from the journal. While the journal exists, every other
