@@ -8,6 +8,7 @@ import {
   ModelProviderSettingError,
   RuntimeModelNotFoundError,
   type AgentRuntimeEvent,
+  type AgentSession,
 } from "#src/code-agent/contract";
 import { CoforgeProvider, PiProvider } from "#src/code-agent/pi/provider";
 
@@ -182,6 +183,175 @@ function piRuntime(agentDir: string) {
     },
   };
 }
+
+test("embedded Pi preserves a terminal failure with an empty provider error message", async () => {
+  const root = await mkdtemp(join(tmpdir(), "coforge-pi-empty-error-"));
+  let session: AgentSession | undefined;
+  try {
+    const workspace = join(root, "workspace");
+    const agentDir = join(root, "host-pi-agent");
+    await mkdir(workspace);
+    await writeOpenAiHost(agentDir, "http://127.0.0.1:1/v1");
+    await Bun.write(join(agentDir, "settings.json"), JSON.stringify({ retry: { enabled: false } }));
+    await Bun.write(
+      join(agentDir, "extensions", "empty-error.ts"),
+      `import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
+export default function (pi) {
+  pi.registerProvider("openai", {
+    api: "coforge-empty-error", baseUrl: "http://127.0.0.1:1/v1", apiKey: "fixture-key",
+    models: [{ id: "custom", name: "Custom", reasoning: false, input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 1024 }],
+    streamSimple(model) {
+    const stream = new AssistantMessageEventStream();
+    const error = {
+      role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "error", errorMessage: "", timestamp: Date.now(),
+    };
+    stream.push({ type: "error", reason: "error", error });
+    return stream;
+  } });
+}`,
+    );
+    session = await new PiProvider().createAgentSession({
+      agentWorkspaceDirectory: workspace,
+      instructions: TEST_AGENT_INSTRUCTIONS,
+      ...piRuntime(agentDir),
+      environment: { PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" },
+    });
+    const events: AgentRuntimeEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.sendMessage("hello");
+    expect(events.filter((event) => event.type === "error")).toEqual([
+      { type: "error", message: "" },
+    ]);
+    expect(events.filter((event) => event.type === "completed")).toEqual([
+      { type: "completed", status: "failed" },
+    ]);
+  } finally {
+    try {
+      await session?.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("embedded Pi reports a recovered retry as completed without a terminal error", async () => {
+  const root = await mkdtemp(join(tmpdir(), "coforge-pi-retry-"));
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  let session: AgentSession | undefined;
+  try {
+    const workspace = join(root, "workspace");
+    const agentDir = join(root, "host-pi-agent");
+    await mkdir(workspace);
+    let requests = 0;
+    server = Bun.serve({
+      port: 0,
+      fetch() {
+        requests += 1;
+        if (requests === 1)
+          return new Response(JSON.stringify({ error: { message: "server_busy" } }), {
+            status: 400,
+          });
+        return completionStream({ role: "assistant", content: "recovered" }, "stop");
+      },
+    });
+    await writeOpenAiHost(agentDir, `${server.url}v1`);
+    await Bun.write(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } }),
+    );
+    session = await new PiProvider().createAgentSession({
+      agentWorkspaceDirectory: workspace,
+      instructions: TEST_AGENT_INSTRUCTIONS,
+      ...piRuntime(agentDir),
+    });
+    const events: AgentRuntimeEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.sendMessage("hello");
+    expect(requests).toBe(2);
+    expect(events.filter((event) => event.type === "error")).toEqual([]);
+    expect(events.filter((event) => event.type === "completed")).toEqual([
+      { type: "completed", status: "completed" },
+    ]);
+    expect(events).toContainEqual({ type: "text-delta", text: "recovered" });
+  } finally {
+    try {
+      await session?.dispose();
+    } finally {
+      server?.stop(true);
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("embedded Pi reports extension cancellation as interrupted and can run again", async () => {
+  const root = await mkdtemp(join(tmpdir(), "coforge-pi-extension-abort-"));
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  let session: AgentSession | undefined;
+  try {
+    const workspace = join(root, "workspace");
+    const agentDir = join(root, "host-pi-agent");
+    await mkdir(workspace);
+    await Bun.write(join(workspace, "fixture.txt"), "fixture");
+    let requests = 0;
+    server = Bun.serve({
+      port: 0,
+      fetch() {
+        requests += 1;
+        if (requests === 1)
+          return completionStream(
+            {
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "read-before-abort",
+                  type: "function",
+                  function: { name: "read", arguments: '{"path":"fixture.txt"}' },
+                },
+              ],
+            },
+            "tool_calls",
+          );
+        return completionStream({ role: "assistant", content: "done" }, "stop");
+      },
+    });
+    await writeOpenAiHost(agentDir, `${server.url}v1`);
+    await Bun.write(
+      join(agentDir, "extensions", "abort.ts"),
+      `export default function (pi) { pi.on("tool_result", (event, ctx) => { if (event.toolName === "read") ctx.abort(); }); }`,
+    );
+    session = await new PiProvider().createAgentSession({
+      agentWorkspaceDirectory: workspace,
+      instructions: TEST_AGENT_INSTRUCTIONS,
+      ...piRuntime(agentDir),
+    });
+    const events: AgentRuntimeEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.sendMessage("read the fixture");
+    expect(requests).toBe(1);
+    expect(events.filter((event) => event.type === "error")).toEqual([]);
+    expect(events.filter((event) => event.type === "completed")).toEqual([
+      { type: "completed", status: "interrupted" },
+    ]);
+    await session.sendMessage("continue");
+    expect(requests).toBe(2);
+    expect(events.filter((event) => event.type === "completed")).toEqual([
+      { type: "completed", status: "interrupted" },
+      { type: "completed", status: "completed" },
+    ]);
+  } finally {
+    try {
+      await session?.dispose();
+    } finally {
+      server?.stop(true);
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
 
 test("embedded Pi reports progress for content-free turn/message lifecycle frames", async () => {
   // Verified against the SDK's own AgentSessionEvent/AssistantMessageEvent types

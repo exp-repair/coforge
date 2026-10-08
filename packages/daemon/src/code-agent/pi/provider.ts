@@ -177,7 +177,7 @@ class AgentSessionImpl implements AgentSession {
   readonly #exitListeners = new Set<() => void>();
   readonly #pendingPrompts = new Set<Promise<void>>();
   #interrupting = false;
-  #failed = false;
+  #failure: string | undefined;
   #disposed = false;
   #disposal: Promise<void> | undefined;
   #identity: AgentSessionIdentity;
@@ -241,20 +241,23 @@ class AgentSessionImpl implements AgentSession {
           id: event.toolCallId,
           isError: event.isError,
         });
-      if (
-        event.type === "message_end" &&
-        event.message.role === "assistant" &&
-        event.message.stopReason === "error"
-      ) {
-        this.#failed = true;
-        this.#emit({ type: "error", message: event.message.errorMessage ?? "Agent failed" });
+      // A failed attempt may be retried, and cancellation may surface as an error.
+      // Only settlement determines the run's terminal result.
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        this.#failure =
+          event.message.stopReason === "error"
+            ? (event.message.errorMessage ?? "Agent failed")
+            : undefined;
       }
       if (event.type === "agent_settled") {
+        const interrupted = event.aborted || this.#interrupting;
+        const failure = this.#failure;
+        if (failure !== undefined && !interrupted) this.#emit({ type: "error", message: failure });
         this.#emit({
           type: "completed",
-          status: this.#failed ? "failed" : this.#interrupting ? "interrupted" : "completed",
+          status: interrupted ? "interrupted" : failure !== undefined ? "failed" : "completed",
         });
-        this.#failed = false;
+        this.#failure = undefined;
       }
     });
   }
