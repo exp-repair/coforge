@@ -52,5 +52,7 @@
   "welcome_error_empty": "Enter your full name.",
   "welcome_error_too_long": "Use {max} characters or fewer.",
   "welcome_error_refused": "You can't use this name.",
-  "welcome_error_save_failed": "Couldn't save. Try again."
+  "welcome_error_save_failed": "Couldn't save. Try again.",
+  "not_found_title": "Page not found",
+  "not_found_home": "Go to home"
 }

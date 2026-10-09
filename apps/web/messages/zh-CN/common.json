@@ -52,5 +52,7 @@
   "welcome_error_empty": "请输入你的全名。",
   "welcome_error_too_long": "全名最多 {max} 个字符。",
   "welcome_error_refused": "不能使用这个名字。",
-  "welcome_error_save_failed": "保存失败，请重试。"
+  "welcome_error_save_failed": "保存失败，请重试。",
+  "not_found_title": "页面不存在",
+  "not_found_home": "回到首页"
 }

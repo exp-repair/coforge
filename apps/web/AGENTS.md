@@ -97,9 +97,10 @@ Each line names a directory under `src/` (unless noted) and its single
 responsibility.
 
 - `routes/` — URL ownership and route lifecycle; `routes/api/` raw HTTP routes.
-- `components/` — `base/` and `application/` official Untitled UI source,
-  `ui/` sanctioned primitives, `layout/` app chrome, `foundations/` logos and
-  icons, `spell/` and `magicui/` landing-page motion.
+- `components/` — `base/`, `application/` and `shared-assets/` official Untitled UI
+  source (`shared-assets/` holds the backgrounds and illustrations `EmptyState`
+  draws), `ui/` sanctioned primitives, `layout/` app chrome, `foundations/` logos
+  and icons, `spell/` and `magicui/` landing-page motion.
 - `lib/` shared pure helpers; `hooks/` shared React hooks; `utils/` Untitled
   UI class helpers.
 - `features/agents/` — Members page, Agent creation, profile panel, control buttons, and Agent status and Activity display.
@@ -110,7 +111,7 @@ responsibility.
 - `features/computers/` — Computer list/detail, setup, and Runtime Usage.
 - `features/conversations/` — channels, direct messages, threads, composer, message rendering, action cards, saved messages, and the sidebar lists.
 - `features/device-auth/` — device-code verification page.
-- `features/errors/` — page-level load-error view.
+- `features/errors/` — page-level load-error view and the router's 404 page.
 - `features/inbox/` — the Activity page: conversations and threads not yet marked Done.
 - `features/install/` — Computer install command text.
 - `features/integrations/` — Settings → Integrations GitHub view and functions.

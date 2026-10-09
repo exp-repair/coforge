@@ -3,6 +3,7 @@ import { DbClient, DbProvider } from "@tanstack/react-db";
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
 import { installBrowserQueryCachePersistence } from "#src/features/cache-persistence/browser-query-cache";
+import { NotFoundPage } from "#src/features/errors/not-found-page";
 import { GlobalError } from "#src/features/errors/page-load-error";
 import { deLocalizeUrl, localizeUrl } from "#src/paraglide/runtime";
 import { PENDING_DELAY_MS, PENDING_MIN_MS } from "#src/lib/pending-policy";
@@ -35,6 +36,7 @@ export function getRouter() {
     defaultPreload: "intent",
     defaultPreloadStaleTime: 30_000,
     defaultErrorComponent: GlobalError,
+    defaultNotFoundComponent: NotFoundPage,
     rewrite: {
       input: ({ url }) => (isNonLocalizedPath(url.pathname) ? url : deLocalizeUrl(url)),
       output: ({ url }) => (isNonLocalizedPath(url.pathname) ? url : localizeUrl(url)),

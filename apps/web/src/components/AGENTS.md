@@ -17,6 +17,8 @@ primitives and the lint-exemption policy.
   adapters that implement React Aria render semantics; feature code uses
   components.
 - An official Tooltip `title` prop is not a native HTML `title` attribute.
+- A full-page state with no surrounding layout (the 404 page) uses the official
+  `application/empty-state`; everything inside a page or panel uses `ui/empty.tsx`.
 - `ui/empty.tsx` supplies presentation only; the owning feature chooses the
   icon, localized copy, and empty-state condition.
 - `ui/skeleton.tsx` owns decorative placeholder styling only; loading
