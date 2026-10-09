@@ -39,7 +39,7 @@
   color: var(--note-default-color, var(--color-text-primary));
   caret-color: var(--note-default-color, var(--color-text-primary));
   font-family: var(--note-default-font-family, inherit);
-  font-size: var(--note-default-font-size, 0.875rem);
+  font-size: var(--note-default-font-size, var(--text-sm));
 }
 
 .rich-text-editor.ProseMirror:focus {

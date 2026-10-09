@@ -6,6 +6,7 @@ import { ArrowDown, Loading02 } from "@untitledui/icons";
 import { useStateWithRef } from "#src/hooks/use-state-with-ref";
 import { ButtonUtility } from "#src/components/base/buttons/button-utility";
 import { useAppToast } from "#src/components/ui/toast";
+import { UnreadDot } from "#src/components/ui/unread-marker";
 import { useTimeZone } from "#src/lib/time-zone-context";
 import {
   Empty,
@@ -1135,10 +1136,7 @@ export function ConversationPane({
                       className="rounded-full"
                     />
                     {newMessageCount > 0 && (
-                      <span
-                        aria-hidden="true"
-                        className="absolute -top-1 -right-1 size-2.5 rounded-full border border-primary bg-brand-solid"
-                      />
+                      <UnreadDot className="absolute -top-1 -right-1 size-2.5 border border-primary" />
                     )}
                   </span>
                 )}

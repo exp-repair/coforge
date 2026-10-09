@@ -65,9 +65,7 @@ export function EmptyConversation() {
         <MessagesSquare aria-hidden="true" className="size-6 text-tertiary" />
       </div>
       <p className="text-lg font-semibold">{m.messages_empty_title()}</p>
-      <p className="mt-2 max-w-sm text-sm leading-6 text-tertiary">
-        {m.messages_empty_description()}
-      </p>
+      <p className="mt-2 max-w-sm text-sm text-tertiary">{m.messages_empty_description()}</p>
     </div>
   );
 }

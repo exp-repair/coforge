@@ -103,7 +103,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-secondary bg-primary p-4">
       <p className="text-xs text-tertiary">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-primary tabular-nums">{value}</p>
+      <p className="mt-1 text-display-xs font-semibold text-primary tabular-nums">{value}</p>
     </div>
   );
 }

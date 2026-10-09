@@ -38,7 +38,7 @@ export function ComputerTypeOption({
         {selected && <Check className="size-3.5" />}
       </span>
       <span className="block text-sm font-semibold">{label}</span>
-      <span className="mt-1 block text-sm leading-5 text-tertiary">{description}</span>
+      <span className="mt-1 block text-sm text-tertiary">{description}</span>
     </Button>
   );
 }

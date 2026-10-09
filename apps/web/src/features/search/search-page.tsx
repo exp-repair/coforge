@@ -574,7 +574,7 @@ function SearchResultRow({
           </span>
           <RelativeTime value={message.createdAt} />
         </div>
-        <p className="mt-1 line-clamp-2 text-sm leading-5 break-words text-secondary">
+        <p className="mt-1 line-clamp-2 text-sm break-words text-secondary">
           {searchExcerpt(text, terms).map((part, index) =>
             part.match ? (
               <mark

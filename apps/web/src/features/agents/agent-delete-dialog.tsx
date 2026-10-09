@@ -70,7 +70,7 @@ export function AgentDeleteDialog({
               <div className="flex shrink-0 items-start justify-between gap-4 px-6 pt-6">
                 <Heading
                   slot="title"
-                  className="min-w-0 text-xl font-semibold text-primary wrap-anywhere sm:text-2xl"
+                  className="min-w-0 text-xl font-semibold text-primary wrap-anywhere sm:text-display-xs"
                 >
                   {m.agent_delete_dialog_title({ name: agentName })}
                 </Heading>

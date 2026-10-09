@@ -23,8 +23,8 @@
 
 `src/styles.css` 依次 `@import` 上述文件（`theme.css`、`typography.css` 在前，`coforge-theme.css` 最后），
 并保留必需的 `@plugin`、`@custom-variant dark`（现在指向 `.dark-mode` 而不是 `.dark`）、字体导入，以及仅供
-落地页使用的旧 token 兼容层（见 [§4](#4-落地页的隔离-token)）。**Figma 规范表已作废**——组件不再手写十六进制色值，
-一律使用 Untitled 的语义工具类；旧文档 §2/§3 的黑灰色/主色调/功能色映射表随 shadcn token 一并移除。
+落地页使用的旧 token 兼容层（见 [§4](#4-落地页的隔离-token)）。组件仍不手写十六进制色值，一律使用 Untitled 的语义工具类；设计稿的色板与这些 token 的对照见
+[design §15](design/color-palette.md)，旧文档 §2/§3 的黑灰色/主色调/功能色映射表随 shadcn token 一并移除。
 
 ## 2. CoForge 品牌梯度
 
@@ -91,16 +91,18 @@ Untitled 自己的暗色模式规则是**不改梯度数值，只改语义 token
 
 ## 5. 字体
 
-- `--font-body` / `--font-display`：Inter Variable（`@fontsource-variable/inter`），CJK 回退
-  `"PingFang SC"`、`"Microsoft YaHei"`、`"Noto Sans CJK SC"`。
+字体与字号规范见 [design §14](design/typography.md)。
+
+- `--font-body` / `--font-display`：Inter Variable（`@fontsource-variable/inter`）→ Noto Sans SC Variable
+  （`@fontsource-variable/noto-sans-sc`）→ `"Microsoft YaHei"`、`"Noto Sans CJK SC"`。
 - `--font-mono`：JetBrains Mono Variable（`@fontsource-variable/jetbrains-mono`）。
-- `--font-landing-display`：Geist Variable，仅落地页展示文字使用，产品其余部分不再用 Geist Sans。
+落地页用的也是这套栈（`font-display`），不再单独加载展示字体。
 
 ## 6. 维护约定
 
 - 尺寸单位（rem 与 px 的分工）见 [design §12](design/sizing-units.md)；本文只管颜色与字体。
 - 颜色一律用 Untitled 的语义工具类（`bg-primary`、`text-tertiary`、`border-secondary`……),不写死十六进制,
   不写 `bg-[...]` 任意值,新概念先加 token 再用。
-- 只在 `coforge-theme.css` 覆盖 `--color-brand-*` 或新增 CoForge 专属 token；`theme.css` / `typography.css`
+- 只在 `coforge-theme.css` 覆盖 `--color-brand-*`、按设计稿对齐亮色语义 token（`:root:not(.dark-mode)` 块，对照表见 [design §15](design/color-palette.md)）或新增 CoForge 专属 token；`theme.css` / `typography.css`
   保持 CLI 生成的原样,不手改,升级时直接用 `npx untitledui@latest init` 重新生成再对比 diff。
 - 落地页的 `.landing-page` 隔离层只服务于视觉冻结,新功能页面不要引用这里的变量。

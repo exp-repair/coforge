@@ -172,7 +172,7 @@ export function ProjectSettingsPage({
                   <ProjectImage
                     name={project.name}
                     url={project.iconUrl}
-                    className="size-16 text-2xl"
+                    className="size-16 text-display-xs"
                   />
                   <input
                     type="file"

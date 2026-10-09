@@ -502,7 +502,7 @@ function PersonCard({ person }: { person: DirectoryPerson }) {
         </h2>
       </div>
       {/* Fixed two-line slot, as on Agent cards, so a row's footers line up. */}
-      <p className="line-clamp-2 min-h-10 text-sm leading-5 break-words text-secondary">
+      <p className="line-clamp-2 min-h-10 text-sm break-words text-secondary">
         {person.description}
       </p>
       {total > 0 && (
@@ -654,7 +654,7 @@ function AgentCard({
         <p className="truncate text-sm text-tertiary">@{member.name}</p>
       </div>
       {/* Fixed two-line slot so every card in a row lines its footer up. */}
-      <p className="line-clamp-2 min-h-10 text-sm leading-5 break-words text-secondary">
+      <p className="line-clamp-2 min-h-10 text-sm break-words text-secondary">
         {member.description}
       </p>
       <div className="mt-auto flex min-w-0 items-center gap-4 pt-1 text-sm text-tertiary">

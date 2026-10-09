@@ -82,7 +82,7 @@ const PREVIEW_COMPONENTS: Components = {
   input: () => null,
   pre: ({ children }) => <span className="font-mono">{children}</span>,
   code: ({ children }) => (
-    <code className="rounded-sm bg-secondary px-1 font-mono text-[0.8125rem]">{children}</code>
+    <code className="rounded-sm bg-secondary px-1 font-mono text-xs">{children}</code>
   ),
   a: ({ children }) => <span className="text-brand-secondary underline">{children}</span>,
   img: ({ alt }) => <span>{alt}</span>,

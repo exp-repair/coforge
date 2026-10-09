@@ -154,7 +154,7 @@ const ActivityTimelineRow = memo(function ActivityTimelineRow({
           <p
             id={contentId}
             className={cn(
-              "mt-0.5 font-mono text-xs leading-5 break-words whitespace-pre-wrap text-tertiary select-text",
+              "mt-0.5 font-mono text-xs break-words whitespace-pre-wrap text-tertiary select-text",
               canExpand && !expanded && "line-clamp-2",
             )}
           >

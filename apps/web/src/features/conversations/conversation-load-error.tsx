@@ -31,7 +31,7 @@ export function ConversationLoadError({ error }: { error: unknown }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-secondary px-4 md:px-6">
         <ConversationListButton />
-        <h1 className="text-base font-semibold">{m.messages_title()}</h1>
+        <h1 className="text-md font-semibold">{m.messages_title()}</h1>
       </header>
       <div className="grid flex-1 place-content-center gap-4 p-6 text-center">
         <AlertCircle aria-hidden="true" className="mx-auto size-5 text-error-primary" />

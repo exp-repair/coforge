@@ -486,8 +486,9 @@ export function AttachmentCard({ attachment }: { attachment: MessageView["attach
 }
 
 /**
- * A divider row: one body line of spacing above and below its label (24px at the 16px message
- * size), less the 4px each neighbouring row adds with its own `py-1`. `message-text` scopes
+ * A divider row: one body line of spacing above and below its label (the message line height:
+ * 18px at the 12px size, 20px at the default 14px size, 24px at the 16px size), less the 4px each
+ * neighbouring row adds with its own `py-1`. `message-text` scopes
  * `--text-md--line-height` to Settings → Message font size, and the labels use that same `text-md`,
  * so a divider reads at the size of the message text around it.
  */
@@ -961,7 +962,7 @@ export const MessageRow = memo(function MessageRow({
               onMouseUp={readQuoteSelection}
               onKeyUp={readQuoteSelection}
               className={cn(
-                "relative min-w-0 text-md leading-6 text-primary [overflow-wrap:anywhere]",
+                "relative min-w-0 text-md text-primary [overflow-wrap:anywhere]",
                 // A grouped row has no sender header, so the touch-visible action strip would
                 // sit on its first text line; reserve the strip's width (thread + reaction +
                 // copy buttons) up front instead.
@@ -1184,7 +1185,7 @@ export const MessageRow = memo(function MessageRow({
                         {clockLabel(message.createdAt, dateLocale, timeFormat, timeZone)}
                       </time>
                     </p>
-                    <p className="line-clamp-2 text-sm leading-5 text-secondary [overflow-wrap:anywhere]">
+                    <p className="line-clamp-2 text-sm text-secondary [overflow-wrap:anywhere]">
                       {messagePlainText(message, channelNames)}
                     </p>
                   </div>
@@ -1207,7 +1208,7 @@ export const MessageRow = memo(function MessageRow({
                         }}
                         // `px-0!` overrides the size's horizontal padding so the eight
                         // cells share the row's width evenly instead of overflowing it.
-                        className="h-auto min-w-0 flex-1 rounded-full px-0! py-3 text-2xl leading-none"
+                        className="h-auto min-w-0 flex-1 rounded-full px-0! py-3 text-display-xs leading-none"
                       >
                         {emoji}
                       </Button>

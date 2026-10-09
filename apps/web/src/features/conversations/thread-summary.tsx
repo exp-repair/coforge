@@ -4,11 +4,11 @@ import { Avatar } from "#src/components/base/avatar/avatar";
 import { Button } from "#src/components/base/buttons/button";
 import { ButtonUtility } from "#src/components/base/buttons/button-utility";
 import { RelativeTime } from "#src/components/ui/relative-time";
+import { UnreadDot } from "#src/components/ui/unread-marker";
 import { avatarInitial, avatarToneClassName } from "#src/lib/avatar-tone";
 import { m } from "#src/paraglide/messages";
 import { DELETED_AGENT_AVATAR_CLASS } from "#src/features/agents/deleted-agent";
 import { replyCountLabel, withUnreadCount } from "./conversation-labels";
-import { UnreadDot } from "./conversation-directory";
 import { useThreadBodyFormat, useThreadSummary, useThreadUnread } from "./thread-store";
 
 /**

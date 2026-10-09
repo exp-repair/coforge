@@ -75,7 +75,7 @@ export function LeaderFormatSectionsEditor({
                 value={block.title}
                 onChange={(event) => updateAt(index, { title: event.target.value })}
                 onBlur={onBlur}
-                className="min-w-0 flex-1 bg-transparent px-0 text-base font-semibold text-primary outline-none"
+                className="min-w-0 flex-1 bg-transparent px-0 text-md font-semibold text-primary outline-none"
               />
               <span className="shrink-0 text-xs text-tertiary">
                 {m.records_template_heading_level_two()}
@@ -105,7 +105,7 @@ export function LeaderFormatSectionsEditor({
               onBlur={onBlur}
               rows={3}
               className={cn(
-                "w-full resize-y bg-transparent px-0 text-sm leading-6 text-primary outline-none",
+                "w-full resize-y bg-transparent px-0 text-sm text-primary outline-none",
                 "placeholder:text-placeholder",
               )}
             />

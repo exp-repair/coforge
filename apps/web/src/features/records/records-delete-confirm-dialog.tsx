@@ -56,7 +56,7 @@ export function RecordsDeleteConfirmDialog({
                 <div className="min-w-0 space-y-2">
                   <Heading
                     slot="title"
-                    className="text-base font-semibold text-primary wrap-anywhere"
+                    className="text-md font-semibold text-primary wrap-anywhere"
                   >
                     {title}
                   </Heading>

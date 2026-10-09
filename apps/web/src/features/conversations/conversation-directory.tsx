@@ -4,6 +4,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { DndContext } from "@dnd-kit/core";
 import { Link as AriaLink } from "react-aria-components";
 
+import { UnreadBadge, UnreadDot } from "#src/components/ui/unread-marker";
 import { Button } from "#src/components/base/buttons/button";
 import { ButtonUtility } from "#src/components/base/buttons/button-utility";
 import { useAppToast } from "#src/components/ui/toast";
@@ -51,28 +52,6 @@ type DirectoryChannel = {
 /** A DM row as the directory shows it: its row, the name it goes by, and its live Agent when it is
  * one with an Agent. */
 type DirectEntry = DirectRow & { name: string; agent?: LiveAgent; self: boolean };
-
-/** A member's avatar in their DM row, with the online dot once presence is known (an unknown
- * state is never drawn as offline). */
-/** Slack-style badge: the count up to 99, then "99+". Hidden from AT by the row's label. */
-export function UnreadBadge({ count }: { count: number }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-brand-solid px-1.5 text-xs font-semibold leading-none text-white tabular-nums"
-    >
-      {count > 99 ? "99+" : count}
-    </span>
-  );
-}
-
-/** The unread marker without a number: "there is something here", not "how much". Used where the
- * marker sits on an icon — a count on a small glyph is noise, and the sidebar keeps the numbers. */
-export function UnreadDot() {
-  return (
-    <span aria-hidden="true" className="inline-flex size-2 shrink-0 rounded-full bg-brand-solid" />
-  );
-}
 
 /** The row's accessible name: the conversation it names, plus its unread count when it has one. */
 function rowLabel(unreadCount: number | undefined, label: string): string | undefined {
@@ -202,7 +181,7 @@ function DirectorySection({
             />
           }
         >
-          <span className="truncate text-[0.6875rem] tracking-wide uppercase">{label}</span>
+          <span className="truncate text-xs tracking-wide uppercase">{label}</span>
         </Button>
         {action}
       </div>

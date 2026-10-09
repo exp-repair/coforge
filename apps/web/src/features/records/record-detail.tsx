@@ -962,7 +962,7 @@ function TemplateReportDetail({
                 <WeekBadge week={report.cycle.week} />
               </span>
               {isOverview ? (
-                <h1 className="min-w-0 truncate text-base font-semibold text-primary sm:text-lg">
+                <h1 className="min-w-0 truncate text-md font-semibold text-primary sm:text-lg">
                   {report.title}
                 </h1>
               ) : (
@@ -972,7 +972,7 @@ function TemplateReportDetail({
                   value={titleDraft}
                   disabled={saving || sending}
                   onChange={(event) => setTitleDraft(event.target.value)}
-                  className="min-w-0 flex-1 truncate bg-transparent text-base font-semibold text-primary outline-none placeholder:text-tertiary focus-visible:outline-none disabled:opacity-60 sm:text-lg"
+                  className="min-w-0 flex-1 truncate bg-transparent text-md font-semibold text-primary outline-none placeholder:text-tertiary focus-visible:outline-none disabled:opacity-60 sm:text-lg"
                 />
               )}
               <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -1275,7 +1275,7 @@ function NoteDetail({ note }: { note: NoteSubject["note"] }) {
                     setEditingTitle(false);
                   }
                 }}
-                className="mb-6 w-full bg-transparent text-3xl font-semibold tracking-tight text-primary outline-none md:text-4xl"
+                className="mb-6 w-full bg-transparent text-display-sm font-semibold tracking-tight text-primary outline-none md:text-display-md"
               />
             ) : (
               <Button
@@ -1283,7 +1283,7 @@ function NoteDetail({ note }: { note: NoteSubject["note"] }) {
                 size="sm"
                 color="tertiary"
                 onPress={() => setEditingTitle(true)}
-                className="mb-6 h-auto w-full justify-start px-0 py-0 text-left text-3xl font-semibold tracking-tight text-primary md:text-4xl"
+                className="mb-6 h-auto w-full justify-start px-0 py-0 text-left text-display-sm font-semibold tracking-tight text-primary md:text-display-md"
               >
                 {title}
               </Button>

@@ -203,19 +203,23 @@ function writeCachedLayout(chart: string, layout: MermaidLayout): void {
   }
 }
 
+// The sandboxed iframe has an opaque origin, so it cannot load the app's web fonts; this lists the
+// same stack so a machine that has Inter or a Chinese UI font installed still matches the app.
+const MERMAID_FONT_FAMILY = `"Inter", "Noto Sans SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif`;
+
 function buildSandboxedMermaidDocument(svg: string, host: HTMLElement | null): string {
   const cssVariables = getSandboxCssVariables(host);
 
   // html/body fill the iframe and clip overflow. Mermaid SVGs often keep
   // explicit width/height attributes; without max-height + overflow:hidden
   // the iframe shows an inner scrollbar around a tiny centered diagram.
-  return `<!doctype html><html><head><style>:root { ${cssVariables} } html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; } body { display: flex; align-items: center; justify-content: center; background: transparent; } svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }</style></head><body>${svg}</body></html>`;
+  return `<!doctype html><html><head><style>:root { ${cssVariables} } html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; font-family: ${MERMAID_FONT_FAMILY}; } body { display: flex; align-items: center; justify-content: center; background: transparent; } svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }</style></head><body>${svg}</body></html>`;
 }
 
 function buildExpandedMermaidDocument(svg: string, host: HTMLElement | null): string {
   const cssVariables = getSandboxCssVariables(host);
 
-  return `<!doctype html><html><head><style>:root { ${cssVariables} } html, body { width: 100%; height: 100%; } body { margin: 0; display: flex; align-items: center; justify-content: center; background: var(--color-bg-secondary); } svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }</style></head><body>${svg}</body></html>`;
+  return `<!doctype html><html><head><style>:root { ${cssVariables} } html, body { width: 100%; height: 100%; font-family: ${MERMAID_FONT_FAMILY}; } body { margin: 0; display: flex; align-items: center; justify-content: center; background: var(--color-bg-secondary); } svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }</style></head><body>${svg}</body></html>`;
 }
 
 function useThemeVersion() {

@@ -61,7 +61,7 @@ export function ThreadPaneHeader({
         onClick={onClose}
         aria-label={m.conversation_thread_back()}
       />
-      <h2 className="flex min-w-0 flex-1 text-base font-semibold">
+      <h2 className="flex min-w-0 flex-1 text-md font-semibold">
         {onScrollToTop ? (
           <Tooltip title={m.conversation_thread_scroll_to_top()} placement="bottom start">
             <AriaButton

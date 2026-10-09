@@ -65,6 +65,18 @@
   --sidebar-gradient: linear-gradient(180deg, #f6f5fe 0%, #faf9ff 100%);
 }
 
+/* Light-mode values from the design spec's Color page (docs/design/color-palette.md): the
+   spec's cool near-black text, border, brand tint and alert-box fill replace Untitled's neutral
+   greys, as semantic tokens so the shared ramps are untouched. The spec's red, green and text grey
+   are not applied: as text or under white text they fall below WCAG AA (docs/design/color-palette.md).
+   The spec gives no dark-mode values, so `.dark-mode` keeps Untitled's own. */
+:root:not(.dark-mode) {
+  --color-text-primary: #101319;
+  --color-border-secondary: #e0e5f1;
+  --color-bg-brand-primary: #f3f1ff;
+  --color-bg-success-primary: #f6ffed;
+}
+
 @layer base {
   /* Sidebar retint for the official NavItemBase / NavButton components (used
    * unmodified by src/components/layout/sidebar/{sidebar-expanded,sidebar-collapsed}.tsx).

@@ -2,9 +2,11 @@
 
 ## 颜色
 
+设计稿色板与代码 token 的对照见[第 15 节](color-palette.md)。
+
 - 语义 token 用官方名：`bg-primary / bg-secondary / bg-tertiary`，`text-primary / text-secondary / text-tertiary / text-quaternary`，`border-primary / border-secondary`，`bg-brand-solid`，`text-brand-secondary`，`text-error-primary`。映射表见 `docs/design-tokens.md`。
 - 品牌紫只出现在：侧栏选中项、主按钮、链接、Public 徽章、自己发出的消息气泡、焦点环，以及两类交互状态（2026-09-23 确定）：
-  - 未读提示：未读数字角标、未读小圆点、未读会话行的底色、消息流里的未读分割线；
+  - 未读提示里的行底色和消息流里的未读分割线；未读数字角标和未读小圆点不用紫，用红（Untitled 的标准红，见[第 15 节](color-palette.md)，组件是 `components/ui/unread-marker.tsx`）；
   - 当前焦点与交互：选中的卡片/列表行/设置导航项（边框或文字）、@提及高亮、拖拽落点与选择指示、可拖拽分隔线的 hover/拖动态。
   - 头像细边框：按用户提供的头像参考图，所有尺寸统一圆角方形和左上浅紫到右下深紫的渐变细边框；状态点仍使用状态语义色。
 
@@ -33,7 +35,7 @@
 
 ## 排版
 
-- UI 字体 Inter，中文回退苹方 / 微软雅黑 / Noto Sans CJK。代码、终端、标识符用 JetBrains Mono。Geist Sans 只用于公开首页标题。
+- 字体与字号以[第 14 节](typography.md)为准：UI 字体 Inter，中文 Noto Sans SC，代码、终端、标识符用 JetBrains Mono。
 - 时间戳和计数加 `tabular-nums`。
 
 ## 深色模式

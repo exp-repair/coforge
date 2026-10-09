@@ -42,7 +42,7 @@ export function PeopleDirectConversationHeader({
         <>
           <ConversationListButton />
           <MemberAvatar size="sm" userId={peer.id} name={peer.displayName} src={peer.avatarUrl} />
-          <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
+          <h1 className="min-w-0 flex-1 truncate text-md font-semibold">
             {peer.displayName}
             {self && (
               <span className="font-normal text-tertiary">{m.conversation_dm_self_suffix()}</span>

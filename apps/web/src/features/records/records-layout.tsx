@@ -21,6 +21,7 @@ import {
   XClose as X,
 } from "@untitledui/icons";
 
+import { UnreadDot } from "#src/components/ui/unread-marker";
 import { PageHeader } from "#src/components/layout/page-header";
 import { useWorkspaceSlug } from "#src/features/workspaces/workspace-route";
 import { Tab, TabList, TabPanel, Tabs } from "#src/components/application/tabs/tabs";
@@ -378,9 +379,12 @@ export function RecordsLayout({
                                   </span>
                                 ) : unread ? (
                                   <span
+                                    role="img"
                                     aria-label={m.records_report_unread_badge()}
-                                    className="ml-auto size-1.5 shrink-0 rounded-full bg-brand-solid"
-                                  />
+                                    className="ml-auto"
+                                  >
+                                    <UnreadDot />
+                                  </span>
                                 ) : null}
                               </RecordLink>
                             </li>
@@ -891,7 +895,7 @@ export function RecordsKeyPointReturnBack({ returnTo }: { returnTo: string }) {
 export function EmptyRecord() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-      <p className="text-base font-semibold text-primary">{m.records_empty_title()}</p>
+      <p className="text-md font-semibold text-primary">{m.records_empty_title()}</p>
     </div>
   );
 }

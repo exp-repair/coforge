@@ -62,7 +62,7 @@ export function AgentProfileHeader({
       <AgentDisplayAvatar name={agent.displayName} src={agent.avatarUrl} display={display} />
       {/* The name alone: the avatar's dot carries the live status
           and the Profile tab the description. */}
-      <p className="min-w-0 flex-1 truncate text-[1.0625rem] leading-tight font-medium tracking-tight text-secondary">
+      <p className="min-w-0 flex-1 truncate text-md font-medium tracking-tight text-secondary">
         {agent.displayName}
       </p>
       {canMessage && (

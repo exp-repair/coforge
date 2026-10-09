@@ -20,7 +20,7 @@ export function ComputersPending() {
           <h1 className="text-lg font-semibold text-primary">{m.computer_page_title()}</h1>
         </div>
         <div className="mt-2 flex h-7 shrink-0 items-center pl-5">
-          <span className="text-[0.6875rem] font-semibold tracking-wide text-quaternary uppercase">
+          <span className="text-xs font-semibold tracking-wide text-quaternary uppercase">
             {m.computer_page_title()}
           </span>
         </div>
@@ -107,7 +107,7 @@ export function ComputerDetailLoadError({ error }: { error: unknown }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-secondary px-4 sm:px-6">
         <BackToComputers />
-        <h1 className="text-base font-medium">{m.computer_page_title()}</h1>
+        <h1 className="text-md font-medium">{m.computer_page_title()}</h1>
       </header>
       <div className="grid flex-1 place-content-center gap-4 p-6 text-center">
         <AlertCircle aria-hidden="true" className="mx-auto size-5 text-error-primary" />

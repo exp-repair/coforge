@@ -151,7 +151,7 @@ export function TaskCard({
           <TaskOwnerAvatar owner={task.owner} />
         </span>
       </div>
-      <h3 className="mt-1 text-sm leading-snug font-medium text-primary [overflow-wrap:anywhere]">
+      <h3 className="mt-1 text-sm font-medium text-primary [overflow-wrap:anywhere]">
         {renderTitle(<span className="line-clamp-3">{task.title}</span>)}
       </h3>
       {task.description && (

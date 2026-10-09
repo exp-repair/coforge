@@ -2,7 +2,7 @@
  * Markdown typography for a message body.
  *
  * Message bodies are short and scanned in a narrow column, so this is the same "Compact" tier as
- * the Records rich-text prose (14px body by default, 18px line height; Settings → Message font size
+ * the Records rich-text prose (14px body by default, 20px line height; Settings → Message font size
  * picks 12, 14 or 16px) rather than a document scale. It is
  * a separate stylesheet from the Records editor because that one is scoped to `.rich-text-editor`
  * and carries editor-only affordances (resize handles, selection overlays, node-view wrappers)
@@ -20,33 +20,43 @@
 }
 
 /* Settings → Message font size: 12, 14 (the default, no class) or 16px body text. A message row's
- * text (`.message-text`, the element that directly wraps `MessageBody`) redefines the type scale it draws
- * from, so the body, headings, code and chips all move together; everything outside the message
- * text keeps the UI size. */
+ * text (`.message-text`, the element that directly wraps `MessageBody`) redefines the type scale it
+ * draws from, so the body, headings, code and chips all move together; everything outside the
+ * message text keeps the UI size. Each size is a step on the design scale with its paired line
+ * height (docs/design/typography.md), not a multiple of the body size: the body size picks the
+ * `md` step, `lg` and `xl` are the steps above it, and `xs` and `sm` stop at the scale's smallest
+ * (12px / 18px). */
 .message-text {
-  --message-font-scale: 0.875;
-  --text-xs: calc(var(--spacing) * 3 * var(--message-font-scale));
-  --text-xs--line-height: calc(var(--spacing) * 4.5 * var(--message-font-scale));
-  --text-sm: calc(var(--spacing) * 3.5 * var(--message-font-scale));
-  --text-sm--line-height: calc(var(--spacing) * 5 * var(--message-font-scale));
-  --text-md: calc(var(--spacing) * 4 * var(--message-font-scale));
-  /* The body line height is a design value per size (12 → 16px, 14 → 18px, 16 → 24px), not a
-   * multiple of the font size, so the size classes below set it. */
-  --text-md--line-height: 1.125rem;
-  --text-lg: calc(var(--spacing) * 4.5 * var(--message-font-scale));
-  --text-lg--line-height: calc(var(--spacing) * 7 * var(--message-font-scale));
-  --text-xl: calc(var(--spacing) * 5 * var(--message-font-scale));
-  --text-xl--line-height: calc(var(--spacing) * 7.5 * var(--message-font-scale));
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.75rem;
+  --text-sm--line-height: 1.125rem;
+  --text-md: 0.875rem;
+  --text-md--line-height: 1.25rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.125rem;
+  --text-xl--line-height: 1.75rem;
 }
 
 .message-font-sm .message-text {
-  --message-font-scale: 0.75;
-  --text-md--line-height: 1rem;
+  --text-md: 0.75rem;
+  --text-md--line-height: 1.125rem;
+  --text-lg: 0.875rem;
+  --text-lg--line-height: 1.25rem;
+  --text-xl: 1rem;
+  --text-xl--line-height: 1.5rem;
 }
 
 .message-font-lg .message-text {
-  --message-font-scale: 1;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-md: 1rem;
   --text-md--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.875rem;
 }
 
 /* Block rhythm: one owner per gap, and no stray leading/trailing space in a message row. */
@@ -70,17 +80,19 @@
 .message-markdown h6 {
   color: var(--color-text-primary);
   font-weight: 600;
-  line-height: 1.3;
+  line-height: var(--text-md--line-height);
   margin: 1rem 0 0.5rem;
 }
 
 /* A heading stays clearly above body size without competing with the sender name. */
 .message-markdown h1 {
   font-size: var(--text-xl);
+  line-height: var(--text-xl--line-height);
 }
 
 .message-markdown h2 {
   font-size: var(--text-lg);
+  line-height: var(--text-lg--line-height);
 }
 
 .message-markdown h3 {

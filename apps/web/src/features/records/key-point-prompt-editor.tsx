@@ -46,7 +46,7 @@ export function KeyPointPromptEditor({
           onTextAreaCompositionEnd={(event) => onChange(event.currentTarget.value)}
           placeholder={m.records_key_points_prompt_placeholder()}
           size="sm"
-          textAreaClassName="resize-y leading-6 read-only:opacity-80"
+          textAreaClassName="resize-y read-only:opacity-80"
         />
       </section>
 
@@ -91,7 +91,7 @@ export function KeyPointPromptEditor({
                     ) : null}
                   </div>
                 </div>
-                <div className="rounded-xl bg-secondary px-3 py-3 text-sm leading-6 whitespace-pre-wrap text-secondary">
+                <div className="rounded-xl bg-secondary px-3 py-3 text-sm whitespace-pre-wrap text-secondary">
                   {entry.text}
                 </div>
               </li>

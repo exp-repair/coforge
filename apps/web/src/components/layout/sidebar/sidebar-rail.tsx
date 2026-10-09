@@ -1,5 +1,6 @@
 import type { FC, ReactNode } from "react";
 import type { NavItemType } from "#src/components/application/app-navigation/config";
+import { UnreadDot } from "#src/components/ui/unread-marker";
 import { cx } from "#src/utils/cx";
 
 // Adapted from Untitled's sidebar-slim.tsx (MIT; docs/design/official-components.md §7) —
@@ -34,16 +35,11 @@ function RailItem({ href, icon: Icon, label, current, badge }: RailItemType) {
             current ? "text-brand-secondary" : "text-tertiary group-hover:text-secondary",
           )}
         />
-        {badge ? (
-          <span
-            aria-hidden="true"
-            className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-brand-solid"
-          />
-        ) : null}
+        {badge ? <UnreadDot className="absolute top-1.5 right-1.5" /> : null}
       </span>
       <span
         className={cx(
-          "text-[0.625rem] leading-3 font-medium tracking-normal whitespace-nowrap transition-colors duration-100 ease-linear [.rail-labels-hidden_&]:hidden",
+          "text-xs font-medium tracking-normal whitespace-nowrap transition-colors duration-100 ease-linear [.rail-labels-hidden_&]:hidden",
           current
             ? "font-semibold text-brand-secondary"
             : "text-tertiary group-hover:text-secondary",

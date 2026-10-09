@@ -70,12 +70,12 @@ export function DirectConversationHeader({
                 noTextPadding
                 onPress={openProfile}
                 aria-label={m.agent_open_profile({ name: conversation.agent.displayName })}
-                className="h-auto min-w-0 rounded p-0 text-base font-semibold text-primary hover:bg-transparent hover:text-primary hover:underline"
+                className="h-auto min-w-0 rounded p-0 text-md font-semibold text-primary hover:bg-transparent hover:text-primary hover:underline"
               >
                 <h1 className="truncate">{conversation.agent.displayName}</h1>
               </Button>
             ) : (
-              <h1 className="min-w-0 truncate text-base font-semibold">
+              <h1 className="min-w-0 truncate text-md font-semibold">
                 {conversation.agent.displayName}
               </h1>
             )}

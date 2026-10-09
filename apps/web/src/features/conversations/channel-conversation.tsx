@@ -83,7 +83,7 @@ export function ChannelConversationHeader({
           <>
             <ConversationListButton />
             <div className="flex min-w-0 flex-1 items-baseline gap-3">
-              <h1 className="min-w-0 truncate text-base font-semibold">#{conversation.name}</h1>
+              <h1 className="min-w-0 truncate text-md font-semibold">#{conversation.name}</h1>
               {conversation.description && (
                 <p className="hidden min-w-0 truncate text-sm text-tertiary sm:block">
                   {conversation.description}

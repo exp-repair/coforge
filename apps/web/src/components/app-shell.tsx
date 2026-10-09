@@ -22,6 +22,7 @@ import { Dropdown } from "#src/components/base/dropdown/dropdown";
 import { SidebarRail } from "#src/components/layout/sidebar/sidebar-rail";
 import { MobileDrawerProvider } from "#src/components/layout/sidebar/mobile-header";
 import { SidebarMobileDrawer } from "#src/components/layout/sidebar/sidebar-channels";
+import { UnreadDot } from "#src/components/ui/unread-marker";
 import { rememberRecordsLastPath, recordsNavHref } from "#src/features/records/records-last-path";
 import {
   ACTIVITY_INBOX_QUERY_PREFIX,
@@ -81,9 +82,7 @@ function useNavItems(
   /** Sections under `base` this item is also current for. */
   sections?: readonly string[];
 })[] {
-  const recordsDot = recordsPreview ? (
-    <span className="ml-auto size-1.5 shrink-0 rounded-full bg-brand-solid" />
-  ) : undefined;
+  const recordsDot = recordsPreview ? <UnreadDot className="ml-auto" /> : undefined;
   const recordsHref = recordsNavHref(workspaceId);
   const item = (section: string) => ({
     bareHref: `${base}/${section}`,
@@ -182,9 +181,7 @@ export function AppShell({
     base,
     recordsPreview,
     workspaceId,
-    hasActivityAttention ? (
-      <span className="ml-auto size-1.5 shrink-0 rounded-full bg-brand-solid" />
-    ) : undefined,
+    hasActivityAttention ? <UnreadDot className="ml-auto" /> : undefined,
   );
   const section = pathname.slice(base.length).split("/")[1] ?? "";
   const activeUrl = navItems.find((item) =>

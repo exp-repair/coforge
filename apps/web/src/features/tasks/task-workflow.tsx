@@ -206,9 +206,7 @@ export function TaskWorkflow<T extends TaskView>({
         {active ? (
           <div className="w-64 rotate-2 rounded-lg border border-secondary bg-primary p-3 shadow-lg">
             <span className="text-xs font-medium text-tertiary tabular-nums">#{active.number}</span>
-            <p className="mt-1 line-clamp-3 text-sm leading-snug font-medium text-primary">
-              {active.title}
-            </p>
+            <p className="mt-1 line-clamp-3 text-sm font-medium text-primary">{active.title}</p>
           </div>
         ) : null}
       </DragOverlay>

@@ -139,7 +139,7 @@ export function WeeklyReportCollectRunCard(props: {
             {open ? (
               <div className="border-t border-secondary px-3 py-2">
                 {slot.packMarkdown ? (
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-5 text-secondary">
+                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-secondary">
                     {slot.packMarkdown}
                   </pre>
                 ) : (

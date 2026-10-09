@@ -149,7 +149,7 @@ export function TeamKeyPointSection({
                 <div className="flex items-start gap-3 pr-8">
                   <FeaturedIcon color="warning" theme="light" size="sm" icon={AlertCircle} />
                   <div className="min-w-0 space-y-2">
-                    <Heading slot="title" className="text-base font-semibold text-primary">
+                    <Heading slot="title" className="text-md font-semibold text-primary">
                       {m.records_key_points_team_restart_confirm_title()}
                     </Heading>
                     <Text slot="description" className="text-sm text-secondary">

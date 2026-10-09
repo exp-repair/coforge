@@ -382,7 +382,7 @@ export function ComputerDetail({
             ) : (
               // The pencil hangs off the name's right edge so the name itself stays centred.
               <div className="relative max-w-[calc(100%-5rem)]">
-                <h1 className="truncate text-3xl font-semibold text-primary">
+                <h1 className="truncate text-display-sm font-semibold text-primary">
                   {computerLabel(computer)}
                 </h1>
                 {canEditDisplayName && (
@@ -559,7 +559,7 @@ function DetailRow({
 }) {
   return (
     <div className="grid min-h-11 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 py-3 @max-md:items-start">
-      <dt className="text-sm leading-6 font-medium whitespace-nowrap text-primary">{label}</dt>
+      <dt className="text-sm font-medium whitespace-nowrap text-primary">{label}</dt>
       {/* When the value and its action do not fit beside the label, the action drops below. */}
       <dd className="flex min-h-6 min-w-0 flex-wrap items-center justify-end gap-2 text-sm text-tertiary">
         <span className="min-w-0 truncate">{value}</span>

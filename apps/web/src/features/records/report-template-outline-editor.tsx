@@ -43,11 +43,11 @@ function addLabel(level: HeadingLevel) {
 }
 
 function headingClass(level: HeadingLevel) {
-  if (level === 1) return "text-2xl font-semibold leading-tight";
-  if (level === 2) return "text-xl font-semibold leading-tight";
-  if (level === 3) return "text-lg font-semibold leading-tight";
-  if (level === 4) return "text-base font-semibold leading-tight";
-  return "text-sm font-semibold leading-tight";
+  if (level === 1) return "text-display-xs font-semibold";
+  if (level === 2) return "text-xl font-semibold";
+  if (level === 3) return "text-lg font-semibold";
+  if (level === 4) return "text-md font-semibold";
+  return "text-sm font-semibold";
 }
 
 function depthAt(nodes: OutlineNode[], index: number) {
@@ -314,7 +314,7 @@ export function ReportTemplateOutlineEditor({
                     placeholder={m.records_template_body_placeholder()}
                     onChange={(event) => updateText(node.id, event.target.value)}
                     onBlur={onBlur}
-                    className="min-w-0 flex-1 bg-transparent px-0.5 text-sm leading-6 text-primary outline-none placeholder:text-placeholder"
+                    className="min-w-0 flex-1 bg-transparent px-0.5 text-sm text-primary outline-none placeholder:text-placeholder"
                   />
                   <ButtonUtility
                     size="xs"

@@ -38,7 +38,7 @@ export function AgentControlDialogs({
                 <div className="flex shrink-0 items-start justify-between gap-4">
                   <Heading
                     slot="title"
-                    className="min-w-0 text-base font-semibold text-primary wrap-anywhere"
+                    className="min-w-0 text-md font-semibold text-primary wrap-anywhere"
                   >
                     {m.agent_control_stop_dialog_title()}
                   </Heading>
@@ -101,7 +101,7 @@ export function AgentControlDialogs({
                 <div className="flex shrink-0 items-start justify-between gap-4">
                   <Heading
                     slot="title"
-                    className="min-w-0 text-base font-semibold text-primary wrap-anywhere"
+                    className="min-w-0 text-md font-semibold text-primary wrap-anywhere"
                   >
                     {m.agent_control_dialog_title({ name: agentName })}
                   </Heading>
@@ -132,7 +132,7 @@ export function AgentControlDialogs({
                       onPress={() => control.setAction(option.action)}
                     >
                       <span className="block font-semibold">{option.label}</span>
-                      <span className="mt-1 block text-sm font-normal leading-6 text-tertiary">
+                      <span className="mt-1 block text-sm font-normal text-tertiary">
                         {option.description}
                       </span>
                     </Button>

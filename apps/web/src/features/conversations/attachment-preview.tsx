@@ -181,7 +181,7 @@ function TextPreview({
 
   if (kind === "markdown")
     return (
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 text-md leading-6 text-primary sm:px-6 sm:py-5">
+      <div className="min-h-0 flex-1 overflow-auto px-4 py-4 text-md text-primary sm:px-6 sm:py-5">
         <MessageBody body={text} />
       </div>
     );
@@ -191,7 +191,7 @@ function TextPreview({
   // the file's line breaks and leading whitespace.
   if (kind === "text")
     return (
-      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words px-4 py-4 font-mono text-sm leading-6 text-primary sm:px-6 sm:py-5">
+      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words px-4 py-4 font-mono text-sm text-primary sm:px-6 sm:py-5">
         {text}
       </pre>
     );

@@ -136,7 +136,7 @@ export function ComputerInstallCommand({
           )}
         </div>
       )}
-      <div className="rounded-xl bg-secondary p-4 text-sm leading-6 text-tertiary">
+      <div className="rounded-xl bg-secondary p-4 text-sm text-tertiary">
         {m.computer_install_note()}
       </div>
     </div>

@@ -1264,9 +1264,7 @@ export function RecordSidePanel({
                       {new Date(comment.createdAt).toLocaleString()}
                     </span>
                   </div>
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-primary">
-                    {comment.body}
-                  </p>
+                  <p className="whitespace-pre-wrap text-sm text-primary">{comment.body}</p>
                   {payload?.kind === "offer-send" ? (
                     <div className="space-y-3">
                       <AssistantAttachmentCard
@@ -1383,7 +1381,7 @@ export function RecordSidePanel({
                     {new Date(message.createdAt).toLocaleString()}
                   </span>
                 </div>
-                <p className="whitespace-pre-wrap text-sm leading-6 text-primary">{message.body}</p>
+                <p className="whitespace-pre-wrap text-sm text-primary">{message.body}</p>
                 {suggestion?.type === "collect-plan" ? (
                   <WeeklyReportMessageCard
                     messageId={message.id}
@@ -1427,7 +1425,7 @@ export function RecordSidePanel({
                             ? m.records_key_points_suggestion_preview()
                             : m.records_assistant_suggestion_preview()}
                         </p>
-                        <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-primary p-2 text-xs leading-5 text-secondary">
+                        <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-primary p-2 text-xs text-secondary">
                           {preview}
                         </pre>
                       </div>
@@ -1548,7 +1546,7 @@ export function RecordSidePanel({
         >
           <Modal className="w-full max-w-sm p-5">
             <Dialog className="outline-none">
-              <h2 className="text-base font-semibold text-primary">
+              <h2 className="text-md font-semibold text-primary">
                 {m.records_side_chat_rename_title()}
               </h2>
               <div className="mt-3">

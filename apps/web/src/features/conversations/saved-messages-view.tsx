@@ -149,7 +149,7 @@ function SavedMessageCard({
           </div>
           {/* Every card is the same size: a plain-text excerpt in one type size, always two lines
               tall, the rest hidden. */}
-          <p className="mt-1 line-clamp-2 h-10 text-sm leading-5 break-words text-secondary">
+          <p className="mt-1 line-clamp-2 h-10 text-sm break-words text-secondary">
             {message.body
               ? messagePlainText({ body: message.body, mentions: message.mentions })
               : (attachmentName ?? "")}

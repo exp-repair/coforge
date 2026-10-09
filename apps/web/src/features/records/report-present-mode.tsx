@@ -61,9 +61,7 @@ export function ReportPresentMode({
       aria-label={page.name}
     >
       <header className="flex shrink-0 items-center gap-3 border-b border-secondary px-4 py-3">
-        <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-primary">
-          {page.name}
-        </h2>
+        <h2 className="min-w-0 flex-1 truncate text-md font-semibold text-primary">{page.name}</h2>
         <span className="text-sm text-tertiary">
           {index + 1} / {pages.length}
         </span>

@@ -67,10 +67,7 @@ export function WorkspaceSwitcher({
             <span className="mr-2 flex size-5 shrink-0 items-center justify-center">
               <WorkspaceMark workspace={current} />
             </span>
-            <span
-              data-workspace-name
-              className="min-w-0 flex-1 truncate text-[0.8125rem] font-semibold"
-            >
+            <span data-workspace-name className="min-w-0 flex-1 truncate text-sm font-semibold">
               {label}
             </span>
             <ChevronSelectorVertical aria-hidden="true" className="size-4 shrink-0 text-tertiary" />

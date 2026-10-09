@@ -25,7 +25,8 @@
 .rich-text-editor .mermaid-diagram-loading,
 .rich-text-editor .mermaid-diagram-error p {
   color: var(--color-text-tertiary);
-  font-size: 0.8125rem;
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
   margin: 0;
 }
 

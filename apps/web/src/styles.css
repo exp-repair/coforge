@@ -30,24 +30,20 @@
   transition-timing-function: inherit;
 }
 
-/* Inter has no CJK glyphs; keep the installed Chinese UI fonts as fallbacks after it.
+/* Inter has no CJK glyphs: Noto Sans SC is the Chinese UI font, with the installed
+   Microsoft YaHei / Noto Sans CJK SC as fallbacks (docs/design/typography.md).
    Fonts are self-hosted via @fontsource so the app has no external font requests. */
 @import "@fontsource-variable/inter";
-@import "@fontsource-variable/geist"; /* landing page display text only */
+@import "@fontsource-variable/noto-sans-sc"; /* unicode-range slices, fetched on demand */
 @import "@fontsource-variable/jetbrains-mono"; /* --font-mono */
 
 @theme {
   --font-body:
-    "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Inter Variable", "Noto Sans SC Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans", Arial, sans-serif, "Apple Color Emoji",
     "Segoe UI Emoji", "Noto Color Emoji";
-  --font-display:
-    "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans", Arial, sans-serif, "Apple Color Emoji",
-    "Segoe UI Emoji", "Noto Color Emoji";
+  --font-display: var(--font-body);
   --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* Landing page keeps its own Geist display family; Inter has no CJK glyphs either way. */
-  --font-landing-display: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
 }
 
 html,

@@ -1207,7 +1207,11 @@ function WorkspaceProfileSettings({
   }
 
   const icon = (
-    <WorkspaceIcon name={workspace.name} url={workspace.iconUrl} className="size-16 text-2xl" />
+    <WorkspaceIcon
+      name={workspace.name}
+      url={workspace.iconUrl}
+      className="size-16 text-display-xs"
+    />
   );
   const uploadLabel = uploading
     ? m.settings_workspace_icon_uploading()
