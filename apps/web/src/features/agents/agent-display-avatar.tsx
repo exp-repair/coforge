@@ -2,22 +2,11 @@ import { Avatar, type AvatarProps } from "#src/components/base/avatar/avatar";
 import type { AgentDisplaySnapshot } from "@lrm/coforge-sdk/internal";
 import { StatusDot } from "#src/components/ui/status-dot";
 import { avatarInitial, avatarToneClassName } from "#src/lib/avatar-tone";
-import { cn } from "#src/lib/utils";
 import { m } from "#src/paraglide/messages";
 import { DELETED_AGENT_AVATAR_CLASS } from "./deleted-agent";
 import { agentDisplay } from "./agent-activity-presentation";
 
 export type AvatarSize = NonNullable<AvatarProps["size"]>;
-
-/** One dot scale per avatar size so the sidebar row and the conversation header read alike. */
-const displayDotClassName: Record<AvatarSize, string> = {
-  xs: "-right-0.5 -bottom-0.5 size-2 border",
-  sm: "-right-1 -bottom-1 size-3 border-2",
-  md: "-right-1 -bottom-1 size-3 border-2",
-  lg: "-right-1 -bottom-1 size-3.5 border-2",
-  xl: "-right-1 -bottom-1 size-4 border-2",
-  "2xl": "-right-1 -bottom-1 size-4 border-2",
-};
 
 export function AgentDisplayAvatar({
   name,
@@ -55,14 +44,12 @@ export function AgentDisplayAvatar({
         src={src}
         initials={avatarInitial(name)}
         contentClassName={deleted ? DELETED_AGENT_AVATAR_CLASS : avatarToneClassName(name)}
+        badge={
+          cornerDot && display && !deleted ? (
+            <StatusDot tone={view.tone} pulse={view.pulse} className="avatar-status-dot absolute" />
+          ) : undefined
+        }
       />
-      {cornerDot && display && !deleted && (
-        <StatusDot
-          tone={view.tone}
-          pulse={view.pulse}
-          className={cn("absolute border-primary", displayDotClassName[size])}
-        />
-      )}
     </span>
   );
 }

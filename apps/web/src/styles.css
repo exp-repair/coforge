@@ -107,3 +107,59 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 
 @import "./styles/coforge-theme.css";
+
+/* Product avatar treatment; the official Avatar source stays unmodified. */
+@layer utilities {
+  [data-avatar].size-4 {
+    --avatar-size: 1rem;
+  }
+
+  [data-avatar].size-5 {
+    --avatar-size: 1.25rem;
+  }
+
+  [data-avatar].size-6 {
+    --avatar-size: 1.5rem;
+  }
+
+  [data-avatar].size-8 {
+    --avatar-size: 2rem;
+  }
+
+  [data-avatar].size-10 {
+    --avatar-size: 2.5rem;
+  }
+
+  [data-avatar].size-12 {
+    --avatar-size: 3rem;
+  }
+
+  [data-avatar].size-14 {
+    --avatar-size: 3.5rem;
+  }
+
+  [data-avatar].size-16 {
+    --avatar-size: 4rem;
+  }
+
+  [data-avatar][class] {
+    border-radius: calc(var(--avatar-size) / 4);
+  }
+
+  [data-avatar] > :first-child {
+    border-radius: inherit;
+    outline: 0.09375rem solid var(--color-border-brand);
+    outline-offset: -0.09375rem;
+  }
+
+  /* Both the official member presence indicator and CoForge's Agent activity dot
+     use the reference's 8px dot / 32px avatar and 1.5px separator proportions. */
+  [data-avatar] > span.ring-bg-primary,
+  [data-avatar] > .avatar-status-dot {
+    right: 0;
+    bottom: 0;
+    width: calc(var(--avatar-size) / 4);
+    height: calc(var(--avatar-size) / 4);
+    box-shadow: 0 0 0 calc(var(--avatar-size) * 0.046875) var(--color-bg-primary);
+  }
+}
