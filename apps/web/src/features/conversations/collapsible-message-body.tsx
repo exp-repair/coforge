@@ -17,8 +17,8 @@ import { messagePlainText } from "./selection-copy";
  *
  * Only bodies that actually overflow get the control, and that is measured rather than inferred
  * from the text: the same 400 characters are three lines wide on a desktop and ten on a phone, and
- * Markdown makes any text-based rule worse — thirteen short headings are thirteen source lines but
- * far more than thirteen rendered ones, and a table or code block owns height its length does not
+ * Markdown makes any text-based rule worse — four short headings are four source lines but
+ * far more than four rendered ones, and a table or code block owns height its length does not
  * predict. So every body is measured; nothing is pre-filtered. A `line-clamp` cannot do this job
  * either (it needs an inline formatting context, and a Markdown body is a stack of block
  * elements), so the collapsed state is a `max-height` on a multiple of the line height, with a
@@ -59,7 +59,7 @@ export function CollapsibleMessageBody({
     // `overflow-hidden` is applied only once we know it overflows, so measuring the clamp would
     // never see an overflow in the first place. `scrollHeight` is the full content height in both
     // states, which also keeps the control visible while expanded — the reader needs the way back.
-    // The collapsed height is thirteen of the body's own lines, read at measure time.
+    // The collapsed height is four of the body's own lines, read at measure time.
     const measure = () =>
       setOverflowing(
         overflowsCollapsedMessage(

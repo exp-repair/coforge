@@ -158,6 +158,31 @@ export function clockLabel(
   }).format(new Date(value));
 }
 
+/**
+ * The time of day without its AM/PM marker ("2:50"), short enough for the avatar-wide gutter beside
+ * a grouped message; the sender's heading above carries the full `clockLabel`. Empty without a
+ * `locale`.
+ */
+export function gutterClockLabel(
+  value: Date | string,
+  locale?: string,
+  timeFormat: TimeFormat | null = null,
+  timeZone?: string,
+): string {
+  if (!locale) return "";
+  return dateTimeFormat(locale, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: hour12For(timeFormat),
+    timeZone,
+  })
+    .formatToParts(new Date(value))
+    .filter((part) => part.type !== "dayPeriod")
+    .map((part) => part.value)
+    .join("")
+    .trim();
+}
+
 /** Whether two consecutive messages collapse into one visual group. */
 export function groupsWithPrevious(
   message: MessageView,
@@ -490,13 +515,13 @@ export function UnreadDivider() {
     <div
       role="separator"
       aria-label={m.conversation_unread_divider()}
-      className="flex items-center gap-3 px-4 py-2 md:px-6"
+      className="message-text flex items-center gap-3 px-4 py-[calc(var(--text-md--line-height)-0.25rem)] md:px-6"
     >
       {/* A neutral rule with the label at its end: the divider marks where reading resumes, so
           it has to be findable, but a coloured bar across the middle of the pane is the loudest
           thing on screen. The day divider above uses the same rule. */}
       <span aria-hidden="true" className="h-px flex-1 bg-secondary" />
-      <span className="shrink-0 text-xs text-brand-secondary">
+      <span className="shrink-0 text-[length:0.75rem] leading-4 text-brand-secondary">
         {m.conversation_unread_divider()}
       </span>
     </div>
@@ -507,9 +532,11 @@ export function UnreadDivider() {
 export function DayDivider({ value, locale }: { value: Date | string; locale?: string }) {
   const timeZone = useTimeZone();
   return (
-    <div className="flex items-center gap-3 px-4 py-2 md:px-6">
+    // `message-text` makes the spacing follow Settings → Message font size: one body line
+    // (24px at 16px text) above and below the label, less the 4px the neighbouring rows add.
+    <div className="message-text flex items-center gap-3 px-4 py-[calc(var(--text-md--line-height)-0.25rem)] md:px-6">
       <span aria-hidden="true" className="h-px flex-1 bg-secondary" />
-      <span className="shrink-0 bg-primary px-2 text-xs text-tertiary tabular-nums">
+      <span className="shrink-0 bg-primary px-2 text-[length:0.75rem] leading-4 text-tertiary tabular-nums">
         {dayLabel(value, locale, timeZone)}
       </span>
       <span aria-hidden="true" className="h-px flex-1 bg-secondary" />
@@ -535,14 +562,18 @@ function MessageAgentAvatar({
   name,
   src,
   deleted,
+  size,
 }: {
   agentId: string;
   name: string;
   src?: string | null;
   deleted: boolean;
+  size: "xs" | "sm";
 }) {
   const display = useLiveAgentDisplay(agentId);
-  return <AgentDisplayAvatar name={name} src={src} display={display} deleted={deleted} size="sm" />;
+  return (
+    <AgentDisplayAvatar name={name} src={src} display={display} deleted={deleted} size={size} />
+  );
 }
 
 /** One history row: optional day divider, then the message with its hover actions. */
@@ -651,6 +682,7 @@ export const MessageRow = memo(function MessageRow({
         name={message.senderName}
         src={message.senderAvatarUrl}
         deleted={deleted}
+        size="sm"
       />
     ) : (
       <Avatar
@@ -855,7 +887,14 @@ export const MessageRow = memo(function MessageRow({
   // shell; the sheet therefore also opens for a message with no thread and no reactions.
   const copyable = Boolean(messagePlainText(message, channelNames).trim());
   return (
-    <li data-message-id={message.id} className={ROW_CLASS}>
+    // A message that starts a new sender run sits 32px (4px row padding on each side + 24px
+    // margin) below the previous one; the margin is on the `li` so the hover background stays
+    // 4px around the content. A grouped continuation keeps only its 4px, and a message under a
+    // day or unread divider takes the divider's own spacing instead.
+    <li
+      data-message-id={message.id}
+      className={cn(ROW_CLASS, !grouped && !dayChanged && !unreadStartsHere && "mt-6 first:mt-0")}
+    >
       {unreadStartsHere && <UnreadDivider />}
       {dayChanged && <DayDivider value={message.createdAt} locale={dateLocale} />}
       <div
@@ -863,19 +902,22 @@ export const MessageRow = memo(function MessageRow({
         data-message={own ? "own" : "other"}
         onClick={openActions}
         className={cn(
-          "group/message relative flex scroll-m-6 gap-3 px-4 transition-[background-color,box-shadow] duration-500 hover:bg-secondary focus-within:bg-secondary target:bg-tertiary target:ring-2 target:ring-brand/50 target:ring-offset-4 target:ring-offset-primary md:px-6",
+          "group/message relative flex scroll-m-6 px-4 transition-[background-color,box-shadow] duration-500 hover:bg-secondary focus-within:bg-secondary target:bg-tertiary target:ring-2 target:ring-brand/50 target:ring-offset-4 target:ring-offset-primary md:px-6",
           highlighted && "bg-tertiary ring-2 ring-brand/50 ring-offset-4 ring-offset-primary",
-          grouped ? "py-0.5" : "py-2",
+          "gap-3",
+          grouped ? "pt-0 pb-1" : "py-1",
         )}
       >
         <div className="flex w-9 shrink-0 items-start justify-center">
           {grouped ? (
-            <time
-              dateTime={new Date(message.createdAt).toISOString()}
-              className="mt-0.5 text-xs text-quaternary tabular-nums opacity-0 group-hover/message:opacity-100 group-focus-within/message:opacity-100"
-            >
-              {clockLabel(message.createdAt, dateLocale, timeFormat, timeZone)}
-            </time>
+            <Tooltip title={clockLabel(message.createdAt, dateLocale, timeFormat, timeZone)}>
+              <time
+                dateTime={new Date(message.createdAt).toISOString()}
+                className="message-text text-[length:0.75rem] leading-[var(--text-md--line-height)] whitespace-nowrap text-quaternary tabular-nums opacity-0 group-hover/message:opacity-100 group-focus-within/message:opacity-100"
+              >
+                {gutterClockLabel(message.createdAt, dateLocale, timeFormat, timeZone)}
+              </time>
+            </Tooltip>
           ) : openableAgentId && onOpenAgentProfile ? (
             <AgentHoverCard
               agentId={openableAgentId}

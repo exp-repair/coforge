@@ -1,9 +1,9 @@
 /** How many lines of a long message body stay visible while it is collapsed. Long enough that an
  * ordinary message is never touched, short enough that one wall of text cannot take over the
  * viewport. */
-const COLLAPSED_MESSAGE_LINES = 13;
+const COLLAPSED_MESSAGE_LINES = 4;
 
-/** The collapsed height as CSS: thirteen lines of the message text's line height, which follows
+/** The collapsed height as CSS: four lines of the message text's line height, which follows
  * both Settings → Text size and Settings → Message font size (`message-markdown.css`). */
 export const COLLAPSED_MESSAGE_MAX_HEIGHT = `calc(${COLLAPSED_MESSAGE_LINES} * var(--text-md--line-height))`;
 
@@ -13,7 +13,7 @@ export function collapsedMessageHeightPx(lineHeightPx: number): number {
 }
 
 /** Whether a body of this full (scroll) height needs collapsing. The 1px slack absorbs sub-pixel
- * rounding of a body that is exactly thirteen lines tall. */
+ * rounding of a body that is exactly four lines tall. */
 export function overflowsCollapsedMessage(scrollHeightPx: number, lineHeightPx: number): boolean {
   return scrollHeightPx > collapsedMessageHeightPx(lineHeightPx) + 1;
 }

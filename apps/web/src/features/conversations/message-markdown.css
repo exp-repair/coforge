@@ -2,7 +2,7 @@
  * Markdown typography for a message body.
  *
  * Message bodies are short and scanned in a narrow column, so this is the same "Compact" tier as
- * the Records rich-text prose (14px body by default, 1.5 line-height; Settings → Message font size
+ * the Records rich-text prose (14px body by default, 18px line height; Settings → Message font size
  * picks 12, 14 or 16px) rather than a document scale. It is
  * a separate stylesheet from the Records editor because that one is scoped to `.rich-text-editor`
  * and carries editor-only affordances (resize handles, selection overlays, node-view wrappers)
@@ -30,7 +30,9 @@
   --text-sm: calc(var(--spacing) * 3.5 * var(--message-font-scale));
   --text-sm--line-height: calc(var(--spacing) * 5 * var(--message-font-scale));
   --text-md: calc(var(--spacing) * 4 * var(--message-font-scale));
-  --text-md--line-height: calc(var(--spacing) * 6 * var(--message-font-scale));
+  /* The body line height is a design value per size (12 → 16px, 14 → 18px, 16 → 24px), not a
+   * multiple of the font size, so the size classes below set it. */
+  --text-md--line-height: 1.125rem;
   --text-lg: calc(var(--spacing) * 4.5 * var(--message-font-scale));
   --text-lg--line-height: calc(var(--spacing) * 7 * var(--message-font-scale));
   --text-xl: calc(var(--spacing) * 5 * var(--message-font-scale));
@@ -39,10 +41,12 @@
 
 .message-font-sm .message-text {
   --message-font-scale: 0.75;
+  --text-md--line-height: 1rem;
 }
 
 .message-font-lg .message-text {
   --message-font-scale: 1;
+  --text-md--line-height: 1.5rem;
 }
 
 /* Block rhythm: one owner per gap, and no stray leading/trailing space in a message row. */

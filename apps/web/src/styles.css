@@ -122,8 +122,12 @@ input[type="search"]::-webkit-search-cancel-button {
     --avatar-size: 1.5rem;
   }
 
+  /* The "sm" step is 36 × 40px (a design decision, not a square). `--avatar-size` stays the taller
+     side so the corner radius and status dot scale from 40px. */
   [data-avatar].size-8 {
-    --avatar-size: 2rem;
+    width: 2.25rem;
+    height: 2.5rem;
+    --avatar-size: 2.5rem;
   }
 
   [data-avatar].size-10 {
@@ -144,6 +148,12 @@ input[type="search"]::-webkit-search-cancel-button {
 
   [data-avatar][class] {
     border-radius: calc(var(--avatar-size) / 4);
+  }
+
+  /* Two avatar components: the small round one ("xs", 24 × 24) and the message one ("sm", 36 × 40,
+     a rounded rectangle). Larger sizes are profile surfaces and keep the rounded square. */
+  [data-avatar].size-6 {
+    border-radius: 9999px;
   }
 
   [data-avatar] > :first-child {

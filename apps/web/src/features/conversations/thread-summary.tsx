@@ -81,9 +81,11 @@ export function ThreadPreview({ rootId, onOpen }: ThreadPartProps) {
       size="sm"
       noTextPadding
       onPress={() => onOpen(rootId)}
-      className="mt-1.5 block h-auto w-full rounded-lg bg-secondary p-2 text-left font-normal hover:bg-secondary_hover"
+      // `message-text` scopes the type scale to Settings → Message font size, as in the message
+      // above it: the sizes below are one step up (`md` is the body size, `sm` the small one).
+      className="message-text mt-1.5 block h-auto w-full rounded-lg bg-secondary p-2 text-left font-normal hover:bg-secondary_hover"
     >
-      <span className="flex items-center gap-0.5 text-sm font-medium text-brand-secondary">
+      <span className="flex items-center gap-0.5 text-md font-medium text-brand-secondary">
         {withUnreadCount(label, unread)}
         <ChevronRight aria-hidden="true" className="size-4" />
       </span>
@@ -103,14 +105,14 @@ export function ThreadPreview({ rootId, onOpen }: ThreadPartProps) {
               }
               className="shrink-0"
             />
-            <span className="shrink-0 text-sm font-medium text-primary">{reply.senderName}</span>
-            <span className="min-w-0 flex-1 truncate text-sm text-secondary">
+            <span className="shrink-0 text-md font-medium text-primary">{reply.senderName}</span>
+            <span className="min-w-0 flex-1 truncate text-md text-secondary">
               {formatBody(reply.body)}
             </span>
             <RelativeTime
               value={reply.createdAt}
               plain
-              className="shrink-0 text-xs whitespace-nowrap text-tertiary"
+              className="shrink-0 text-sm whitespace-nowrap text-tertiary"
             />
           </span>
         ))}

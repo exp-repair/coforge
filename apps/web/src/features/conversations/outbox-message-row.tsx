@@ -103,8 +103,11 @@ export function OutboxMessageRow({
     <span className="shrink-0 text-xs text-tertiary">{m.conversation_sending()}</span>
   );
   return (
-    <li data-outbox-state={entry.state} className="flex flex-col">
-      <div className={cn("flex gap-3 px-4 md:px-6", grouped ? "py-0.5" : "py-2")}>
+    <li
+      data-outbox-state={entry.state}
+      className={cn("flex flex-col", !grouped && "mt-6 first:mt-0")}
+    >
+      <div className={cn("flex px-4 md:px-6", "gap-3", grouped ? "pt-0 pb-1" : "py-1")}>
         <div className="flex w-9 shrink-0 items-start justify-center">
           {!grouped && (
             <Avatar
