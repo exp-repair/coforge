@@ -488,8 +488,8 @@ export function AttachmentCard({ attachment }: { attachment: MessageView["attach
 /**
  * A divider row: one body line of spacing above and below its label (24px at the 16px message
  * size), less the 4px each neighbouring row adds with its own `py-1`. `message-text` scopes
- * `--text-md--line-height` to Settings → Message font size; it would scale `text-xs` too, so the
- * labels pin their size with `text-[length:0.75rem]`.
+ * `--text-md--line-height` to Settings → Message font size, and the labels use that same `text-md`,
+ * so a divider reads at the size of the message text around it.
  */
 const DIVIDER_ROW_CLASS =
   "message-text flex items-center gap-3 px-4 py-[calc(var(--text-md--line-height)-0.25rem)] md:px-6";
@@ -506,7 +506,7 @@ export function UnreadDivider() {
           it has to be findable, but a coloured bar across the middle of the pane is the loudest
           thing on screen. The day divider above uses the same rule. */}
       <span aria-hidden="true" className="h-px flex-1 bg-secondary" />
-      <span className="shrink-0 text-[length:0.75rem] leading-4 text-brand-secondary">
+      <span className="shrink-0 text-md text-brand-secondary">
         {m.conversation_unread_divider()}
       </span>
     </div>
@@ -519,7 +519,7 @@ export function DayDivider({ value, locale }: { value: Date | string; locale?: s
   return (
     <div className={DIVIDER_ROW_CLASS}>
       <span aria-hidden="true" className="h-px flex-1 bg-secondary" />
-      <span className="shrink-0 bg-primary px-2 text-[length:0.75rem] leading-4 text-tertiary tabular-nums">
+      <span className="shrink-0 bg-primary px-2 text-md text-tertiary tabular-nums">
         {dayLabel(value, locale, timeZone)}
       </span>
       <span aria-hidden="true" className="h-px flex-1 bg-secondary" />
