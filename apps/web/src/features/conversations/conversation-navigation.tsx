@@ -249,7 +249,6 @@ export function ConversationNavigation({ children }: { children: ReactNode }) {
                   selectedDmId={openDm?.dmId}
                   selectedSaved={pathname === workspacePath(workspaceSlug, "/saved")}
                   onCreateChannel={() => setCreating(true)}
-                  canStartDirectMessage
                 />
               </div>
               <LiveAgentActivityBar agents={agents} agentDms={directs.agentDms} />

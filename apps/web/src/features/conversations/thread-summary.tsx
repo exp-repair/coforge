@@ -76,16 +76,17 @@ export function ThreadPreview({ rootId, onOpen }: ThreadPartProps) {
   if (!summary?.replyCount) return null;
   const label = replyCountLabel(summary.replyCount);
   return (
+    // The text spans carry `message-text`, which scopes the type scale to Settings → Message font
+    // size as in the message above (so `md` is the body size and `sm` the small one). The
+    // avatars stay outside it: they do not change with that setting.
     <Button
       color="tertiary"
       size="sm"
       noTextPadding
       onPress={() => onOpen(rootId)}
-      // `message-text` scopes the type scale to Settings → Message font size, as in the message
-      // above it: the sizes below are one step up (`md` is the body size, `sm` the small one).
-      className="message-text mt-1.5 block h-auto w-full rounded-lg bg-secondary p-2 text-left font-normal hover:bg-secondary_hover"
+      className="mt-1.5 block h-auto w-full rounded-lg bg-secondary p-2 text-left font-normal hover:bg-secondary_hover"
     >
-      <span className="flex items-center gap-0.5 text-md font-medium text-brand-secondary">
+      <span className="message-text flex items-center gap-0.5 text-md font-medium text-brand-secondary">
         {withUnreadCount(label, unread)}
         <ChevronRight aria-hidden="true" className="size-4" />
       </span>
@@ -105,14 +106,16 @@ export function ThreadPreview({ rootId, onOpen }: ThreadPartProps) {
               }
               className="shrink-0"
             />
-            <span className="shrink-0 text-md font-medium text-primary">{reply.senderName}</span>
-            <span className="min-w-0 flex-1 truncate text-md text-secondary">
+            <span className="message-text shrink-0 text-md font-medium text-primary">
+              {reply.senderName}
+            </span>
+            <span className="message-text min-w-0 flex-1 truncate text-md text-secondary">
               {formatBody(reply.body)}
             </span>
             <RelativeTime
               value={reply.createdAt}
               plain
-              className="shrink-0 text-sm whitespace-nowrap text-tertiary"
+              className="message-text shrink-0 text-sm whitespace-nowrap text-tertiary"
             />
           </span>
         ))}
