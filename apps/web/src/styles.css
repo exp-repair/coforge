@@ -147,9 +147,27 @@ input[type="search"]::-webkit-search-cancel-button {
   }
 
   [data-avatar] > :first-child {
+    position: relative;
     border-radius: inherit;
-    outline: 0.09375rem solid var(--color-border-brand);
-    outline-offset: -0.09375rem;
+  }
+
+  [data-avatar] > :first-child::after {
+    position: absolute;
+    inset: 0;
+    border: 0.09375rem solid transparent;
+    border-radius: inherit;
+    background: linear-gradient(
+        135deg,
+        var(--color-avatar-border-start) 0%,
+        var(--color-avatar-border-end) 100%
+      )
+      border-box;
+    content: "";
+    pointer-events: none;
+    mask:
+      linear-gradient(#fff 0 0) padding-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
   }
 
   /* Both the official member presence indicator and CoForge's Agent activity dot
