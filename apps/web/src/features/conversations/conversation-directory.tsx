@@ -14,6 +14,7 @@ import { useWorkspaceSlug } from "#src/features/workspaces/workspace-route";
 import { cx } from "#src/utils/cx";
 import { m } from "#src/paraglide/messages";
 import { useChannelUnreadCounts, useCloseConversationList } from "./conversation-navigation";
+import { StartDirectMessagePopover } from "./start-direct-message-popover";
 import { useSavedEntries } from "./conversation-host";
 import { ConversationRowMenu } from "./conversation-row-menu";
 import { conversationRowMenuEnabled } from "./conversation-row-menu-model";
@@ -223,7 +224,7 @@ export function ConversationDirectory({
   selectedDmId,
   selectedSaved,
   onCreateChannel,
-  onStartDirectMessage,
+  canStartDirectMessage,
 }: {
   channels: DirectoryChannel[];
   agents: LiveAgent[];
@@ -239,8 +240,8 @@ export function ConversationDirectory({
   selectedSaved?: boolean;
   /** Opens the create-channel flow from the "+" next to the CHANNELS caption. */
   onCreateChannel?: () => void;
-  /** Opens the Agent and Human picker from the "+" next to DIRECT MESSAGES. */
-  onStartDirectMessage?: () => void;
+  /** Shows the "+" next to DIRECT MESSAGES, which opens the Agent and Human picker. */
+  canStartDirectMessage?: boolean;
 }) {
   const unreadCounts = useChannelUnreadCounts();
   const savedCount = useSavedEntries()?.length;
@@ -469,7 +470,7 @@ export function ConversationDirectory({
       <div
         className={cx(
           "mt-4",
-          !onStartDirectMessage &&
+          !canStartDirectMessage &&
             directorySectionHideable({ itemCount: base.agents.length, dragging: drag.dragging }) &&
             EMPTY_SECTION_HIDDEN_CLASS,
         )}
@@ -478,19 +479,7 @@ export function ConversationDirectory({
           label={m.messages_agents_action()}
           expanded={!collapsed.includes("agents")}
           onToggle={() => toggle("agents")}
-          action={
-            onStartDirectMessage ? (
-              <ButtonUtility
-                icon={Plus}
-                size="xs"
-                color="tertiary"
-                tooltip={m.conversation_start_direct()}
-                aria-label={m.conversation_start_direct()}
-                onClick={onStartDirectMessage}
-                className="shrink-0 hover:bg-transparent!"
-              />
-            ) : undefined
-          }
+          action={canStartDirectMessage ? <StartDirectMessagePopover /> : undefined}
         >
           <div className="px-4 pb-3">
             <DirectoryDropList

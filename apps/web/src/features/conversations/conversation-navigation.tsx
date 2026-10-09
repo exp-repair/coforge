@@ -25,7 +25,6 @@ import {
 } from "#src/features/agents/workspace-agents-realtime";
 import { useWorkspaceSlug } from "#src/features/workspaces/workspace-route";
 import { CreateChannelDialog } from "./create-channel-dialog";
-import { StartDirectMessageDialog } from "./start-direct-message-dialog";
 import {
   channelNamesQuery,
   directConversationQuery,
@@ -98,7 +97,6 @@ export function ConversationNavigation({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [browsing, setBrowsing] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [startingDirect, setStartingDirect] = useState(false);
   // The projects a new channel can join: read when the dialog opens, not on every navigation.
   const projects = useQuery({ ...projectsQuery(workspaceId ?? ""), enabled: creating }).data;
   const create = useServerFn(createPublicChannel);
@@ -251,7 +249,7 @@ export function ConversationNavigation({ children }: { children: ReactNode }) {
                   selectedDmId={openDm?.dmId}
                   selectedSaved={pathname === workspacePath(workspaceSlug, "/saved")}
                   onCreateChannel={() => setCreating(true)}
-                  onStartDirectMessage={() => setStartingDirect(true)}
+                  canStartDirectMessage
                 />
               </div>
               <LiveAgentActivityBar agents={agents} agentDms={directs.agentDms} />
@@ -281,7 +279,6 @@ export function ConversationNavigation({ children }: { children: ReactNode }) {
               }}
             />
           )}
-          {startingDirect && <StartDirectMessageDialog onOpenChange={setStartingDirect} />}
         </UnreadContext>
       </ConversationHostProvider>
     </ConversationListContext>
