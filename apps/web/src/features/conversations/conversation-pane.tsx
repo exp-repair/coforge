@@ -904,8 +904,9 @@ export function ConversationPane({
             {threadMarker && (
               // Where the replies begin and how many there are; notices count, since they are
               // replies in this thread too. The pane always holds the whole thread, so this is
-              // the top of the replies, never a load-older point.
-              <div className="px-4 pt-2 text-center text-sm text-tertiary md:px-6">
+              // the top of the replies, never a load-older point. `message-text` makes it read at the
+              // size of the messages under it (Settings → Message font size).
+              <div className="message-text px-4 pt-2 text-center text-md text-tertiary md:px-6">
                 <p className="pb-1">{m.conversation_thread_beginning()}</p>
                 <p className="border-b border-secondary pb-2">
                   {replyCountLabel(visibleMessages.length + shownOutbox.length)}
