@@ -37,7 +37,6 @@ import {
   readLiveAgentActivity,
   writeLiveAgentActivity,
 } from "#src/features/settings/live-agent-activity";
-import { readTextSize, writeTextSize, type TextSizeValue } from "#src/features/settings/text-size";
 import {
   conversationOpenMode,
   type ConversationOpenMode,
@@ -108,7 +107,6 @@ function SettingsPage() {
   const [railLabels, setRailLabels] = useState(true);
   const [liveAgentActivity, setLiveAgentActivity] = useState(true);
   const [hideEmptySidebarSections, setHideEmptySidebarSections] = useState(false);
-  const [textSize, setTextSize] = useState<TextSizeValue>("default");
   const [messageFullWidth, setMessageFullWidth] = useState(false);
   const { section, github } = Route.useSearch();
   const { workspaceSlug } = Route.useParams();
@@ -152,7 +150,6 @@ function SettingsPage() {
     setRailLabels(readRailLabels());
     setLiveAgentActivity(readLiveAgentActivity());
     setHideEmptySidebarSections(readHideEmptySidebarSections());
-    setTextSize(readTextSize());
     setMessageFullWidth(readMessageFullWidth());
   }, []);
 
@@ -199,11 +196,6 @@ function SettingsPage() {
   function changeMessageFullWidth(full: boolean) {
     setMessageFullWidth(full);
     writeMessageFullWidth(full);
-  }
-
-  function changeTextSize(next: TextSizeValue) {
-    setTextSize(next);
-    writeTextSize(next);
   }
 
   function changeTheme(nextTheme: Theme) {
@@ -367,10 +359,8 @@ function SettingsPage() {
       onLiveAgentActivityChange={changeLiveAgentActivity}
       hideEmptySidebarSections={hideEmptySidebarSections}
       onHideEmptySidebarSectionsChange={changeHideEmptySidebarSections}
-      textSize={textSize}
       messageFullWidth={messageFullWidth}
       onMessageFullWidthChange={changeMessageFullWidth}
-      onTextSizeChange={changeTextSize}
       onDateTimeSave={changeDateTime}
       conversationOpenMode={conversationOpenMode(savedOpenMode)}
       onConversationOpenModeChange={changeConversationOpenMode}

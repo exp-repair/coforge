@@ -6,7 +6,7 @@ import { cx } from "#src/utils/cx";
 // the demo hardcodes Untitled's own logo/account card with no override
 // props. Desktop keeps the rail visible; mobile uses a separate wide drawer.
 
-/** 70px at the default text size; rem so the rail grows with the Text size preference. */
+/** 70px at the default text size; rem so the rail grows with the browser's font size. */
 export const SIDEBAR_RAIL_WIDTH = "4.375rem";
 
 type RailItemType = NavItemType & { icon: FC<{ className?: string }>; current?: boolean };

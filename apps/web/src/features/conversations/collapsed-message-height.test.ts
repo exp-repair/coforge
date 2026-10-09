@@ -7,7 +7,7 @@ describe("collapsed message height", () => {
     expect(collapsedMessageHeightPx(21)).toBe(84);
   });
 
-  test("grows with the line height so a larger Message font size or Text size keeps four lines", () => {
+  test("grows with the line height so a larger Message font size keeps four lines", () => {
     expect(collapsedMessageHeightPx(24)).toBe(96);
   });
 

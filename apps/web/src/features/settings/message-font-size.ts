@@ -22,7 +22,7 @@ export function messageFontSizeClass(size: MessageFontSize): string | undefined 
 export const MESSAGE_FONT_SIZE_BOOT = `var messageFontSize=localStorage.getItem("${STORAGE_KEY}");if(messageFontSize==="sm"||messageFontSize==="lg"){document.documentElement.classList.add(${JSON.stringify(CLASSES)}[messageFontSize])}`;
 
 /** Per-device preference: the size of rendered message text (body, headings, code, chips). The
- * rest of the UI keeps its size; Settings → Text size scales everything, this on top of it. */
+ * rest of the UI keeps its size. */
 const preference = createDevicePreference<MessageFontSize>({
   key: STORAGE_KEY,
   parse: parseMessageFontSize,

@@ -4,7 +4,7 @@
 const COLLAPSED_MESSAGE_LINES = 4;
 
 /** The collapsed height as CSS: four lines of the message text's line height, which follows
- * both Settings → Text size and Settings → Message font size (`message-markdown.css`). */
+ * Settings → Message font size (`message-markdown.css`). */
 export const COLLAPSED_MESSAGE_MAX_HEIGHT = `calc(${COLLAPSED_MESSAGE_LINES} * var(--text-md--line-height))`;
 
 /** The collapsed height in px for the body's computed line height. */

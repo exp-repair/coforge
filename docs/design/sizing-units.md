@@ -2,7 +2,7 @@
 
 一句话：**会影响排版和阅读的尺寸用 rem，细线用 px。**
 
-原因：设置里的「文字大小」（`features/settings/text-size.ts`）通过改 `<html>` 的 `font-size` 缩放整个界面，浏览器和系统的默认字号设置也只作用于根字号。rem 是根字号的倍数，会跟着一起缩放；px 是固定值，不会。文字变大而 px 写死的宽度、间距不变，就会换行变多、挤压或溢出（[WCAG 1.4.4 Resize Text](https://www.w3.org/WAI/WCAG22/Understanding/resize-text.html)）。
+原因：浏览器和系统的默认字号设置只作用于根字号（`<html>` 的 `font-size`）。rem 是根字号的倍数，会跟着一起缩放；px 是固定值，不会。文字变大而 px 写死的宽度、间距不变，就会换行变多、挤压或溢出（[WCAG 1.4.4 Resize Text](https://www.w3.org/WAI/WCAG22/Understanding/resize-text.html)）。
 
 ## 用 rem
 
@@ -10,7 +10,7 @@
 
 - 首选 Tailwind 刻度，它本身就是 rem：Tailwind v4 的 `--spacing` 是 `0.25rem`，`p-4` = 1rem，`size-12` = 3rem；`theme.css` 的字号是 `--spacing` 的倍数（`text-sm` = 0.875rem）；圆角用 `rounded-md/lg/xl` 等 token（`--radius-*` 是 rem）。
 - 刻度里没有的值写 rem 任意值：`w-[18rem]`、`md:grid-cols-[repeat(auto-fill,minmax(18rem,1fr))]`、`max-w-[36rem]`。不写 `w-[280px]`、`text-[10px]`、`rounded-[10px]`。
-- 断点用 Tailwind 的 `sm/md/lg/xl` 刻度，不写 `min-[1024px]:`。注意媒体查询里的 rem 取浏览器默认字号，不随应用内「文字大小」变化；用刻度断点是为了全站一致。`xs`/`xxs` 是 `theme.css` 定义的 px 断点，照用即可。窗格宽度决定布局时（例如旁边打开了资料面板），用容器查询 `@container` 而不是视口断点。
+- 断点用 Tailwind 的 `sm/md/lg/xl` 刻度，不写 `min-[1024px]:`。注意媒体查询里的 rem 取浏览器默认字号，不随浏览器的字号设置变化；用刻度断点是为了全站一致。`xs`/`xxs` 是 `theme.css` 定义的 px 断点，照用即可。窗格宽度决定布局时（例如旁边打开了资料面板），用容器查询 `@container` 而不是视口断点。
 - 内联 `style` 里的数字在 React 中按 px 处理：`style={{ paddingLeft: 16 }}` 是 16px。要写成 rem 字符串，例如树形缩进 `style={{ paddingLeft: `${0.25 + (level - 1)}rem` }}`，或改用 CSS 变量加 Tailwind 类。
 - 自写 CSS 文件同样适用：`max-height: 18.75rem`，不写 `max-height: 300px`。
 
@@ -32,7 +32,7 @@
 
 ## 文档里的像素数
 
-本文里写的 `48px`、`36px` 这类数字，是默认文字大小（根字号 16px）下对应 Tailwind 类的换算，方便对照设计稿（`h-12` = 3rem = 48px）。实现时写括号里的 Tailwind 类，不要照着数字写 `h-[48px]`。
+本文里写的 `48px`、`36px` 这类数字，是默认字号（根字号 16px）下对应 Tailwind 类的换算，方便对照设计稿（`h-12` = 3rem = 48px）。实现时写括号里的 Tailwind 类，不要照着数字写 `h-[48px]`。
 
 ## 存量
 

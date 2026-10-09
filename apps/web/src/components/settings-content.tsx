@@ -45,7 +45,6 @@ import {
 import { WORKSPACE_NAME_MAX_LENGTH } from "#src/features/workspaces/workspace.schemas";
 import { IMAGE_MAX_BYTES, IMAGE_UPLOAD_TYPES } from "#src/lib/image-upload";
 import { GitHubSettings } from "#src/features/integrations/github-settings";
-import { TEXT_SIZE_OPTIONS, type TextSizeValue } from "#src/features/settings/text-size";
 import {
   MESSAGE_FONT_SIZES,
   parseMessageFontSize,
@@ -111,7 +110,6 @@ interface SettingsContentProps {
   railLabels: boolean;
   liveAgentActivity: boolean;
   hideEmptySidebarSections: boolean;
-  textSize: TextSizeValue;
   messageFullWidth: boolean;
   timeZone: string | null;
   timeFormat: TimeFormat | null;
@@ -132,7 +130,6 @@ interface SettingsContentProps {
   onMessageFullWidthChange: (full: boolean) => void;
   onLiveAgentActivityChange: (show: boolean) => void;
   onHideEmptySidebarSectionsChange: (hide: boolean) => void;
-  onTextSizeChange: (size: TextSizeValue) => void;
   onDateTimeSave: (input: {
     timeZone: string | null;
     timeFormat: TimeFormat | null;
@@ -648,20 +645,11 @@ function Preferences({
   onLiveAgentActivityChange,
   hideEmptySidebarSections,
   onHideEmptySidebarSectionsChange,
-  textSize,
-  onTextSizeChange,
   messageFullWidth,
   onMessageFullWidthChange,
   conversationOpenMode,
   onConversationOpenModeChange,
 }: SettingsContentProps) {
-  const textSizeLabels: Record<TextSizeValue, string> = {
-    sm: m.preferences_text_size_small(),
-    default: m.preferences_text_size_default(),
-    lg: m.preferences_text_size_large(),
-    xl: m.preferences_text_size_extra_large(),
-    xxl: m.preferences_text_size_huge(),
-  };
   const savedOnDevice = m.preferences_saved_on_device();
   const [messageFontSize, setMessageFontSize] = useMessageFontSize();
   const [showAgentModel, setShowAgentModel] = useShowAgentModel();
@@ -700,35 +688,6 @@ function Preferences({
                 {m.preferences_dark()}
               </ButtonGroupItem>
             </ButtonGroup>
-          </SettingsField>
-        </SettingsCard>
-        <SettingsCard>
-          <SettingsField
-            label={m.preferences_text_size()}
-            description={m.preferences_text_size_description()}
-            note={savedOnDevice}
-          >
-            <Select
-              aria-label={m.preferences_text_size()}
-              className="max-w-sm"
-              value={textSize}
-              onChange={(key) => {
-                if (key !== null) onTextSizeChange(String(key) as TextSizeValue);
-              }}
-            >
-              {TEXT_SIZE_OPTIONS.map(({ value, percent }) => (
-                <SelectItem
-                  key={value}
-                  id={value}
-                  label={textSizeLabels[value]}
-                  supportingText={
-                    value === "default"
-                      ? m.preferences_text_size_default_hint()
-                      : m.preferences_text_size_percent({ percent })
-                  }
-                />
-              ))}
-            </Select>
           </SettingsField>
         </SettingsCard>
         <SettingsCard>
