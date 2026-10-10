@@ -184,7 +184,15 @@ export class WorkspaceMembers {
       }),
       this.db.agent.findMany({
         where: visibleAgents,
-        select: { id: true, name: true, displayName: true, avatarObjectKey: true, ownerId: true },
+        select: {
+          id: true,
+          name: true,
+          displayName: true,
+          avatarObjectKey: true,
+          ownerId: true,
+          visibility: true,
+          weeklyReportAssistant: { select: { id: true } },
+        },
         orderBy: [{ name: "asc" }, { id: "asc" }],
       }),
       // The viewer's own direct conversations, with Agents and with members, so a picker can open
@@ -234,6 +242,10 @@ export class WorkspaceMembers {
         /** The Web opens an Agent's direct conversation only for its owner
          * (`DirectConversations.authorize`). */
         ownedByCurrentUser: agent.ownerId === userId,
+        /** Visibility and the weekly-report flag, so a channel picker offers only the Agents a
+         * channel can take (`PublicChannels.addMembers`). */
+        visibility: agent.visibility,
+        weeklyReportAssistant: agent.weeklyReportAssistant !== null,
         /** The viewer's direct conversation with this Agent (`dm/<id>`), once there is one. */
         dmId: dmByAgent.get(agent.id) ?? null,
       })),

@@ -267,15 +267,31 @@ export function ConversationNavigation({ children }: { children: ReactNode }) {
               open={creating}
               onOpenChange={setCreating}
               projects={projects}
-              onCreate={async (name, projectId) => {
-                const result = await create({ data: { name, projectId } });
-                // Only the channel list and names changed: re-read those before opening it.
-                await refreshSidebar(["channels", "channelNames"]);
-                await router.navigate({
-                  to: "/w/$workspaceSlug/channel/$channelId",
-                  params: { workspaceSlug, channelId: result.id },
+              memberPicker
+              minMembers={2}
+              onCreate={async (name, projectId, memberUserIds, memberAgentIds) => {
+                const created = await create({
+                  data: {
+                    name,
+                    projectId,
+                    userIds: memberUserIds ?? [],
+                    agentIds: memberAgentIds ?? [],
+                  },
                 });
+                // Only the channel list and names changed: re-read those. A failed re-read leaves
+                // the channel created, so it is reported as such rather than failing the create.
+                const sidebarRefreshed = await refreshSidebar(["channels", "channelNames"]).then(
+                  () => true,
+                  () => false,
+                );
+                return { ...created, sidebarRefreshed };
               }}
+              onOpenChannel={(channelId) =>
+                router.navigate({
+                  to: "/w/$workspaceSlug/channel/$channelId",
+                  params: { workspaceSlug, channelId },
+                })
+              }
             />
           )}
         </UnreadContext>

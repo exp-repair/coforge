@@ -198,8 +198,8 @@ These rules apply to `src/features/conversations/`.
   it as a load failure.
 - Leaving a channel reuses the never-joined read-only conversation state and
   `joined: false` in the channel list. Do not add a separate "left" state.
-- A human commits an action card through the existing `CreateChannelDialog`,
-  `AgentCreateDialog`, or `ChannelMembersDialog` (used only for this) with
-  their preselect/commit props. Do not build card-specific creation forms.
+- A human commits an action card through `CreateChannelDialog`, `AgentCreateDialog`, or
+  `ChannelMembersDialog` with their preselect/commit props; the sidebar "+" is the dialog's
+  `memberPicker` mode (public Agents only). Do not build card-specific creation forms.
 - The browser refreshes only the pending action cards it shows, through
   `loadActionCardStates` on the `messageAvailable` signal and on window focus.

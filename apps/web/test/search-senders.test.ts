@@ -16,6 +16,8 @@ const directory = {
       handle: "atlas",
       avatarUrl: null,
       ownedByCurrentUser: true,
+      visibility: "public",
+      weeklyReportAssistant: false,
       dmId: null,
     },
     {
@@ -24,6 +26,8 @@ const directory = {
       handle: "a-very-long-generated-agent-handle-name",
       avatarUrl: null,
       ownedByCurrentUser: false,
+      visibility: "public",
+      weeklyReportAssistant: false,
       dmId: null,
     },
   ],

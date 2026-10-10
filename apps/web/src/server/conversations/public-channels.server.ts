@@ -988,6 +988,37 @@ export class PublicChannels {
   }
 
   /**
+   * Creates a channel, then adds the people and Agents picked for it through `addMembers`, under
+   * the creator's own authority. The channel is not rolled back when the add is refused: the
+   * caller gets its id and `membersAddFailed`, and an add refused as a whole adds nobody.
+   */
+  async createWithMembers(
+    workspaceId: string,
+    userId: string,
+    input: { name: string; projectId?: string; userIds: string[]; agentIds: string[] },
+  ): Promise<{ id: string; membersAddFailed: boolean }> {
+    const { id } = await this.create(workspaceId, userId, input.name, input.projectId);
+    if (input.userIds.length === 0 && input.agentIds.length === 0)
+      return { id, membersAddFailed: false };
+    try {
+      await this.addMembers(workspaceId, { userId }, id, {
+        userIds: input.userIds,
+        agentIds: input.agentIds,
+      });
+      return { id, membersAddFailed: false };
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          event: "channel_create:members_add_failed",
+          channelId: id,
+          code: isAppError(error) ? error.code : "unknown",
+        }),
+      );
+      return { id, membersAddFailed: true };
+    }
+  }
+
+  /**
    * Promotes/demotes a channel member's stored `channelRole`. Human-only: there is
    * no Agent command for changing channel roles (stated in `agent-instructions.ts`). The actor
    * needs `manage_roles` — Workspace owner/admin, or channel
