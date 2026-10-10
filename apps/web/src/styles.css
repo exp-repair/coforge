@@ -152,6 +152,14 @@ input[type="search"]::-webkit-search-cancel-button {
     border-radius: 9999px;
   }
 
+  /* The Direct messages row's avatar: the "sm" step scaled to 44 × 48px. Its radius and status dot
+     still follow `--avatar-size`. */
+  [data-avatar].avatar-dm {
+    width: 2.75rem;
+    height: 3rem;
+    --avatar-size: 3rem;
+  }
+
   [data-avatar] > :first-child {
     position: relative;
     border-radius: inherit;

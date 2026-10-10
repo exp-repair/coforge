@@ -59,8 +59,11 @@ These rules apply to `src/features/conversations/`.
   (optimistic; a saved change is written into the synced list, a failed save rolls it back); never
   `router.invalidate` for a sidebar change. A message that brings a closed or unlisted chat in
   re-reads only its own list (`closedConversationLists`), plus the Agent roster for a new Agent
-  (`unknownAgentOf`). A change made outside the sidebar on this page (a channel's creation, rename
-  or archive, or leaving, muting or pinning it from the settings panel) re-reads the channel list
+  (`unknownAgentOf`). A top-level message in a DM the sidebar already lists re-reads only the
+  DM list (`directRowRefreshLists`), so its row's last message and preview stay current, whether
+  the viewer or the other side wrote it. A change made outside the sidebar on this page (a
+  channel's creation, rename or archive, or leaving, muting or pinning it from the settings panel)
+  re-reads the channel list
   through `useRefreshSidebarChannels`. The viewer's own changes elsewhere arrive as a `ViewerEvent`
   on their `chat:user:` channel (Slack's `channel_marked`, `channel_joined`, `im_marked`,
   `im_created`, `pref_change`, `star_added`, `star_removed`): a read sets the badge from the

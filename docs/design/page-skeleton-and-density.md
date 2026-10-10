@@ -13,7 +13,7 @@
 ## 密度
 
 - 字号按[第 14 节](typography.md)的八档和使用场景选：`text-sm`（14px）用于小标题、预览行和用户名，`text-md`（16px）用于标题、正文和导航，`text-xs`（12px）用于代码和时间信息。对话消息正文跟随设置 → Message font size（12/14/16px，默认 14px，见 `message-markdown.css`）。
-- 列表行高 40 到 48px，字段行高 44px，表格行高 44px。
+- 列表行高 40 到 48px，字段行高 44px，表格行高 44px。例外：私聊行带预览行时是两行，头像 48px 加 p-2，约 64px（按设计稿）。
 - section 之间 `border-secondary`，section 内边距 `py-6 px-8`。
 - 页面能一屏看完的，不要让它两屏。
 

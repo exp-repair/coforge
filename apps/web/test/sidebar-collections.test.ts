@@ -46,7 +46,11 @@ async function sidebarWith(overrides: Partial<SidebarApi> = {}, { synced = true 
     channels: [channel("general"), channel("random", { unreadCount: 2 })],
     preferences: {
       conversations: [
-        { conversationId: "dm-helper", peer: { kind: "agent" as const, agentId: "helper" } },
+        {
+          conversationId: "dm-helper",
+          peer: { kind: "agent" as const, agentId: "helper" },
+          lastMessage: null,
+        },
         {
           conversationId: "dm-grace",
           peer: {
@@ -56,6 +60,7 @@ async function sidebarWith(overrides: Partial<SidebarApi> = {}, { synced = true 
             displayName: "Grace",
             avatarUrl: null,
           },
+          lastMessage: null,
         },
       ],
       pinned: [{ conversationId: "dm-helper", sortOrder: 0 }],
