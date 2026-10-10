@@ -29,8 +29,8 @@ test("no members means no tiles", () => {
   expect(collageLayout(0)).toEqual([]);
 });
 
-test("one member has no collage: the row shows the channel icon instead", () => {
-  expect(collageLayout(1)).toEqual([]);
+test("one member fills the whole frame with that member's avatar", () => {
+  expect(collageLayout(1)).toEqual([{ row: [1, 3], column: [1, 7] }]);
 });
 
 test("two members sit side by side, each half the width and the full height", () => {
@@ -78,8 +78,8 @@ test("six members form three over three", () => {
   ]);
 });
 
-test("every count from two to six covers the grid exactly once with one tile per member", () => {
-  for (let count = 2; count <= 6; count++) {
+test("every count from one to six covers the grid exactly once with one tile per member", () => {
+  for (let count = 1; count <= 6; count++) {
     const tiles = collageLayout(count);
     expect(tiles).toHaveLength(count);
     expectFullCover(tiles);

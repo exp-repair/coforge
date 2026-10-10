@@ -1,7 +1,7 @@
 /**
  * Where each member tile of a channel's collage avatar sits. The frame is a 6-column by 2-row grid,
- * and every count fills it exactly: 2 are side by side, 3 are a full-width tile over two halves,
- * 4 are a 2 by 2 grid, 5 are three thirds over two halves, 6 are three over three. Fewer than two
+ * and every count fills it exactly: 1 is one tile, 2 are side by side, 3 are a full-width tile over
+ * two halves, 4 are a 2 by 2 grid, 5 are three thirds over two halves, 6 are three over three. No
  * members has no collage (`[]`): the row shows the channel's icon instead.
  * `row` and `column` are CSS grid lines, `[start, end)`, starting at 1.
  */
@@ -11,7 +11,7 @@ export const COLLAGE_MAX_TILES = 6;
 
 const LAYOUTS: readonly (readonly CollageTile[])[] = [
   [],
-  [],
+  [{ row: [1, 3], column: [1, 7] }],
   [
     { row: [1, 3], column: [1, 4] },
     { row: [1, 3], column: [4, 7] },

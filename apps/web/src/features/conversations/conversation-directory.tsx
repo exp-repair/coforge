@@ -109,8 +109,8 @@ function MentionBadge() {
 
 // A local row (not NavItemBase — its `icon` slot hardcodes size-5 and can't
 // take an Avatar). The icon sets its own column width: a 44px avatar (a DM's avatar, or a channel's
-// collage with two or more members) in a two-line row (`lastMessage` given), and a 20px icon for
-// Saved and for a channel with fewer than two members. A two-line row has a second line with the
+// collage with one or more members) in a two-line row (`lastMessage` given), and a 20px icon for
+// Saved and for a channel with no member. A two-line row has a second line with the
 // last message's preview under its name. Both share the text start and the current/hover
 // treatment. A channel's selected row is a card (`card`).
 function ConversationRow({
