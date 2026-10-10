@@ -25,6 +25,11 @@ import {
 import { resolveCollectWindow } from "#src/features/records/weekly-report-collect-window";
 import { RecordCatalog } from "./record-catalog.server";
 import { resolveLatestChatSessionId } from "./weekly-report-assistant-chat-session.server";
+import {
+  formatMemoryPromptSection,
+  memoryForPrompt,
+  parseStoredWeeklyReportMemory,
+} from "./weekly-report-memory.server";
 
 /** Wake text for a per-Computer collector Agent (ADR 0032). */
 export function buildCollectorWakeBody(input: {
@@ -81,6 +86,10 @@ export function buildCollectSynthesizerWakeText(input: {
   }>;
   /** Side-chat revision notes (e.g. 「更概括一些」) for a re-synthesize. */
   userGuidance?: string | null;
+  memoryPrompt?: {
+    writingHabits: readonly string[];
+    openThreads: ReadonlyArray<{ title: string; status: "open" | "done" }>;
+  };
 }): string {
   const board = input.slots
     .map((slot) => {
@@ -113,6 +122,7 @@ export function buildCollectSynthesizerWakeText(input: {
     "",
     "## 可用采集包",
     packs || "(无)",
+    ...(input.memoryPrompt ? ["", formatMemoryPromptSection(input.memoryPrompt)] : []),
   ].join("\n");
 }
 
@@ -468,6 +478,10 @@ async function wakeCollectSynthesizer(
       subjectType: "report",
       subjectId: input.reportId,
     }));
+  const assistant = await db.weeklyReportAssistant.findUnique({
+    where: { workspaceId_userId: { workspaceId: input.workspaceId, userId: input.userId } },
+    select: { memory: true },
+  });
   const { openWeeklyReportAssistantChat } = await import("./weekly-report-assistant-chat.server");
   const chat = openWeeklyReportAssistantChat(db);
   await chat.postRequest({
@@ -482,6 +496,7 @@ async function wakeCollectSynthesizer(
       reportId: input.reportId,
       runId: input.runId,
       userGuidance: input.userGuidance,
+      memoryPrompt: memoryForPrompt(parseStoredWeeklyReportMemory(assistant?.memory)),
       slots: detailed.slots.map((slot) => ({
         computerLabel: slot.computerLabel,
         status: slot.status,
