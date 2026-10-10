@@ -189,6 +189,13 @@ const fixtures = [
         hidden: false,
         pinned: false,
         pinSortOrder: null,
+        lastMessage: {
+          createdAt: "2026-10-09T08:00:00.000Z",
+          preview: "Ship the fix",
+          sender: { kind: "user" as const, name: "Ada", mine: false },
+        },
+        members: [{ kind: "user" as const, id: "user-1", name: "Ada", avatarUrl: null }],
+        mentioned: false,
       },
     ],
   }),
@@ -294,6 +301,17 @@ const PINNED_SHAPES: Record<number, Record<string, string>> = {
     "direct window with an Agent": "97ae348e063eecb4",
     "direct window with a person": "0d0d6367b901566a",
     "sidebar channels": "0b5b17a03f4362f8",
+    "sidebar directs": "5205999212e744be",
+    "channel names": "331d221481674004",
+    "saved messages": "af3437c73adfddaa",
+  },
+  // A channel row carries its last message (`null` with none), its collage members and whether the
+  // viewer is mentioned in it.
+  4: {
+    "channel window": "44676fdb14e4f430",
+    "direct window with an Agent": "97ae348e063eecb4",
+    "direct window with a person": "0d0d6367b901566a",
+    "sidebar channels": "91afa2f21eb4ec87",
     "sidebar directs": "5205999212e744be",
     "channel names": "331d221481674004",
     "saved messages": "af3437c73adfddaa",

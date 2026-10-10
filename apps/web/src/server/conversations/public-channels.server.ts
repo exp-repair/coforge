@@ -34,6 +34,7 @@ import { AgentInboxPurgePublisher } from "#src/server/agents/agent-inbox-purge.s
 import { channelThreadRootWhere } from "#src/server/db/message-anchor.server";
 import { AGENT_VISIBILITY } from "#src/features/agents/agent-visibility";
 import { agentMessageSender } from "./sender-display.server";
+import { channelListPreviews } from "./channel-list-preview.server";
 import {
   browserMessageFields,
   mapBrowserMessage,
@@ -382,6 +383,17 @@ export async function enrollThreadReplyFollowers(
     })),
     skipDuplicates: true,
   });
+}
+
+/**
+ * A channel the viewer closed and did not pin: its row leaves the list unless a newer message
+ * reopens it (`arrivedSinceClosed`). A channel that is not closed, or is pinned, is always listed.
+ */
+function isClosedAndUnpinned(channel: {
+  members: readonly { hiddenAt: Date | null; pins: readonly unknown[] }[];
+}): boolean {
+  const member = channel.members[0];
+  return member?.hiddenAt != null && member.pins.length === 0;
 }
 
 /** Workspace-visible history with per-Agent notification preferences. */
@@ -786,43 +798,51 @@ export class PublicChannels {
 
   async list(workspaceId: string, userId: string) {
     await this.authorize(workspaceId, userId);
-    const [channels, unread] = await Promise.all([
-      this.db.conversation.findMany({
-        where: { workspaceId, channelName: { not: null }, ...VISIBLE_CONVERSATION_WHERE },
-        orderBy: { channelName: "asc" },
-        select: {
-          id: true,
-          channelName: true,
-          archivedAt: true,
-          members: {
-            where: { userId, ...ACTIVE_MEMBER_WHERE },
-            select: {
-              id: true,
-              channelMuted: true,
-              // Slack-style unread cursor. Thread replies belong to their thread
-              // target and never advance it, so they never count in the channel badge.
-              readThroughSequence: true,
-              // Forced unread (`mark as unread`) and per-member hide/close, plus this member's
-              // pin order — the three member-level facts the conversation list renders (#121/#122).
-              unreadFromSequence: true,
-              hiddenAt: true,
-              pins: { select: { sortOrder: true } },
-            },
+    const channelRows = this.db.conversation.findMany({
+      where: { workspaceId, channelName: { not: null }, ...VISIBLE_CONVERSATION_WHERE },
+      orderBy: { channelName: "asc" },
+      select: {
+        id: true,
+        channelName: true,
+        archivedAt: true,
+        members: {
+          where: { userId, ...ACTIVE_MEMBER_WHERE },
+          select: {
+            id: true,
+            channelMuted: true,
+            // Slack-style unread cursor. Thread replies belong to their thread
+            // target and never advance it, so they never count in the channel badge.
+            readThroughSequence: true,
+            // Forced unread (`mark as unread`) and per-member hide/close, plus this member's
+            // pin order — the three member-level facts the conversation list renders (#121/#122).
+            unreadFromSequence: true,
+            hiddenAt: true,
+            pins: { select: { sortOrder: true } },
           },
         },
-      }),
-      // One query for every channel's unread: other-authored top-level messages past the
-      // member's own read cursor, or from their mark-as-unread marker when that is lower.
-      // System messages (no sender member) and the viewer's own messages are already-read by
-      // definition; a soft-left membership has no badge. The count is a LATERAL per membership
-      // with a single lower bound, so it is an index range on `messages(conversationId,
-      // sequence)` covering only the unread tail; a plain join (or an OR of the two bounds)
-      // lets the planner hash-join every message in the Workspace's channels instead.
-      // `arrivedSinceClosed` counts the unread ones posted after the member closed the chat:
-      // any of them brings a closed chat back to the list.
-      this.db.$queryRaw<{ conversationId: string; unread: number; arrivedSinceClosed: number }[]>`
+      },
+    });
+    // One query for every channel's unread: other-authored top-level messages past the
+    // member's own read cursor, or from their mark-as-unread marker when that is lower.
+    // System messages (no sender member) and the viewer's own messages are already-read by
+    // definition; a soft-left membership has no badge. The count is a LATERAL per membership
+    // with a single lower bound, so it is an index range on `messages(conversationId,
+    // sequence)` covering only the unread tail; a plain join (or an OR of the two bounds)
+    // lets the planner hash-join every message in the Workspace's channels instead.
+    // `arrivedSinceClosed` counts the unread ones posted after the member closed the chat:
+    // any of them brings a closed chat back to the list.
+    // `mentioned` is true when one of those unread top-level messages mentions this member row.
+    const unreadRows = this.db.$queryRaw<
+      {
+        conversationId: string;
+        unread: number;
+        arrivedSinceClosed: number;
+        mentioned: boolean;
+      }[]
+    >`
         SELECT cm."conversationId" AS "conversationId", unread."count" AS "unread",
-          unread."arrivedSinceClosed" AS "arrivedSinceClosed"
+          unread."arrivedSinceClosed" AS "arrivedSinceClosed",
+          unread."mentioned" AS "mentioned"
         FROM "conversation_members" cm
         JOIN "conversations" c
           ON c."id" = cm."conversationId"
@@ -831,7 +851,11 @@ export class PublicChannels {
          AND c."hiddenFromWorkspaceAt" IS NULL
         CROSS JOIN LATERAL (
           SELECT COUNT(*)::int AS "count",
-            COUNT(*) FILTER (WHERE m."createdAt" > cm."hiddenAt")::int AS "arrivedSinceClosed"
+            COUNT(*) FILTER (WHERE m."createdAt" > cm."hiddenAt")::int AS "arrivedSinceClosed",
+            COALESCE(BOOL_OR(EXISTS (
+              SELECT 1 FROM "message_mentions" mm
+              WHERE mm."messageId" = m."id" AND mm."memberId" = cm."id"
+            )), false) AS "mentioned"
           FROM "messages" m
           WHERE m."conversationId" = cm."conversationId"
             AND m."threadRootId" IS NULL
@@ -840,18 +864,43 @@ export class PublicChannels {
         WHERE cm."userId" = ${userId}::uuid
           AND cm."leftAt" IS NULL
           AND cm."workspaceId" = ${workspaceId}::uuid
-      `,
+    `;
+    // The channel previews need only the channel ids. A channel the viewer closed and did not pin
+    // is listed only when a newer message reopens it, so the other channels' previews load in
+    // parallel with the unread read, and the reopened closed ones are read after it.
+    const [channels, unread, previews] = await Promise.all([
+      channelRows,
+      unreadRows,
+      channelRows.then((rows) =>
+        channelListPreviews(
+          this.db,
+          workspaceId,
+          rows.filter((row) => !isClosedAndUnpinned(row)).map((row) => row.id),
+          userId,
+        ),
+      ),
     ]);
     const unreadByConversation = new Map(unread.map((row) => [row.conversationId, row.unread]));
+    const mentionedConversations = new Set(
+      unread.filter((row) => row.mentioned).map((row) => row.conversationId),
+    );
     const reopenedByActivity = new Set(
       unread.filter((row) => row.arrivedSinceClosed > 0).map((row) => row.conversationId),
     );
+    const reopenedIds = channels
+      .filter((channel) => isClosedAndUnpinned(channel) && reopenedByActivity.has(channel.id))
+      .map((channel) => channel.id);
+    if (reopenedIds.length) {
+      const reopened = await channelListPreviews(this.db, workspaceId, reopenedIds, userId);
+      for (const [id, preview] of reopened) previews.set(id, preview);
+    }
     return channels
       .map((channel) => {
         const member = channel.members[0];
         // `.at(0)`, not `[0]`: the pinned row is genuinely optional and the type has to say so,
         // or the row's `pinSortOrder` narrows to `number` and cannot hold "not pinned".
         const pin = member?.pins.at(0);
+        const preview = previews.get(channel.id);
         // A non-member (or soft-left viewer) sees no unread badge: the channel's history is
         // readable, but nothing new is "for them" until they join.
         return {
@@ -861,6 +910,9 @@ export class PublicChannels {
           archived: channel.archivedAt !== null,
           muted: member?.channelMuted ?? false,
           unreadCount: member ? (unreadByConversation.get(channel.id) ?? 0) : 0,
+          mentioned: member ? mentionedConversations.has(channel.id) : false,
+          lastMessage: preview?.lastMessage ?? null,
+          members: preview?.members ?? [],
           /// A closed chat disappears from this member's list only (see `hiddenAt` in the schema);
           /// the conversation itself stays readable, including through its own URL. A new message
           /// from someone else brings it back.

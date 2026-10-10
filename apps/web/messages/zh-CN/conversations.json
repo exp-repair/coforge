@@ -187,6 +187,15 @@
       }
     }
   ],
+  "channel_unread_mention_accessible": [
+    {
+      "declarations": ["input channel", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=other": "{channel}，{count} 条未读消息，有人提到了你"
+      }
+    }
+  ],
   "conversation_unread_divider": "新消息",
   "conversation_system_group_task_updates": [
     {

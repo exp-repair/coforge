@@ -28,6 +28,9 @@ These rules apply to `src/server/conversations/`.
   `viewerDirectConversationSql` in the same file. Change the two together.
   A DM the viewer closed comes back when someone other than them posts a
   top-level message after the close.
+- `PublicChannels.list` also returns each channel's last top-level message with its sender, its
+  first six active members by `joinedAt` (`channel-list-preview.server.ts`), and whether the viewer
+  has an unread @mention there; each is one grouped query for all listed channels, never per channel.
 - A human's send in a DM with an Agent signals the viewer's own channel with
   `senderUserId` set (`SendDirectMessage.execute`), for the same reason.
 - `direct-conversation-peer.server.ts` owns who a DM is with as every DM

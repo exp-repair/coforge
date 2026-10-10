@@ -11,6 +11,7 @@ import {
   storedCursorMove,
   clearUnread,
   closedConversationLists,
+  channelRowRefreshLists,
   directRowRefreshLists,
   seedUnreadCounts,
   unknownAgentOf,
@@ -816,6 +817,62 @@ describe("a listed DM row's last message and preview", () => {
     const unlisted = { ...message, conversationId: "dm-new", agentId: "agent-new" };
     expect(directRowRefreshLists(unlisted, listed)).toEqual([]);
     expect(closedConversationLists(unlisted, listed)).toEqual(["dms"]);
+  });
+});
+
+describe("a listed channel row's last message and preview", () => {
+  // A top-level message in a channel the sidebar already lists re-reads the channel list, so the
+  // row shows its new last message time and preview. The viewer's own message does too, from
+  // another tab or device; a thread reply, a DM and an unlisted channel do not (the last one is
+  // left to closedConversationLists, which re-reads the same list once).
+  const listed = new Set(["channel-listed", "dm-listed"]);
+  const message = { conversationId: "channel-listed", sequence: 6 };
+
+  test("an incoming top-level message in a listed channel re-reads the channel list", () => {
+    expect(channelRowRefreshLists({ ...message, senderUserId: "grace" }, listed)).toEqual([
+      "channels",
+    ]);
+  });
+
+  test("the viewer's own top-level message in a listed channel re-reads the channel list", () => {
+    expect(channelRowRefreshLists({ ...message, senderUserId: "viewer" }, listed)).toEqual([
+      "channels",
+    ]);
+  });
+
+  test("a thread reply in a listed channel does not re-read the channel list", () => {
+    expect(
+      channelRowRefreshLists({ ...message, senderUserId: "grace", threadRootId: "root-1" }, listed),
+    ).toEqual([]);
+  });
+
+  test("a DM message does not re-read the channel list", () => {
+    expect(
+      channelRowRefreshLists(
+        { ...message, conversationId: "dm-listed", agentId: "agent-1" },
+        listed,
+      ),
+    ).toEqual([]);
+    expect(
+      channelRowRefreshLists(
+        { ...message, conversationId: "dm-listed", peerUserId: "grace", senderUserId: "grace" },
+        listed,
+      ),
+    ).toEqual([]);
+  });
+
+  test("an unlisted channel is left to closedConversationLists, which re-reads the same list once", () => {
+    const unlisted = { conversationId: "channel-new", sequence: 2, senderUserId: "grace" };
+    expect(channelRowRefreshLists(unlisted, listed)).toEqual([]);
+    expect(closedConversationLists(unlisted, listed, "viewer")).toEqual(["channels"]);
+  });
+
+  test("a muted or sidebar-hidden channel still re-reads the channel list while it is listed", () => {
+    // The listed set holds every non-archived channel row, muted or closed from the sidebar, so the
+    // rule does not look at either state.
+    expect(channelRowRefreshLists({ ...message, senderUserId: "grace" }, listed)).toEqual([
+      "channels",
+    ]);
   });
 });
 

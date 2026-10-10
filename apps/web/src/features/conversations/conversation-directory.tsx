@@ -39,7 +39,14 @@ import { EMPTY_SECTION_HIDDEN_CLASS } from "#src/features/settings/hide-empty-si
 import { useTimeFormat } from "#src/lib/time-format-context";
 import { useTimeZone } from "#src/lib/time-zone-context";
 import { getLocale } from "#src/paraglide/runtime";
-import { directRowTime } from "./direct-row-time";
+import { lastMessageTime } from "./last-message-time";
+import {
+  channelMentionShown,
+  channelPreviewLine,
+  type ChannelPreviewSender,
+} from "./channel-preview-line";
+import { collageLayout } from "./collage-layout";
+import { GroupAvatar, type GroupAvatarMember } from "./group-avatar";
 
 type DirectoryChannel = {
   id: string;
@@ -51,36 +58,65 @@ type DirectoryChannel = {
   pinned: boolean;
   /** Where the row sits in the Pinned section, among the member's pinned channels and DMs. */
   pinSortOrder: number | null;
+  /** The channel's last message, or `null` while it has none (the row then shows its name only). */
+  lastMessage: { createdAt: string; preview: string; sender: ChannelPreviewSender } | null;
+  /** Up to six members, laid out by the row's collage avatar. */
+  members: readonly GroupAvatarMember[];
+  /** The viewer is @mentioned in this channel. */
+  mentioned: boolean;
 };
 
 /** A DM row as the directory shows it: its row, the name it goes by, and its live Agent when it is
  * one with an Agent. */
 type DirectEntry = DirectRow & { name: string; agent?: LiveAgent; self: boolean };
 
-/** The row's accessible name: the conversation it names, plus its unread count when it has one.
- * A DM row's time and preview stay visible but are not part of the name, so a read DM is named
- * by `label` alone, as an unread one is. */
-function rowLabel(unreadCount: number | undefined, label: string): string | undefined {
+/** The row's accessible name: the conversation it names, plus its unread count when it has one,
+ * and the mention when its "@" badge shows. A DM row's time and preview stay visible but are not
+ * part of the name, so a read DM is named by `label` alone, as an unread one is. */
+function rowLabel(
+  unreadCount: number | undefined,
+  label: string,
+  mentioned: boolean | undefined,
+): string | undefined {
   if (!unreadCount) return undefined;
+  if (mentioned) return m.channel_unread_mention_accessible({ channel: label, count: unreadCount });
   return m.channel_unread_accessible({ channel: label, count: unreadCount });
 }
 
-/** A DM row's second layout: the last message's time beside the name, and its preview under it. */
+/** A conversation row's second layout: the last message's time beside the name, and its sender-
+ * prefixed preview under it, with the mention and unread markers at the end of that line. */
 type LastMessageLines = {
-  /** The clock or short date of the last message; `null` while the DM has no message. */
+  /** The clock or short date of the last message; `null` while the conversation has no message. */
   time: string | null;
-  /** The start of the last message; `null` while the DM has no message, so the row shows the name only. */
+  /** The preview line (`channelPreviewLine` for a channel); `null` while there is no message, so
+   * the row shows the name only. */
   preview: string | null;
+  /** The "@" badge shows: the viewer is mentioned and the mention is unread (`channelMentionShown`). */
+  mentioned?: boolean;
 };
 
+/** The "@" marker of a row whose conversation mentions the viewer: a light-violet pill. */
+function MentionBadge() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-brand-primary px-1.5 text-xs font-semibold leading-none text-brand-secondary"
+    >
+      @
+    </span>
+  );
+}
+
 // A local row (not NavItemBase — its `icon` slot hardcodes size-5 and can't
-// take an Avatar). Channel rows keep the 20px icon column; a DM row
-// (`lastMessage` given) has a 44px avatar column instead and a second line
-// with the last message's preview under its name. Both share the text start
-// and the current/hover treatment.
+// take an Avatar). The icon sets its own column width: a 44px avatar (a DM's avatar, or a channel's
+// collage with two or more members) in a two-line row (`lastMessage` given), and a 20px icon for
+// Saved and for a channel with fewer than two members. A two-line row has a second line with the
+// last message's preview under its name. Both share the text start and the current/hover
+// treatment. A channel's selected row is a card (`card`).
 function ConversationRow({
   target,
   current,
+  card,
   icon,
   muted,
   unreadCount,
@@ -91,6 +127,8 @@ function ConversationRow({
 }: {
   target: ConversationTarget;
   current?: boolean;
+  /** The selected row is a bordered card, as a channel's is. */
+  card?: boolean;
   icon: ReactNode;
   muted?: boolean;
   unreadCount?: number;
@@ -99,7 +137,7 @@ function ConversationRow({
   count?: { value: number; label: string };
   /** The row's own name, so an unread row keeps its accessible name instead of replacing it. */
   label: string;
-  /** A DM's two-line layout; absent for channel, Saved and every other row. */
+  /** A two-line layout; absent for the Saved entry and every other single-line row. */
   lastMessage?: LastMessageLines;
   children: ReactNode;
 }) {
@@ -117,7 +155,7 @@ function ConversationRow({
       render={(props) => ("href" in props ? <Link {...props} {...route} /> : <span {...props} />)}
       aria-current={current ? "page" : undefined}
       aria-label={
-        rowLabel(unreadCount, label) ??
+        rowLabel(unreadCount, label, lastMessage?.mentioned) ??
         (count ? `${label}, ${count.label}` : lastMessage ? label : undefined)
       }
       // On mobile the list is a separate pane; choosing a row reveals the conversation even when
@@ -127,9 +165,11 @@ function ConversationRow({
       className={cx(
         // `-webkit-user-drag: none`: a sidebar drag moves the row (see `directory-drag.tsx`), never
         // the browser's own link drag.
-        "flex w-full cursor-pointer items-center gap-2 rounded-md p-2 outline-focus-ring transition duration-100 ease-linear select-none [-webkit-user-drag:none] focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2",
+        "flex w-full cursor-pointer items-center gap-2 p-2 outline-focus-ring transition duration-100 ease-linear select-none [-webkit-user-drag:none] focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2",
+        card ? "rounded-xl border" : "rounded-md",
         !lastMessage && "max-h-9",
         current ? "bg-sidebar-accent" : "hover:bg-primary_hover",
+        card && (current ? "border-secondary" : "border-transparent"),
       )}
     >
       {lastMessage ? (
@@ -143,7 +183,7 @@ function ConversationRow({
             <span
               className={cx(
                 "min-w-0 flex-1 truncate text-sm font-medium",
-                current ? "text-brand-secondary" : "text-secondary",
+                current ? "text-brand-secondary" : muted ? "text-tertiary" : "text-secondary",
               )}
             >
               {children}
@@ -154,7 +194,7 @@ function ConversationRow({
               </span>
             ) : null}
           </span>
-          {lastMessage.preview || unreadCount ? (
+          {lastMessage.preview || unreadCount || lastMessage.mentioned ? (
             <span className="flex min-w-0 items-center gap-2">
               {lastMessage.preview ? (
                 <span className="min-w-0 flex-1 truncate text-sm text-tertiary">
@@ -163,7 +203,8 @@ function ConversationRow({
               ) : (
                 <span className="flex-1" />
               )}
-              {unreadCount ? <UnreadBadge count={unreadCount} /> : null}
+              {lastMessage.mentioned ? <MentionBadge /> : null}
+              {unreadCount ? muted ? <UnreadDot /> : <UnreadBadge count={unreadCount} /> : null}
             </span>
           ) : null}
         </span>
@@ -355,14 +396,37 @@ export function ConversationDirectory({
         <ConversationRow
           target={{ channelId: channel.id }}
           current={current}
+          card
           muted={!channel.joined || channel.muted}
           unreadCount={unreadCounts[channel.id]}
           label={`#${channel.name}`}
+          lastMessage={{
+            time: channel.lastMessage
+              ? lastMessageTime(channel.lastMessage.createdAt, timeContext)
+              : null,
+            preview: channel.lastMessage
+              ? channelPreviewLine({
+                  sender: channel.lastMessage.sender,
+                  preview: channel.lastMessage.preview,
+                  youLabel: m.conversation_you(),
+                })
+              : null,
+            mentioned: channelMentionShown({
+              mentioned: channel.mentioned,
+              unreadCount: unreadCounts[channel.id],
+            }),
+          }}
           icon={
-            <Hash
-              aria-hidden="true"
-              className={cx("size-4", current ? "text-brand-secondary" : "text-tertiary")}
-            />
+            collageLayout(channel.members.length).length > 0 ? (
+              <GroupAvatar members={channel.members} />
+            ) : (
+              <span className="flex size-5 items-center justify-center">
+                <Hash
+                  aria-hidden="true"
+                  className={cx("size-4", current ? "text-brand-secondary" : "text-tertiary")}
+                />
+              </span>
+            )
           }
         >
           {channel.name}
@@ -387,7 +451,7 @@ export function ConversationDirectory({
         unreadCount={unreadCounts[conversationId]}
         label={self ? m.conversation_dm_self_name({ name }) : name}
         lastMessage={{
-          time: lastMessageAt ? directRowTime(lastMessageAt, timeContext) : null,
+          time: lastMessageAt ? lastMessageTime(lastMessageAt, timeContext) : null,
           preview: lastMessagePreview,
         }}
         icon={

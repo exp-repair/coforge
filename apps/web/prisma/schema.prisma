@@ -774,6 +774,9 @@ model ConversationMember {
   /// Per-member hide/close: the conversation disappears from this member's list only.
   /// Distinct from archivedAt (whole conversation) and leftAt (membership ended).
   hiddenAt               DateTime?
+  /// When this member first joined the conversation. Kept across a soft leave and rejoin, so the
+  /// channel list orders its members by who joined first. Backfilled approximately by its migration.
+  joinedAt               DateTime          @default(now())
   conversation             Conversation      @relation(fields: [conversationId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
   workspace                Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user                     User?             @relation(fields: [userId], references: [id], onDelete: Cascade)

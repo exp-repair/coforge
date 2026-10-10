@@ -5,7 +5,7 @@ import type { TimeFormat } from "#src/lib/time-format";
  * The time a DM row shows for its last message: the clock time when the message was sent today in
  * `timeZone`, else its month and day. `now` is injected so the rule is testable.
  */
-export function directRowTime(
+export function lastMessageTime(
   createdAt: string,
   {
     now,

@@ -61,7 +61,8 @@ These rules apply to `src/features/conversations/`.
   re-reads only its own list (`closedConversationLists`), plus the Agent roster for a new Agent
   (`unknownAgentOf`). A top-level message in a DM the sidebar already lists re-reads only the
   DM list (`directRowRefreshLists`), so its row's last message and preview stay current, whether
-  the viewer or the other side wrote it. A change made outside the sidebar on this page (a
+  the viewer or the other side wrote it. A top-level message in a channel the sidebar already lists
+  re-reads only the channel list (`channelRowRefreshLists`), for the same reason. A change made outside the sidebar on this page (a
   channel's creation, rename or archive, or leaving, muting or pinning it from the settings panel)
   re-reads the channel list
   through `useRefreshSidebarChannels`. The viewer's own changes elsewhere arrive as a `ViewerEvent`
