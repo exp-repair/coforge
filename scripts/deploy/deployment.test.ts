@@ -183,7 +183,7 @@ describe("renderAuditRecord", () => {
     track: "cloud",
     artifact_identity: registryImage,
     environment: "staging",
-    workflow_run: "https://github.com/LRM-Teams/coforge/actions/runs/33350525525",
+    workflow_run: "https://github.com/lrm-lab/coforge/actions/runs/33350525525",
     previous_digest: null,
     rollback_target: null,
     health_result: "healthy",
