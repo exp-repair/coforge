@@ -78,7 +78,9 @@ to add tests or run stress checks.
   so a defect in that code reads as an environment failure and the suite disagrees with CI. When
   the runner applies the process value on top of the argument under test (Bun's `fetch` honours
   the process `NO_PROXY` beside a per-request `proxy`), say so in the test and clear the process
-  variable there. Baseline a failure that appears in only one environment against the same test
+  variable there. Hand a child process its environment through `Bun.spawn`'s `env` option: its
+  default is the environment the test process started with, so a `process.env` write made later
+  does not reach the child. Baseline a failure that appears in only one environment against the same test
   file on a clean `origin/main` in the same worktree before reading it as a regression.
 
 ## Investigating intermittent failures
