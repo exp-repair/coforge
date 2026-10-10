@@ -165,7 +165,7 @@ test("Agent runtime, status, Message Inbox, and App Inbox cross the real system"
   const proxy = startAgentProxy({
     runtime: {
       agentMessage: (...args) => runtime!.agentMessage(...args),
-      agentAttachment: (...args) => runtime!.agentAttachment(...args),
+      agentAttachment: (...args) => runtime!.agentRequests.agentAttachment(...args),
       inbox: (...args) => runtime!.inbox(...args),
       issueAgentContext: (agentId, context) => runtime!.issueAgentContext(agentId, context),
     },
