@@ -39,10 +39,10 @@ export type PeoplePageInput = { query: string; cursor?: string; limit: number };
 
 const contains = (query: string) => ({ contains: query, mode: "insensitive" as const });
 
-/** `humanLabel` as SQL over the `users` row aliased `alias`: the display name, else the full
- * name, else the username, a blank name counting as none. */
+/** `humanLabel` as SQL over the `users` row aliased `alias`: the display name, else the username,
+ * a blank name counting as none. */
 const personLabelSql = (alias: Prisma.Sql) =>
-  Prisma.sql`COALESCE(NULLIF(btrim(${alias}."displayName"), ''), NULLIF(btrim(${alias}."fullName"), ''), ${alias}."username")`;
+  Prisma.sql`COALESCE(NULLIF(btrim(${alias}."displayName"), ''), ${alias}."username")`;
 
 /** Take one extra row to learn whether another page exists; the cursor is the last row's id. */
 function pageOf<T extends { id: string }>(rows: T[], limit: number) {
@@ -117,7 +117,6 @@ export class WorkspaceMembers {
             id: true,
             username: true,
             displayName: true,
-            fullName: true,
             avatarObjectKey: true,
           },
         },
@@ -178,7 +177,6 @@ export class WorkspaceMembers {
           id: true,
           username: true,
           displayName: true,
-          fullName: true,
           avatarObjectKey: true,
         },
       }),
@@ -226,9 +224,6 @@ export class WorkspaceMembers {
       people: [...people].sort(compareHumanLabels).map((person) => ({
         id: person.id,
         name: humanLabel(person),
-        /** The name behind `name` when a nickname replaced it, which a search still finds them
-         * by. There is no username here: nothing shown or searched for a person is one. */
-        fullName: person.fullName,
         avatarUrl: workspaceUserAvatarUrl(workspaceId, person.id, person.avatarObjectKey),
         /** The viewer's direct conversation with this member (`dm/<id>`; the viewer's own with
          * themself), once there is one. */
@@ -262,7 +257,6 @@ export class WorkspaceMembers {
         id: true,
         username: true,
         displayName: true,
-        fullName: true,
         description: true,
         avatarObjectKey: true,
         // Visible Agents this person created. One list feeds the count and the faces: Prisma
@@ -308,13 +302,11 @@ export class WorkspaceMembers {
   ): Promise<string[]> {
     const query = input.query.trim();
     const label = personLabelSql(Prisma.raw("u"));
-    // The names a person is found by: the one they are shown by or the full name a nickname
-    // replaced. A username is found only for a person with neither name, whom it labels.
+    // A person is found by the name they are shown by; a username only when that name is blank.
     const matches = query
       ? Prisma.sql`AND (
           strpos(lower(u."displayName"), lower(${query})) > 0
-          OR strpos(lower(u."fullName"), lower(${query})) > 0
-          OR (NULLIF(btrim(u."displayName"), '') IS NULL AND NULLIF(btrim(u."fullName"), '') IS NULL
+          OR (NULLIF(btrim(u."displayName"), '') IS NULL
               AND strpos(lower(u."username"), lower(${query})) > 0)
         )`
       : Prisma.empty;

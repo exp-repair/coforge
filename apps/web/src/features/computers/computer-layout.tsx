@@ -38,7 +38,6 @@ export type ComputerListItem = ComputerIdentity &
     creator?: {
       username: string;
       displayName: string | null;
-      fullName: string | null;
       avatarUrl: string | null;
     } | null;
   };

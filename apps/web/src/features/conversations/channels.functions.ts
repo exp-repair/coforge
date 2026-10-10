@@ -481,7 +481,6 @@ export const sendPublicChannelMessage = createServerFn({ method: "POST" })
       // session is the fallback when this person has set no display name.
       senderName: humanLabel({
         displayName: message.sender?.user?.displayName,
-        fullName: message.sender?.user?.fullName ?? null,
         username,
       }),
       senderHandle: username,

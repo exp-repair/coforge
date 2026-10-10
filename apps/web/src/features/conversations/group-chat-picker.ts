@@ -14,7 +14,7 @@ export type GroupChatCandidate = {
 /** The part of `loadWorkspaceDirectory` the picker reads. */
 export type GroupChatDirectory = {
   viewerId: string;
-  people: { id: string; name: string; fullName: string | null; avatarUrl: string | null }[];
+  people: { id: string; name: string; avatarUrl: string | null }[];
   agents: {
     id: string;
     handle: string;
@@ -46,7 +46,7 @@ export function buildGroupChatCandidates(directory: GroupChatDirectory): GroupCh
       kind: "user",
       id: person.id,
       name: person.name,
-      search: { kind: "user", displayName: person.name, fullName: person.fullName },
+      search: { kind: "user", displayName: person.name },
       avatarUrl: person.avatarUrl,
     }));
   return [...agents, ...people];

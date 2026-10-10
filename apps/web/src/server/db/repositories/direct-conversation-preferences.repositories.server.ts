@@ -245,7 +245,6 @@ export class PrismaDirectConversationPreferences {
         id: string;
         username: string;
         displayName: string | null;
-        fullName: string | null;
         avatarObjectKey: string | null;
       }
     >,

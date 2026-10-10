@@ -12,9 +12,9 @@ import {
 const directory = {
   viewerId: "viewer",
   people: [
-    { id: "viewer", name: "Me", fullName: "Me Myself", avatarUrl: null },
-    { id: "ada", name: "Ada", fullName: "Ada Lovelace", avatarUrl: null },
-    { id: "bob", name: "Bob", fullName: null, avatarUrl: "https://cdn.example/bob.png" },
+    { id: "viewer", name: "Me", avatarUrl: null },
+    { id: "ada", name: "Ada", avatarUrl: null },
+    { id: "bob", name: "Bob", avatarUrl: "https://cdn.example/bob.png" },
   ],
   agents: [
     {
@@ -113,8 +113,8 @@ describe("filterGroupChatCandidates", () => {
     expect(filterGroupChatCandidates(candidates, "  ")).toHaveLength(4);
   });
 
-  test("matches a person by full name and an Agent by its @handle", () => {
-    expect(filterGroupChatCandidates(candidates, "lovelace").map((entry) => entry.key)).toEqual([
+  test("matches a person by name and an Agent by its @handle", () => {
+    expect(filterGroupChatCandidates(candidates, "ada").map((entry) => entry.key)).toEqual([
       "user:ada",
     ]);
     expect(filterGroupChatCandidates(candidates, "@scout").map((entry) => entry.key)).toEqual([

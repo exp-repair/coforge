@@ -114,7 +114,6 @@ export async function channelListPreviews(
             id: true,
             username: true,
             displayName: true,
-            fullName: true,
             avatarObjectKey: true,
           },
         })

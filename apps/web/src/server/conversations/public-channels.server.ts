@@ -3,7 +3,7 @@ import { lockConversation } from "./conversation-lock.server";
 import { lockMemberPins, setConversationPin } from "./conversation-pins.server";
 import type { Prisma, PrismaClient } from "#src/generated/prisma/client";
 import { AppError, isAppError } from "#src/lib/app-error";
-import { compareHumanLabels, fullNameBehindLabel, humanLabel } from "#src/lib/human-label";
+import { compareHumanLabels, humanLabel } from "#src/lib/human-label";
 import { CHANNEL_NAME_PATTERN, type MentionSelectorInput } from "@lrm/coforge-sdk/internal";
 import { windowPageFlags } from "#src/lib/conversation-window";
 import { ACTIVE_MEMBER_WHERE, VISIBLE_CONVERSATION_WHERE } from "./active-member.server";
@@ -1527,7 +1527,6 @@ export class PublicChannels {
               id: true,
               username: true,
               displayName: true,
-              fullName: true,
               avatarObjectKey: true,
             },
           },
@@ -1550,7 +1549,6 @@ export class PublicChannels {
           id: true,
           username: true,
           displayName: true,
-          fullName: true,
           avatarObjectKey: true,
         },
       }),
@@ -1622,7 +1620,6 @@ export class PublicChannels {
             // roster (`agent-channel-management.server.ts`), which names people by it.
             username: row.user!.username,
             displayName: humanLabel(row.user!),
-            fullName: row.user!.fullName,
             avatarUrl: workspaceUserAvatarUrl(workspaceId, row.user!.id, row.user!.avatarObjectKey),
             serverRole,
             channelRole: row.channelRole,
@@ -1649,7 +1646,6 @@ export class PublicChannels {
           .map((user) => ({
             id: user.id,
             displayName: humanLabel(user),
-            fullName: user.fullName,
             avatarUrl: workspaceUserAvatarUrl(workspaceId, user.id, user.avatarObjectKey),
           })),
         agents: workspaceAgents
@@ -1907,7 +1903,6 @@ export class PublicChannels {
               id: true,
               username: true,
               displayName: true,
-              fullName: true,
               description: true,
               avatarObjectKey: true,
             },
@@ -1993,7 +1988,6 @@ export class PublicChannels {
                 id: row.user.id,
                 handle: row.user.username,
                 label: humanLabel(row.user),
-                fullName: fullNameBehindLabel(row.user),
                 description: row.user.description.trim(),
                 avatarUrl: workspaceUserAvatarUrl(
                   workspaceId,
@@ -2043,7 +2037,6 @@ export class PublicChannels {
               id: true,
               username: true,
               displayName: true,
-              fullName: true,
               description: true,
               avatarObjectKey: true,
             },
@@ -2070,7 +2063,6 @@ export class PublicChannels {
               id: row.user.id,
               handle: row.user.username,
               label: humanLabel(row.user),
-              fullName: fullNameBehindLabel(row.user),
               description: row.user.description.trim(),
               avatarUrl: workspaceUserAvatarUrl(workspaceId, row.user.id, row.user.avatarObjectKey),
               mentionScore: mentionScores.get(`user:${row.user.id}`) ?? 0,
@@ -2111,7 +2103,6 @@ export class PublicChannels {
               id: true,
               username: true,
               displayName: true,
-              fullName: true,
               description: true,
               avatarObjectKey: true,
             },
@@ -2144,7 +2135,6 @@ export class PublicChannels {
           id: user.id,
           handle: user.username,
           label: humanLabel(user),
-          fullName: fullNameBehindLabel(user),
           description: user.description.trim(),
           avatarUrl: workspaceUserAvatarUrl(workspaceId, user.id, user.avatarObjectKey),
           mentionScore: 0,
@@ -2356,7 +2346,6 @@ export class PublicChannels {
                 id: true,
                 username: true,
                 displayName: true,
-                fullName: true,
                 avatarObjectKey: true,
                 description: true,
               },
