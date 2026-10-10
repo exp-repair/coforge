@@ -175,7 +175,7 @@ export function SettingsContent(props: SettingsContentProps) {
   }
 
   return (
-    <main className="flex h-svh min-w-0">
+    <main className="flex h-full min-w-0">
       <nav
         aria-label={m.settings_title()}
         className={cn(

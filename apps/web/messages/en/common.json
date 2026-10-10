@@ -45,6 +45,8 @@
   "error_reference": "Error reference: {errorId}",
   "navigation_open_menu": "Open menu",
   "navigation_close_menu": "Close menu",
+  "navigation_collapse_sidebar": "Collapse sidebar",
+  "navigation_expand_sidebar": "Expand sidebar",
   "navigation_activity": "Activity",
   "welcome_title": "Enter your full name",
   "welcome_full_name_label": "Full name",
