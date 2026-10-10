@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE_REPOSITORY: lrm-teams/coforge/coforge-web
+  IMAGE_REPOSITORY: lrm-lab/coforge/coforge-web
   REMOTE_ROOT: /home/deploy/coforge-staging
 
 jobs:
