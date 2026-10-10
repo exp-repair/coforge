@@ -225,13 +225,15 @@ function CreateChannelForm({
       isDisabled={locked}
     />
   );
-  const projectField = projects.length > 0 && (
+  // The group chat dialog always offers the field (a Workspace with no Project shows it disabled,
+  // reading "No Project"); the single-column dialog keeps it only when there is a Project to pick.
+  const projectField = (memberPicker || projects.length > 0) && (
     <Select
       aria-label={m.channel_project()}
       placeholder={m.channel_no_project()}
       selectedKey={projectId || null}
       onSelectionChange={(key) => setProjectId(String(key))}
-      isDisabled={locked}
+      isDisabled={locked || projects.length === 0}
     >
       {projects.map((project) => (
         <Select.Item key={project.id} id={project.id} label={`${project.name} (${project.slug})`} />
