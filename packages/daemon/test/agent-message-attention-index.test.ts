@@ -1513,3 +1513,57 @@ test("every delivery decision is logged with its target, sequence and outcome", 
     expect.objectContaining({ target: "#general:11111111", sequence: 6, outcome: "held" }),
   ]);
 });
+
+test("a channel recreated under the same target name starts from a fresh consumed cursor", async () => {
+  const notices: string[] = [];
+  const store = new AgentConsumedSeqStore(temporaryStateDirectory());
+  const index = indexWithConsumedSeqs(store, () => session((notice) => notices.push(notice)));
+  const inConversation = (id: string, conversationId: string, sequence: number) => ({
+    ...delivery(id, "human", "ada"),
+    conversationId,
+    target: "#general",
+    sequence,
+  });
+
+  // The old #general reached message 5704 and the Agent consumed it.
+  await index.receive(inConversation("old", "conversation-old", 5704));
+  index.recordModelSeen("agent-1", "#general", 5704);
+  // The channel is recreated under the same name: a new conversation whose sequences restart.
+  await index.receive(inConversation("new", "conversation-new", 3));
+
+  expect(notices).toHaveLength(2);
+  expect(index.check("agent-1").find((row) => row.target === "#general")?.pendingCount).toBe(1);
+});
+
+test("a persisted cursor of another conversation is reset, and one without a conversation is adopted", async () => {
+  const store = new AgentConsumedSeqStore(temporaryStateDirectory());
+  store.write("agent-1", {
+    targets: {
+      "#general": { seq: 5704, conversationId: "conversation-old" },
+      "#legacy": { seq: 5704 },
+    },
+    aliases: {},
+    nextReadOrder: 1,
+  });
+  const notices: string[] = [];
+  const index = indexWithConsumedSeqs(store, () => session((notice) => notices.push(notice)));
+  const fresh = (target: string) => ({
+    ...delivery(target, "human", "ada"),
+    conversationId: "conversation-new",
+    target,
+    sequence: 3,
+  });
+
+  await index.receive(fresh("#general"));
+  await index.receive(fresh("#legacy"));
+
+  expect(notices).toHaveLength(1);
+  // The old conversation's frontier is gone; with nothing consumed yet there is no entry to keep.
+  expect(store.read("agent-1").targets["#general"]).toBeUndefined();
+  // An entry an older build wrote names no conversation, so it cannot be told apart from a
+  // genuinely consumed one: it adopts the delivery's conversation and keeps its frontier.
+  expect(store.read("agent-1").targets["#legacy"]).toEqual({
+    seq: 5704,
+    conversationId: "conversation-new",
+  });
+});
