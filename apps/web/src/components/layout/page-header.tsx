@@ -13,6 +13,7 @@ export function PageHeader({
   leading,
   icon: Icon,
   heading,
+  breadcrumb,
   meta,
   actions,
   tabs,
@@ -22,6 +23,9 @@ export function PageHeader({
   /** The icon that goes with the heading, shown before it. */
   icon?: FC<{ className?: string }>;
   heading: string;
+  /** On subpages, the trail's earlier crumbs plus the separator into the heading: the heading
+   * itself is the trail's last crumb (Settings → Account › Change avatar). */
+  breadcrumb?: React.ReactNode;
   meta?: React.ReactNode;
   actions?: React.ReactNode;
   /** Underline tabs that switch the page's view. */
@@ -31,6 +35,7 @@ export function PageHeader({
     <>
       {leading ?? <MobileNavigationButton />}
       {Icon && <Icon aria-hidden="true" className="size-5 shrink-0 text-fg-secondary" />}
+      {breadcrumb}
       <h1 className="truncate text-lg font-semibold text-primary">{heading}</h1>
       {meta}
     </>

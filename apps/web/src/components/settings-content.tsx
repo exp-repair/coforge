@@ -9,6 +9,7 @@ import {
   Camera01,
   Check,
   ChevronLeft,
+  ChevronRight,
   Clock as Clock3,
   Translate01 as Languages,
   LayoutLeft,
@@ -258,7 +259,31 @@ export function SettingsContent(props: SettingsContentProps) {
         <div>
           <PageHeader
             icon={sectionIcons[section]}
-            heading={sectionLabel}
+            heading={
+              section === "account" && props.avatarPicker
+                ? m.settings_avatar_choose()
+                : sectionLabel
+            }
+            breadcrumb={
+              section === "account" && props.avatarPicker ? (
+                /* Settings → Account › Change avatar: the Account crumb is the only one before
+                   the heading, so narrow screens drop the whole nav (project-tree's pattern). */
+                <nav
+                  aria-label={m.settings_breadcrumb()}
+                  className="hidden min-w-0 items-center gap-1 text-sm text-tertiary sm:flex"
+                >
+                  <Button
+                    type="button"
+                    color="link-gray"
+                    size="sm"
+                    onPress={() => props.onAvatarPickerChange(false)}
+                  >
+                    {sectionLabel}
+                  </Button>
+                  <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-quaternary" />
+                </nav>
+              ) : undefined
+            }
             leading={
               <ButtonUtility
                 icon={ChevronLeft}
