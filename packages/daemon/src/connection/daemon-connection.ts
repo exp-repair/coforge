@@ -165,6 +165,7 @@ import {
   defaultAgentWeeklyReportHttpClient,
   defaultAgentWeeklyReportCollectHttpClient,
   defaultAgentWeeklyReportKeyPointsHttpClient,
+  defaultAgentWeeklyReportMemoryHttpClient,
   defaultAgentTaskHttpClient,
   defaultAgentChannelHttpClient,
   defaultAgentActionPrepareHttpClient,
@@ -405,6 +406,10 @@ export interface DaemonConnectionClient {
     request: import("./weekly-report-key-points").WeeklyReportKeyPointsCommand,
     agentApiKey: string,
   ): Promise<import("./weekly-report-key-points").WeeklyReportKeyPointsResult>;
+  agentWeeklyReportMemory?(
+    request: import("./weekly-report-memory").WeeklyReportMemoryCommand,
+    agentApiKey: string,
+  ): Promise<import("./weekly-report-memory").WeeklyReportMemoryResult>;
   agentOpenviking?(request: OpenVikingAgentProxyCommand, agentApiKey: string): Promise<unknown>;
   agentAttachment?(attachmentId: string, agentApiKey: string): Promise<Response>;
   agentAttachmentUpload?(request: Request, agentApiKey: string): Promise<Response>;
@@ -1580,6 +1585,21 @@ export class DaemonConnection implements DaemonConnectionClient {
       url: this.#serverEndpoint(
         "Agent weekly-report-key-points HTTP",
         agentApiRoutes.cloud.weeklyReportKeyPoints.path,
+      ),
+      ...this.#agentKeys(agentApiKey),
+      request,
+    });
+  }
+
+  async agentWeeklyReportMemory(
+    request: import("./weekly-report-memory").WeeklyReportMemoryCommand,
+    agentApiKey: string,
+  ): Promise<import("./weekly-report-memory").WeeklyReportMemoryResult> {
+    if (!this.#connected) throw new Error("daemon connection is not connected");
+    return defaultAgentWeeklyReportMemoryHttpClient.execute({
+      url: this.#serverEndpoint(
+        "Agent weekly-report-memory HTTP",
+        agentApiRoutes.cloud.weeklyReportMemory.path,
       ),
       ...this.#agentKeys(agentApiKey),
       request,
