@@ -26,6 +26,7 @@ import {
   saveDateTimePreferences,
 } from "#src/features/settings/settings.functions";
 import { loadWorkspaceMembers } from "#src/features/workspaces/members.functions";
+import { MEMBER_PAGE_SIZE } from "#src/features/workspaces/member-directory";
 import { getLocale, setLocale } from "#src/paraglide/runtime";
 import { readRailLabels, writeRailLabels } from "#src/features/settings/rail-labels";
 import {
@@ -54,6 +55,7 @@ import { useRefreshSidebarChannels } from "#src/features/conversations/sidebar-l
 import { workspacePath } from "#src/features/workspaces/workspace-url";
 import { WorkspaceDangerZone } from "#src/features/workspaces/workspace-danger-zone";
 import {
+  loadMemberAgentPage,
   renameWorkspace,
   uploadWorkspaceIcon,
 } from "#src/features/workspaces/workspaces.functions";
@@ -78,16 +80,25 @@ export const Route = createFileRoute("/w/$workspaceSlug/settings")({
   validateSearch: z.object({
     section: z.enum(settingsSections).optional().catch(undefined),
     github: z.enum(["connected", "error", "wrong_account"]).optional().catch(undefined),
+    // Settings → Account shows the platform avatar picker instead of the profile.
+    avatar: z.literal("choose").optional().catch(undefined),
   }),
   loader: async () => {
-    const [preferences, members, generalChannel, archivedChannels] = await Promise.all([
-      getUserPreferences(),
-      loadWorkspaceMembers(),
-      loadGeneralChannelHidden(),
-      loadArchivedChannels(),
-    ]);
+    const [preferences, members, generalChannel, archivedChannels, createdAgents] =
+      await Promise.all([
+        getUserPreferences(),
+        loadWorkspaceMembers(),
+        loadGeneralChannelHidden(),
+        loadArchivedChannels(),
+        loadMemberAgentPage({ data: { owner: "mine", query: "", limit: MEMBER_PAGE_SIZE } }),
+      ]);
     return {
       ...preferences,
+      createdAgents: createdAgents.items.map(({ id, name, avatarUrl }) => ({
+        id,
+        name,
+        avatarUrl,
+      })),
       generalChannelHidden: generalChannel?.hidden ?? null,
       archivedChannels,
       members: {
@@ -108,7 +119,7 @@ function SettingsPage() {
   const [liveAgentActivity, setLiveAgentActivity] = useState(true);
   const [hideEmptySidebarSections, setHideEmptySidebarSections] = useState(false);
   const [messageFullWidth, setMessageFullWidth] = useState(false);
-  const { section, github } = Route.useSearch();
+  const { section, github, avatar } = Route.useSearch();
   const { workspaceSlug } = Route.useParams();
   const navigate = Route.useNavigate();
   const {
@@ -116,6 +127,7 @@ function SettingsPage() {
     timeFormat: savedTimeFormat,
     conversationOpenMode: savedOpenMode,
     members,
+    createdAgents,
     generalChannelHidden,
     archivedChannels,
   } = Route.useLoaderData();
@@ -335,6 +347,7 @@ function SettingsPage() {
       section={section}
       onSectionChange={(next) => void navigate({ search: { section: next }, replace: true })}
       profile={profile}
+      createdAgents={createdAgents}
       members={members}
       locale={locale}
       theme={theme}
@@ -347,6 +360,12 @@ function SettingsPage() {
       onProfileSave={changeProfile}
       onAvatarUpload={uploadAvatar}
       onAvatarRemove={removeAvatar}
+      avatarPicker={avatar === "choose"}
+      onAvatarPickerChange={(open) =>
+        void navigate({
+          search: { section: "account", avatar: open ? "choose" : undefined },
+        })
+      }
       onLocaleChange={setLocale}
       onThemeChange={changeTheme}
       railLabels={railLabels}

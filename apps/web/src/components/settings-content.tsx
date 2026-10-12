@@ -1,5 +1,7 @@
 import { useSubmitGuard } from "#src/hooks/use-submit-guard";
 import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
+import { useHydrated } from "@tanstack/react-router";
+import { useReducedMotion } from "motion/react";
 import { Button as AriaButton, FileTrigger } from "react-aria-components";
 import {
   BellRinging01 as BellRing,
@@ -10,6 +12,7 @@ import {
   Clock as Clock3,
   Translate01 as Languages,
   LayoutLeft,
+  Mail01,
   MessageSquare01 as MessagesSquare,
   Moon01 as Moon,
   Share01,
@@ -17,13 +20,16 @@ import {
   Sun,
   SunSetting01 as SunMoon,
   Type01 as TypeIcon,
-  Upload01 as Upload,
   UserCircle as UserRound,
   Users01 as Users,
 } from "@untitledui/icons";
 
 import { PageHeader } from "#src/components/layout/page-header";
 import { Avatar } from "#src/components/base/avatar/avatar";
+import AnimatedGradient from "#src/components/spell/animated-gradient";
+import { heroGradient, useWebGl2 } from "#src/features/landing/landing-brand-panel";
+import { AvatarPicker } from "#src/features/profiles/avatar-picker";
+import profileBanner from "#src/features/profiles/profile-banner.webp?inline";
 import { Button } from "#src/components/base/buttons/button";
 import { ButtonUtility } from "#src/components/base/buttons/button-utility";
 import { Input } from "#src/components/base/input/input";
@@ -59,6 +65,7 @@ import {
   type ConversationOpenMode,
 } from "#src/features/settings/conversation-open-mode";
 import { avatarInitial, avatarToneClassName } from "#src/lib/avatar-tone";
+import { formatCalendarDate } from "#src/lib/dates";
 import { isTimeFormat, localeTimeFormat, type TimeFormat } from "#src/lib/time-format";
 import { cn } from "#src/lib/utils";
 import { isAppError } from "#src/lib/app-error";
@@ -90,7 +97,11 @@ interface SettingsContentProps {
     email: string | null;
     description: string;
     avatarUrl: string | null;
+    /** When the account was created, as an ISO instant. */
+    joinedAt: string;
   };
+  /** The Agents the person created in this Workspace, for the profile. */
+  createdAgents: Array<{ id: string; name: string; avatarUrl: string | null }>;
   members: {
     actorUserId: string;
     actorRole: string;
@@ -117,6 +128,9 @@ interface SettingsContentProps {
   onProfileSave: (profile: { displayName: string; description: string }) => Promise<void>;
   onAvatarUpload: (file: File) => Promise<void>;
   onAvatarRemove: () => Promise<void>;
+  /** Whether Settings → Account shows the platform avatar picker instead of the profile. */
+  avatarPicker: boolean;
+  onAvatarPickerChange: (open: boolean) => void;
   onLocaleChange: (locale: Locale) => void;
   onThemeChange: (theme: Theme) => void;
   onRailLabelsChange: (show: boolean) => void;
@@ -160,6 +174,15 @@ export function SettingsContent(props: SettingsContentProps) {
     integrations: m.settings_integrations(),
   };
   const sectionLabel = sectionLabels[section];
+  const sectionIcons: Record<SettingsSection, typeof UserRound> = {
+    account: UserRound,
+    "language-region": Languages,
+    "workspace-profile": Building,
+    members: Users,
+    preferences: SlidersHorizontal,
+    notifications: BellRing,
+    integrations: Share01,
+  };
 
   function selectSection(next: SettingsSection) {
     setInternalSection(next);
@@ -168,11 +191,11 @@ export function SettingsContent(props: SettingsContentProps) {
   }
 
   return (
-    <main className="flex h-full min-w-0">
+    <main data-panel-cards className="flex h-full min-w-0 bg-primary lg:gap-2 lg:bg-transparent">
       <nav
         aria-label={m.settings_title()}
         className={cn(
-          "min-w-0 flex-col overflow-hidden border-secondary bg-primary md:flex md:w-60 md:shrink-0 md:border-r",
+          "min-w-0 flex-col overflow-hidden border-secondary bg-primary md:flex md:w-60 md:shrink-0 md:border-r lg:rounded-xl lg:border-r-0",
           showList ? "flex w-full" : "hidden",
         )}
       >
@@ -228,23 +251,26 @@ export function SettingsContent(props: SettingsContentProps) {
       </nav>
       <section
         className={cn(
-          "@container/settings min-w-0 flex-1 flex-col overflow-hidden bg-primary md:flex",
+          "@container/settings min-w-0 flex-1 flex-col overflow-hidden bg-primary md:flex lg:rounded-xl",
           showList ? "hidden" : "flex",
         )}
       >
-        <PageHeader
-          heading={sectionLabel}
-          leading={
-            <ButtonUtility
-              icon={ChevronLeft}
-              color="tertiary"
-              size="sm"
-              className="-ml-2 size-11 md:hidden"
-              tooltip={m.settings_title()}
-              onClick={() => setShowList(true)}
-            />
-          }
-        />
+        <div>
+          <PageHeader
+            icon={sectionIcons[section]}
+            heading={sectionLabel}
+            leading={
+              <ButtonUtility
+                icon={ChevronLeft}
+                color="tertiary"
+                size="sm"
+                className="-ml-2 size-11 md:hidden"
+                tooltip={m.settings_title()}
+                onClick={() => setShowList(true)}
+              />
+            }
+          />
+        </div>
 
         <section aria-label={sectionLabel} className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -327,10 +353,18 @@ function SettingsNavigationButton({
 
 function AccountSettings({
   profile,
+  createdAgents,
+  locale,
+  timeZone,
   onProfileSave,
   onAvatarUpload,
   onAvatarRemove,
+  avatarPicker,
+  onAvatarPickerChange,
 }: SettingsContentProps) {
+  const hydrated = useHydrated();
+  const gradientReady = useWebGl2();
+  const reducedMotion = useReducedMotion() ?? false;
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(profile.displayName ?? "");
   const [description, setDescription] = useState(profile.description);
@@ -423,136 +457,166 @@ function AccountSettings({
   const displayNameProblem = nameProblem(displayName);
   const canSave = changed && !saving && !displayNameProblem;
 
+  const headerAvatarSrc = editing
+    ? removeAvatar
+      ? null
+      : (pendingAvatarPreview ?? profile.avatarUrl)
+    : profile.avatarUrl;
+
+  if (avatarPicker) {
+    return (
+      <AvatarPicker
+        name={profile.name}
+        currentAvatarUrl={profile.avatarUrl}
+        onSave={async (file) => {
+          await onAvatarUpload(file);
+          setSaveSuccess(true);
+        }}
+        onClose={() => onAvatarPickerChange(false)}
+      />
+    );
+  }
+
   return (
-    <div className="w-full px-4 pb-8 sm:px-6">
+    <div className="w-full pb-8">
       <section>
-        <header className="flex min-h-12 items-center justify-between gap-4 py-3">
-          <h2 className="text-lg font-semibold">{m.settings_profile()}</h2>
-          {!editing && (
-            <Button type="button" color="secondary" onPress={startEditing}>
-              {m.settings_profile_edit()}
-            </Button>
-          )}
-        </header>
-
-        {editing ? (
-          <>
-            <div className="border-t border-secondary py-6">
-              <div className="flex flex-wrap items-center gap-4">
-                <Avatar
-                  size="2xl"
-                  src={removeAvatar ? null : (pendingAvatarPreview ?? profile.avatarUrl)}
-                  alt={profile.name}
-                  initials={avatarInitial(profile.name)}
-                  contentClassName={avatarToneClassName(profile.name)}
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    color="secondary"
-                    iconLeading={Upload}
-                    isDisabled={saving}
-                    onPress={() => avatarInputRef.current?.click()}
-                  >
-                    {m.settings_avatar_change()}
-                  </Button>
-                  <input
-                    ref={avatarInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    aria-label={m.settings_avatar_change()}
-                    disabled={saving}
-                    className="sr-only"
-                    onChange={upload}
-                  />
-                  {profile.avatarUrl && !removeAvatar && (
-                    <Button
-                      type="button"
-                      color="tertiary"
-                      isDisabled={saving}
-                      onPress={() => {
-                        setPendingAvatar(null);
-                        setRemoveAvatar(true);
-                      }}
-                    >
-                      {m.settings_avatar_remove()}
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <p className="mt-2 text-xs text-tertiary">{m.settings_avatar_help()}</p>
-
-              <div className="mt-6 grid gap-6 border-t border-secondary pt-6 md:grid-cols-2 xl:grid-cols-3">
-                <Input
-                  label={m.settings_display_name()}
-                  hint={
-                    displayNameProblem ? (
-                      <span role="alert">{nameProblemText[displayNameProblem]()}</span>
-                    ) : undefined
-                  }
-                  isRequired
-                  isInvalid={displayNameProblem !== undefined}
-                  value={displayName}
-                  isDisabled={saving}
-                  onChange={setDisplayName}
-                />
-
-                <div className="flex flex-col gap-1.5 md:col-span-2 xl:col-span-3">
-                  <TextArea
-                    label={m.settings_user_description()}
-                    value={description}
-                    maxLength={280}
-                    rows={4}
-                    placeholder={m.settings_user_description_placeholder()}
-                    isDisabled={saving}
-                    hideRequiredIndicator
-                    onChange={setDescription}
-                  />
-                  <p className="text-right text-sm text-tertiary tabular-nums">
-                    {description.length}/280
-                  </p>
-                </div>
-              </div>
+        <div aria-hidden="true" className="relative h-32 overflow-hidden bg-primary-solid sm:h-44">
+          <img src={profileBanner} alt="" className="size-full object-cover" />
+          {/* The picture above is the gradient's own first frame, so the page shows the finished
+              banner at once; the live gradient draws over it from that same frame and then moves. */}
+          {gradientReady && (
+            <div className="absolute inset-0 isolate">
+              <AnimatedGradient config={heroGradient} theme="dark" paused={reducedMotion} />
             </div>
-
-            <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-secondary py-4">
-              {saveError && (
-                <div className="mr-auto">
-                  <SaveErrorMessage error={saveError} />
-                </div>
-              )}
+          )}
+        </div>
+        <header className="flex min-w-0 items-start gap-4 px-4 sm:gap-6 sm:px-8">
+          <div className="relative -mt-12 shrink-0 rounded-[1.75rem] bg-primary p-1 shadow-lg">
+            <Avatar
+              size="2xl"
+              className="avatar-profile size-24"
+              src={headerAvatarSrc}
+              alt={profile.name}
+              initials={avatarInitial(profile.name)}
+              contentClassName={avatarToneClassName(profile.name)}
+            />
+          </div>
+          <div className="min-w-0 flex-1 pt-4">
+            <h2 className="break-words text-display-xs font-semibold text-primary">
+              {profile.name}
+            </h2>
+            {profile.email ? (
+              <p className="break-words text-md text-tertiary">{profile.email}</p>
+            ) : null}
+            {editing && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-4">
+                <Button
+                  type="button"
+                  color="link-color"
+                  size="sm"
+                  isDisabled={saving}
+                  onPress={() => onAvatarPickerChange(true)}
+                >
+                  {m.settings_avatar_choose()}
+                </Button>
+                <Button
+                  type="button"
+                  color="link-gray"
+                  size="sm"
+                  isDisabled={saving}
+                  onPress={() => avatarInputRef.current?.click()}
+                >
+                  {m.settings_avatar_change()}
+                </Button>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  aria-label={m.settings_avatar_change()}
+                  disabled={saving}
+                  className="sr-only"
+                  onChange={upload}
+                />
+                <Button
+                  type="button"
+                  color="link-gray"
+                  size="sm"
+                  isDisabled={saving || removeAvatar || !(profile.avatarUrl || pendingAvatar)}
+                  onPress={() => {
+                    setPendingAvatar(null);
+                    setRemoveAvatar(Boolean(profile.avatarUrl));
+                  }}
+                >
+                  {m.settings_avatar_remove()}
+                </Button>
+              </div>
+            )}
+          </div>
+          {editing ? (
+            <div className="mt-4 flex shrink-0 items-center gap-3">
               <Button type="button" color="secondary" isDisabled={saving} onPress={cancelEditing}>
                 {m.settings_profile_cancel()}
               </Button>
               <Button type="button" isDisabled={!canSave} onPress={save}>
                 {saving ? m.settings_profile_saving() : m.settings_profile_save()}
               </Button>
-            </footer>
-          </>
-        ) : (
-          <>
-            {saveSuccess && (
-              <p role="status" className="border-t border-secondary py-3 text-sm text-tertiary">
-                <Check aria-hidden="true" className="mr-2 inline size-4 text-primary" />
-                {m.settings_profile_save_success()}
-              </p>
-            )}
-            <div className="flex min-w-0 items-center gap-4 border-t border-secondary py-6">
-              <Avatar
-                size="2xl"
-                src={profile.avatarUrl}
-                alt={profile.name}
-                initials={avatarInitial(profile.name)}
-                contentClassName={avatarToneClassName(profile.name)}
-              />
-              <div className="min-w-0">
-                <p className="break-words text-lg font-semibold">{profile.name}</p>
-                {profile.email ? (
-                  <p className="break-words text-sm text-tertiary">{profile.email}</p>
-                ) : null}
-              </div>
             </div>
-            <dl className="grid gap-x-8 gap-y-6 border-t border-secondary pt-6 md:grid-cols-2 xl:grid-cols-3">
+          ) : (
+            <Button type="button" className="mt-4 shrink-0" onPress={startEditing}>
+              {m.settings_profile_edit()}
+            </Button>
+          )}
+        </header>
+
+        {saveSuccess && !editing && (
+          <p role="status" className="mt-6 px-4 text-sm text-tertiary sm:px-8">
+            <Check aria-hidden="true" className="mr-2 inline size-4 text-primary" />
+            {m.settings_profile_save_success()}
+          </p>
+        )}
+
+        <div className="mt-8 grid gap-6 px-4 sm:px-8 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:gap-12">
+          <div>
+            <h3 className="text-sm font-semibold text-primary">{m.settings_profile()}</h3>
+            <p className="text-sm text-tertiary">{m.settings_profile_help()}</p>
+          </div>
+
+          {editing ? (
+            <div className="flex min-w-0 flex-col gap-6">
+              {saveError && <SaveErrorMessage error={saveError} />}
+              <Input
+                label={m.settings_display_name()}
+                hint={
+                  displayNameProblem ? (
+                    <span role="alert">{nameProblemText[displayNameProblem]()}</span>
+                  ) : undefined
+                }
+                isRequired
+                isInvalid={displayNameProblem !== undefined}
+                value={displayName}
+                isDisabled={saving}
+                onChange={setDisplayName}
+              />
+
+              {profile.email ? (
+                <Input label={m.settings_email()} icon={Mail01} value={profile.email} isReadOnly />
+              ) : null}
+
+              <TextArea
+                label={m.settings_user_description()}
+                value={description}
+                maxLength={280}
+                rows={4}
+                placeholder={m.settings_user_description_placeholder()}
+                isDisabled={saving}
+                hideRequiredIndicator
+                hint={m.settings_description_remaining({ count: 280 - description.length })}
+                onChange={setDescription}
+              />
+              <p className="-mt-4 text-xs text-tertiary">{m.settings_avatar_help()}</p>
+            </div>
+          ) : (
+            <dl className="flex min-w-0 flex-col gap-6">
               <ProfileValue label={m.settings_display_name()} value={profile.displayName || "-"} />
               {profile.email ? (
                 <ProfileValue label={m.settings_email()} value={profile.email} />
@@ -560,11 +624,33 @@ function AccountSettings({
               <ProfileValue
                 label={m.settings_user_description()}
                 value={profile.description || "-"}
-                full
               />
+              <ProfileValue
+                label={m.settings_joined_at()}
+                value={hydrated ? formatCalendarDate(profile.joinedAt, timeZone, locale) : ""}
+              />
+              <div className="flex min-w-0 flex-col gap-2">
+                <dt className="text-sm font-semibold text-primary">
+                  {m.settings_created_agents()}
+                </dt>
+                <dd className="flex min-w-0 flex-wrap gap-2 text-sm text-primary">
+                  {createdAgents.length === 0
+                    ? "-"
+                    : createdAgents.map((agent) => (
+                        <Avatar
+                          key={agent.id}
+                          size="xs"
+                          src={agent.avatarUrl}
+                          alt={agent.name}
+                          initials={avatarInitial(agent.name)}
+                          contentClassName={avatarToneClassName(agent.name)}
+                        />
+                      ))}
+                </dd>
+              </div>
             </dl>
-          </>
-        )}
+          )}
+        </div>
       </section>
     </div>
   );
@@ -582,22 +668,11 @@ function nameProblem(name: string): PersonNameProblem | undefined {
   return checked.ok ? undefined : checked.problem;
 }
 
-function ProfileValue({
-  label,
-  value,
-  full = false,
-}: {
-  label: string;
-  value: string;
-  /** Long values (the description) span the full row. */
-  full?: boolean;
-}) {
+function ProfileValue({ label, value }: { label: string; value: string }) {
   return (
-    <div className={cn("flex min-w-0 flex-col gap-1", full && "md:col-span-2 xl:col-span-3")}>
-      <dt className="text-sm text-tertiary">{label}</dt>
-      <dd className="min-w-0 text-sm font-medium break-words whitespace-pre-wrap text-primary">
-        {value}
-      </dd>
+    <div className="flex min-w-0 flex-col gap-1">
+      <dt className="text-sm font-semibold text-primary">{label}</dt>
+      <dd className="min-w-0 text-sm break-words whitespace-pre-wrap text-primary">{value}</dd>
     </div>
   );
 }
