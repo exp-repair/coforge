@@ -1,4 +1,8 @@
 import type { Prisma, PrismaClient } from "#src/generated/prisma/client";
+import {
+  FOUNDATION_MODELS_WEEKLY_SECTIONS,
+  FOUNDATION_MODELS_WEEKLY_TEMPLATE_NAME,
+} from "#src/features/records/foundation-models-weekly";
 import { generalChannelForCreator } from "#src/server/conversations/public-channels.server";
 
 /**
@@ -22,8 +26,33 @@ async function lockSlugs(tx: Prisma.TransactionClient, slugs: string[]): Promise
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`workspace-slug:${slug}`}, 0))::text`;
 }
 
-/** Creates a Workspace owned by `userId`, with its `#general`, unless another Workspace had `slug`
- * before. */
+/** The row a brand-new Workspace writes: owner membership, `#general`, and the default weekly
+ * template. */
+export function ownedWorkspaceCreateData(input: { slug: string; name: string; userId: string }) {
+  return {
+    slug: input.slug,
+    name: input.name,
+    members: { create: { userId: input.userId, role: "owner" as const } },
+    conversations: generalChannelForCreator(input.userId),
+    weeklyTemplates: {
+      create: {
+        ownerId: input.userId,
+        name: FOUNDATION_MODELS_WEEKLY_TEMPLATE_NAME,
+        frequency: "weekly",
+        sendTime: "15:00",
+        sendWeekday: 5,
+        scheduleEnabled: false,
+        applied: false,
+        allMembers: true,
+        mainTitles: [],
+        dimensions: FOUNDATION_MODELS_WEEKLY_SECTIONS,
+      },
+    },
+  };
+}
+
+/** Creates a Workspace owned by `userId`, with its `#general` and the Foundation Models Weekly
+ * template, unless another Workspace had `slug` before. */
 export function createOwnedWorkspace<S extends Prisma.WorkspaceSelect>(
   db: PrismaClient,
   input: { slug: string; name: string; userId: string },
@@ -34,12 +63,7 @@ export function createOwnedWorkspace<S extends Prisma.WorkspaceSelect>(
     if (await tx.workspaceFormerSlug.findUnique({ where: { slug: input.slug } }))
       throw new WorkspaceSlugTakenError();
     return tx.workspace.create({
-      data: {
-        slug: input.slug,
-        name: input.name,
-        members: { create: { userId: input.userId, role: "owner" } },
-        conversations: generalChannelForCreator(input.userId),
-      },
+      data: ownedWorkspaceCreateData(input),
       select,
     });
   });
