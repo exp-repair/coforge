@@ -425,7 +425,7 @@ export const updateAgent = createServerFn({ method: "POST" })
     });
     const updated = await manageAgents(db).update(
       { userId: user.id, workspaceId },
-      // The weekly-report assistant's display label (周报助手) is server-owned; drop any
+      // The weekly-report assistant's display label (「李健的周报助手」) is server-owned; drop any
       // client-supplied value so `ManageAgents.update` falls back to the existing displayName.
       // Its username (`name`) is fixed at creation and is never part of an update.
       assistant ? { ...data, displayName: undefined } : data,

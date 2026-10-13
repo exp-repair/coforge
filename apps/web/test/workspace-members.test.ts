@@ -51,6 +51,7 @@ describe("WorkspaceMembers", () => {
         },
       },
       agent: {
+        update: async () => ({}),
         findMany: async (query: object) => {
           queries.agents = query;
           return [
@@ -174,7 +175,7 @@ describe("WorkspaceMembers", () => {
         {
           id: "detached-agent",
           name: "reviewer",
-          displayName: "Reviewer",
+          displayName: "ada的周报助手",
           description: "Reviews changes",
           avatarUrl: null,
           computerId: null,
