@@ -1,5 +1,4 @@
-import type { ContainerRuntime } from "./docker-containers";
-import { createDockerContainers } from "./docker-containers";
+import { createDockerContainers, swarmAccepting, type ContainerRuntime } from "./docker-containers";
 import { HttpHostCloud, type ClaimedContainerJob } from "./host-cloud";
 
 export const HOST_POLL_INTERVAL_MS = 5_000;
@@ -17,9 +16,21 @@ export type HostProcessConfig = {
 
 export interface HostCloud {
   register(input: { token: string; nodeKey: string; name: string }): Promise<void>;
-  heartbeat(token: string): Promise<void>;
+  heartbeat(token: string, accepting: boolean): Promise<void>;
   claim(token: string): Promise<ClaimedContainerJob | null>;
-  report(token: string, jobId: string, containerId: string): Promise<void>;
+  report(token: string, jobId: string, containerId?: string): Promise<void>;
+}
+
+export function containerEnv(job: ClaimedContainerJob, serverUrl: string): Record<string, string> {
+  if (!job.daemonApiKey) throw new Error("cloud computer job has no daemon key");
+  return {
+    COFORGE_DAEMON_API_KEY: job.daemonApiKey,
+    COFORGE_WORKSPACE_ID: job.workspaceId,
+    COFORGE_WORKSPACE_SLUG: job.workspaceSlug,
+    COFORGE_COMPUTER_ID: job.computerId,
+    COFORGE_COMPUTER_NAME: job.name,
+    COFORGE_SERVER_URL: serverUrl.replace(/\/+$/, ""),
+  };
 }
 
 export async function acceptClaimedJob(
@@ -27,26 +38,29 @@ export async function acceptClaimedJob(
   config: Pick<HostProcessConfig, "serverUrl" | "image">,
   ports: {
     containers: ContainerRuntime;
-    report: (containerId: string) => Promise<unknown>;
+    report: (containerId?: string) => Promise<unknown>;
   },
-): Promise<string> {
-  const existing = await ports.containers.findByComputerId(job.computerId);
-  const containerId =
+): Promise<void> {
+  if (job.operation === "delete") {
+    await ports.containers.removeService(job.computerId);
+    await ports.report();
+    return;
+  }
+  const env = containerEnv(job, config.serverUrl);
+  if (job.operation === "attach") {
+    await ports.containers.attachWorkspace({ computerId: job.computerId, env });
+    await ports.report(job.computerId);
+    return;
+  }
+  const existing = await ports.containers.findService(job.computerId);
+  const serviceId =
     existing ??
-    (await ports.containers.run({
+    (await ports.containers.createService({
       computerId: job.computerId,
       image: config.image,
-      env: {
-        COFORGE_DAEMON_API_KEY: job.daemonApiKey,
-        COFORGE_WORKSPACE_ID: job.workspaceId,
-        COFORGE_WORKSPACE_SLUG: job.workspaceSlug,
-        COFORGE_COMPUTER_ID: job.computerId,
-        COFORGE_COMPUTER_NAME: job.name,
-        COFORGE_SERVER_URL: config.serverUrl.replace(/\/+$/, ""),
-      },
+      env,
     }));
-  await ports.report(containerId);
-  return containerId;
+  await ports.report(serviceId);
 }
 
 export async function runHost(
@@ -54,6 +68,7 @@ export async function runHost(
   ports: {
     cloud: HostCloud;
     containers: ContainerRuntime;
+    canPlace: () => Promise<boolean>;
     wait: (signal: AbortSignal) => Promise<void>;
   },
   signal: AbortSignal,
@@ -64,7 +79,8 @@ export async function runHost(
     name: config.name,
   });
   while (!signal.aborted) {
-    await ports.cloud.heartbeat(config.token);
+    const accepting = await ports.canPlace();
+    await ports.cloud.heartbeat(config.token, accepting);
     const job = await ports.cloud.claim(config.token);
     if (job) {
       await acceptClaimedJob(job, config, {
@@ -88,6 +104,7 @@ export async function runHostProcess(config: HostProcessConfig): Promise<void> {
       {
         cloud: new HttpHostCloud(fetch, config.serverUrl),
         containers: createDockerContainers(),
+        canPlace: () => swarmAccepting(),
         wait: (signal) => delay(config.pollIntervalMs, signal),
       },
       controller.signal,

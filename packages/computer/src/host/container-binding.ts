@@ -17,9 +17,10 @@ const REQUIRED_ENV = [
 const PRESENT_ENV = [...REQUIRED_ENV, "COFORGE_WORKSPACE_SLUG", "COFORGE_COMPUTER_NAME"] as const;
 
 /**
- * When a container was started for one Computer, write the Daemon credential and
- * one enabled workspace binding. A normal foreground start has none of these
- * variables and leaves the state directory untouched.
+ * Write the Daemon credential and one enabled workspace binding, keeping any
+ * other workspace already stored. A normal foreground start has none of these
+ * variables and leaves the state directory untouched. The same workspace is
+ * rewritten in place so a restarted task stays idempotent.
  */
 export async function prepareContainerBinding(
   env: Record<string, string | undefined>,
@@ -42,15 +43,19 @@ export async function prepareContainerBinding(
   }
   if (expectedServerUrl && server.origin !== new URL(expectedServerUrl).origin)
     throw new Error("Binding server does not match this daemon build");
-  await new FileBindingStore(stateDirectory, expectedServerUrl).save([
-    {
-      workspaceId,
-      computerId,
-      workspaceRoot: CONTAINER_WORKSPACE_ROOT,
-      serverHttpUrl,
-      enabled: true,
-    },
-  ]);
+  const bindings = new FileBindingStore(stateDirectory, expectedServerUrl);
+  const existing = await bindings.load();
+  const binding = {
+    workspaceId,
+    computerId,
+    workspaceRoot: CONTAINER_WORKSPACE_ROOT,
+    serverHttpUrl,
+    enabled: true,
+  };
+  const next = existing.some((item) => item.workspaceId === workspaceId)
+    ? existing.map((item) => (item.workspaceId === workspaceId ? binding : item))
+    : [...existing, binding];
+  await bindings.save(next);
   await new FileDaemonCredentialStore(workspaceStateDirectory(stateDirectory, workspaceId)).save(
     workspaceId,
     computerId,

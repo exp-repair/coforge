@@ -1,17 +1,26 @@
 import { describe, expect, test } from "bun:test";
 
-import { dockerFindArgs, dockerRunArgs } from "#src/host/docker-containers";
+import {
+  dockerAttachExecArgs,
+  dockerServiceCreateArgs,
+  dockerServiceFindArgs,
+  dockerServiceForceUpdateArgs,
+  dockerServiceRemoveArgs,
+  swarmAccepting,
+} from "#src/host/docker-containers";
 import { HttpHostCloud } from "#src/host/host-cloud";
 import { acceptClaimedJob, runHost, type ClaimedContainerJob } from "#src/host/run-host";
 
+const daemonKey = `dk_${"b".repeat(43)}`;
+
 const job: ClaimedContainerJob = {
   jobId: "job-1",
-  hostId: "host-1",
+  operation: "create",
   computerId: "computer-1",
   workspaceId: "workspace-1",
   workspaceSlug: "alpha",
   name: "lab",
-  daemonApiKey: `dk_${"b".repeat(43)}`,
+  daemonApiKey: daemonKey,
 };
 
 const config = {
@@ -20,20 +29,21 @@ const config = {
   nodeKey: "machine-1",
   name: "lab-host",
   image: "coforge-computer:local",
+  pollIntervalMs: 5000,
 };
 
 describe("host process", () => {
-  test("one claim runs one container and reports its id", async () => {
+  test("one create claim places one service and reports its id", async () => {
     const runs: string[] = [];
-    const reports: string[] = [];
+    const reports: Array<string | undefined> = [];
     await acceptClaimedJob(job, config, {
       containers: {
-        findByComputerId: async () => undefined,
-        run: async (input) => {
+        findService: async () => undefined,
+        createService: async (input) => {
           runs.push(input.computerId);
           expect(input.image).toBe("coforge-computer:local");
           expect(input.env).toEqual({
-            COFORGE_DAEMON_API_KEY: job.daemonApiKey,
+            COFORGE_DAEMON_API_KEY: daemonKey,
             COFORGE_WORKSPACE_ID: "workspace-1",
             COFORGE_WORKSPACE_SLUG: "alpha",
             COFORGE_COMPUTER_ID: "computer-1",
@@ -41,7 +51,13 @@ describe("host process", () => {
             COFORGE_SERVER_URL: "https://server.example",
           });
           expect(JSON.stringify(input.env)).not.toContain("refresh");
-          return "container-1";
+          return "service-1";
+        },
+        removeService: async () => {
+          throw new Error("unexpected remove");
+        },
+        attachWorkspace: async () => {
+          throw new Error("unexpected attach");
         },
       },
       report: async (containerId) => {
@@ -49,24 +65,66 @@ describe("host process", () => {
       },
     });
     expect(runs).toEqual(["computer-1"]);
-    expect(reports).toEqual(["container-1"]);
+    expect(reports).toEqual(["service-1"]);
   });
 
-  test("a container already labeled with the computer id is reported without running another", async () => {
+  test("an existing service is reported without creating another", async () => {
     let runs = 0;
-    const containerId = await acceptClaimedJob(job, config, {
+    const reports: Array<string | undefined> = [];
+    await acceptClaimedJob(job, config, {
       containers: {
-        findByComputerId: async (computerId) =>
-          computerId === "computer-1" ? "container-existing" : undefined,
-        run: async () => {
+        findService: async (computerId) =>
+          computerId === "computer-1" ? "service-existing" : undefined,
+        createService: async () => {
           runs += 1;
-          return "container-new";
+          return "service-new";
+        },
+        removeService: async () => undefined,
+        attachWorkspace: async () => undefined,
+      },
+      report: async (id) => {
+        reports.push(id);
+      },
+    });
+    expect(reports).toEqual(["service-existing"]);
+    expect(runs).toBe(0);
+  });
+
+  test("delete removes the service and attach writes the workspace then restarts the task", async () => {
+    const calls: string[] = [];
+    await acceptClaimedJob({ ...job, operation: "delete", daemonApiKey: null }, config, {
+      containers: {
+        findService: async () => undefined,
+        createService: async () => "service-1",
+        removeService: async (computerId) => {
+          calls.push(`remove:${computerId}`);
+        },
+        attachWorkspace: async () => undefined,
+      },
+      report: async (id) => {
+        calls.push(`report:${id ?? ""}`);
+      },
+    });
+    await acceptClaimedJob({ ...job, operation: "attach", jobId: "job-2" }, config, {
+      containers: {
+        findService: async () => "service-1",
+        createService: async () => "service-new",
+        removeService: async () => undefined,
+        attachWorkspace: async (input) => {
+          calls.push(`attach:${input.computerId}`);
+          expect(input.env.COFORGE_WORKSPACE_ID).toBe("workspace-1");
         },
       },
-      report: async (id) => id,
+      report: async (id) => {
+        calls.push(`report:${id ?? ""}`);
+      },
     });
-    expect(containerId).toBe("container-existing");
-    expect(runs).toBe(0);
+    expect(calls).toEqual([
+      "remove:computer-1",
+      "report:",
+      "attach:computer-1",
+      "report:computer-1",
+    ]);
   });
 
   test("a tick registers, heartbeats, claims, and stops when the signal aborts", async () => {
@@ -79,8 +137,8 @@ describe("host process", () => {
           register: async () => {
             calls.push("register");
           },
-          heartbeat: async () => {
-            calls.push("heartbeat");
+          heartbeat: async (_token, accepting) => {
+            calls.push(`heartbeat:${accepting}`);
           },
           claim: async () => {
             calls.push("claim");
@@ -91,9 +149,12 @@ describe("host process", () => {
           },
         },
         containers: {
-          findByComputerId: async () => undefined,
-          run: async () => "container-1",
+          findService: async () => undefined,
+          createService: async () => "service-1",
+          removeService: async () => undefined,
+          attachWorkspace: async () => undefined,
         },
+        canPlace: async () => false,
         wait: async () => {
           calls.push("wait");
           controller.abort();
@@ -101,14 +162,14 @@ describe("host process", () => {
       },
       controller.signal,
     );
-    expect(calls).toEqual(["register", "heartbeat", "claim", "wait"]);
+    expect(calls).toEqual(["register", "heartbeat:false", "claim", "wait"]);
   });
 });
 
 describe("host cloud HTTP", () => {
   test("register, claim, and report use the host token and the host routes", async () => {
     const requests: Array<{ url: string; authorization: string | null; body: unknown }> = [];
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
       requests.push({
         url: String(input),
         authorization: new Headers(init?.headers).get("authorization"),
@@ -144,32 +205,64 @@ describe("host cloud HTTP", () => {
   });
 });
 
-describe("docker container arguments", () => {
-  test("find and run address one computer id label", () => {
-    expect(dockerFindArgs("computer-1")).toEqual([
-      "ps",
-      "-aq",
+describe("swarm service arguments", () => {
+  test("find, create, remove, and attach address one computer service", () => {
+    expect(dockerServiceFindArgs("computer-1")).toEqual([
+      "service",
+      "ls",
+      "-q",
       "--filter",
       "label=coforge.computer_id=computer-1",
     ]);
     expect(
-      dockerRunArgs({
+      dockerServiceCreateArgs({
         computerId: "computer-1",
         image: "coforge-computer:local",
         env: { COFORGE_SERVER_URL: "https://server.example" },
       }),
     ).toEqual([
-      "run",
-      "-d",
+      "service",
+      "create",
       "--name",
       "coforge-computer-1",
-      "--restart",
-      "unless-stopped",
+      "--replicas",
+      "1",
+      "--restart-condition",
+      "any",
       "--label",
       "coforge.computer_id=computer-1",
+      "--mount",
+      "type=volume,src=coforge-computer-1,dst=/root/.coforge",
       "--env",
       "COFORGE_SERVER_URL=https://server.example",
       "coforge-computer:local",
     ]);
+    expect(dockerServiceRemoveArgs("computer-1")).toEqual(["service", "rm", "coforge-computer-1"]);
+    expect(dockerAttachExecArgs("task-1", { COFORGE_WORKSPACE_ID: "workspace-2" })).toEqual([
+      "exec",
+      "--env",
+      "COFORGE_WORKSPACE_ID=workspace-2",
+      "task-1",
+      "coforge-computer",
+      "__attach-workspace",
+    ]);
+    expect(dockerServiceForceUpdateArgs("computer-1")).toEqual([
+      "service",
+      "update",
+      "--force",
+      "coforge-computer-1",
+    ]);
+  });
+
+  test("accepting is true only when a swarm node is Ready", async () => {
+    expect(
+      await swarmAccepting(async () => ({ exitCode: 0, stdout: "Ready\nDown\n", stderr: "" })),
+    ).toBe(true);
+    expect(await swarmAccepting(async () => ({ exitCode: 0, stdout: "Down\n", stderr: "" }))).toBe(
+      false,
+    );
+    expect(
+      await swarmAccepting(async () => ({ exitCode: 1, stdout: "", stderr: "not a swarm" })),
+    ).toBe(false);
   });
 });

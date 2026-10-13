@@ -286,28 +286,31 @@ export async function runCli(
     });
   program
     .command("host")
-    .description("Run the host process that creates container Computers on this machine.")
-    .requiredOption("--server-url <url>", "CoForge server URL")
-    .requiredOption("--token <token>", "Host enrollment token")
-    .requiredOption("--node-key <key>", "Stable key for this machine")
-    .requiredOption("--name <name>", "Name reported for this host")
-    .requiredOption("--image <image>", "Container image to run")
+    .description("Run the Swarm manager process that places cloud Computer services.")
+    .option("--server-url <url>", "CoForge server URL. Defaults to COFORGE_SERVER_URL.")
+    .option("--token <token>", "Cluster token. Defaults to COFORGE_CLUSTER_TOKEN.")
+    .option(
+      "--node-key <key>",
+      "Stable key for this manager. Defaults to COFORGE_CLUSTER_NODE_KEY.",
+    )
+    .option("--name <name>", "Name reported for this cluster. Defaults to COFORGE_CLUSTER_NAME.")
+    .option("--image <image>", "Computer image. Defaults to COFORGE_COMPUTER_IMAGE.")
     .option("--poll-interval <ms>", "Milliseconds between claim polls", "5000")
     .action(
       (options: {
-        serverUrl: string;
-        token: string;
-        nodeKey: string;
-        name: string;
-        image: string;
+        serverUrl?: string;
+        token?: string;
+        nodeKey?: string;
+        name?: string;
+        image?: string;
         pollInterval: string;
       }) =>
         requireHost(dependencies).run({
-          serverUrl: options.serverUrl,
-          token: options.token,
-          nodeKey: options.nodeKey,
-          name: options.name,
-          image: options.image,
+          serverUrl: hostSetting(options.serverUrl, "COFORGE_SERVER_URL"),
+          token: hostSetting(options.token, "COFORGE_CLUSTER_TOKEN"),
+          nodeKey: hostSetting(options.nodeKey, "COFORGE_CLUSTER_NODE_KEY"),
+          name: hostSetting(options.name, "COFORGE_CLUSTER_NAME"),
+          image: hostSetting(options.image, "COFORGE_COMPUTER_IMAGE"),
           pollIntervalMs: Number(options.pollInterval),
         }),
     );
@@ -377,6 +380,12 @@ function requireForeground(dependencies: CliDependencies): ForegroundCommand {
 function requireStatus(dependencies: CliDependencies): StatusCommand {
   if (!dependencies.status) throw new Error("Status is unavailable in this build");
   return dependencies.status;
+}
+
+function hostSetting(flag: string | undefined, envName: string): string {
+  const value = flag?.trim() || process.env[envName]?.trim() || "";
+  if (!value) throw new Error(`host requires ${envName}`);
+  return value;
 }
 
 function requireHost(dependencies: CliDependencies): HostCommand {

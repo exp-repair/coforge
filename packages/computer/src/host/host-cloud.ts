@@ -1,16 +1,20 @@
+export type HostJobOperation = "create" | "delete" | "attach";
+
 export type ClaimedContainerJob = {
   jobId: string;
-  hostId: string;
+  operation: HostJobOperation;
   computerId: string;
   workspaceId: string;
   workspaceSlug: string;
   name: string;
-  daemonApiKey: string;
+  daemonApiKey: string | null;
 };
+
+type HostFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export class HttpHostCloud {
   constructor(
-    private readonly fetchImpl: typeof fetch,
+    private readonly fetchImpl: HostFetch,
     serverUrl: string,
   ) {
     this.origin = serverUrl.replace(/\/+$/, "");
@@ -25,8 +29,8 @@ export class HttpHostCloud {
     });
   }
 
-  async heartbeat(token: string): Promise<void> {
-    await this.post("/api/hosts/heartbeat", token);
+  async heartbeat(token: string, accepting: boolean): Promise<void> {
+    await this.post("/api/hosts/heartbeat", token, { accepting });
   }
 
   async claim(token: string): Promise<ClaimedContainerJob | null> {
@@ -35,11 +39,19 @@ export class HttpHostCloud {
     return claimedJob(body.job);
   }
 
-  async report(token: string, jobId: string, containerId: string): Promise<void> {
-    await this.post(`/api/hosts/jobs/${encodeURIComponent(jobId)}/report`, token, { containerId });
+  async report(token: string, jobId: string, containerId?: string): Promise<void> {
+    await this.post(
+      `/api/hosts/jobs/${encodeURIComponent(jobId)}/report`,
+      token,
+      containerId ? { containerId } : {},
+    );
   }
 
-  private async post(path: string, token: string, body?: Record<string, string>): Promise<unknown> {
+  private async post(
+    path: string,
+    token: string,
+    body?: Record<string, string | boolean>,
+  ): Promise<unknown> {
     const response = await this.fetchImpl(`${this.origin}${path}`, {
       method: "POST",
       headers: {
@@ -58,14 +70,18 @@ export class HttpHostCloud {
 function claimedJob(value: unknown): ClaimedContainerJob {
   if (!value || typeof value !== "object") throw new Error("invalid claimed job");
   const job = value as Record<string, unknown>;
+  const operation = job.operation;
+  if (operation !== "create" && operation !== "delete" && operation !== "attach") {
+    throw new Error("invalid claimed job");
+  }
   return {
     jobId: requiredString(job.jobId),
-    hostId: requiredString(job.hostId),
+    operation,
     computerId: requiredString(job.computerId),
     workspaceId: requiredString(job.workspaceId),
     workspaceSlug: requiredString(job.workspaceSlug),
     name: requiredString(job.name),
-    daemonApiKey: requiredString(job.daemonApiKey),
+    daemonApiKey: job.daemonApiKey == null ? null : requiredString(job.daemonApiKey),
   };
 }
 

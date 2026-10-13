@@ -1,39 +1,30 @@
 import type { PrismaClient } from "#src/generated/prisma/client";
-import type { HostRecord, HostStore } from "#src/server/hosts/host-directory.server";
+import type { ClusterRecord, ClusterStore } from "#src/server/hosts/host-directory.server";
 
-export class PrismaHostStore implements HostStore {
+export class PrismaHostStore implements ClusterStore {
   constructor(private readonly db: PrismaClient) {}
 
-  async insert(record: HostRecord): Promise<void> {
+  async insert(record: ClusterRecord): Promise<void> {
     await this.db.hostNode.create({ data: record });
   }
 
-  async findByTokenHash(tokenHash: string): Promise<HostRecord | undefined> {
+  async findByTokenHash(tokenHash: string): Promise<ClusterRecord | undefined> {
     return (await this.db.hostNode.findUnique({ where: { tokenHash } })) ?? undefined;
   }
 
-  async findByNodeKey(nodeKey: string): Promise<HostRecord | undefined> {
+  async findByNodeKey(nodeKey: string): Promise<ClusterRecord | undefined> {
     return (await this.db.hostNode.findUnique({ where: { nodeKey } })) ?? undefined;
   }
 
-  async save(record: HostRecord): Promise<void> {
+  async save(record: ClusterRecord): Promise<void> {
     await this.db.hostNode.update({
       where: { id: record.id },
       data: {
         name: record.name,
         nodeKey: record.nodeKey,
         lastSeenAt: record.lastSeenAt,
+        accepting: record.accepting,
       },
     });
-  }
-
-  async listSeenSince(cutoff: Date): Promise<HostRecord[]> {
-    return this.db.hostNode.findMany({
-      where: { lastSeenAt: { gte: cutoff } },
-    });
-  }
-
-  async findById(id: string): Promise<HostRecord | undefined> {
-    return (await this.db.hostNode.findUnique({ where: { id } })) ?? undefined;
   }
 }

@@ -1,12 +1,8 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
-
-export const HOST_ONLINE_WINDOW_MS = 90_000;
-
-const HOST_TOKEN = /^chn_[A-Za-z0-9_-]{43}$/;
+import { timingSafeEqual } from "node:crypto";
 
 export class HostDirectoryError extends Error {
   constructor(
-    readonly status: 401 | 409 | 422,
+    readonly status: 401 | 409 | 422 | 503,
     message: string,
   ) {
     super(message);
@@ -14,52 +10,39 @@ export class HostDirectoryError extends Error {
   }
 }
 
-export type HostRecord = {
+export type ClusterRecord = {
   id: string;
   name: string;
   nodeKey: string | null;
   tokenHash: string;
-  registrarUserId: string;
   lastSeenAt: Date | null;
+  accepting: boolean;
 };
 
-export type HostSnapshot = {
+export type ClusterSnapshot = {
   id: string;
   name: string;
   nodeKey: string;
-  registrarUserId: string;
+  accepting: boolean;
   lastSeenAt: string;
 };
 
-export interface HostStore {
-  insert(record: HostRecord): Promise<void>;
-  findByTokenHash(tokenHash: string): Promise<HostRecord | undefined>;
-  findByNodeKey(nodeKey: string): Promise<HostRecord | undefined>;
-  save(record: HostRecord): Promise<void>;
-  listSeenSince(cutoff: Date): Promise<HostRecord[]>;
-  findById(id: string): Promise<HostRecord | undefined>;
+export interface ClusterStore {
+  insert(record: ClusterRecord): Promise<void>;
+  findByTokenHash(tokenHash: string): Promise<ClusterRecord | undefined>;
+  findByNodeKey(nodeKey: string): Promise<ClusterRecord | undefined>;
+  save(record: ClusterRecord): Promise<void>;
 }
 
+/** The one Swarm this deployment controls. The token comes from the server environment. */
 export class HostDirectory {
-  constructor(private readonly store: HostStore) {}
+  constructor(
+    private readonly store: ClusterStore,
+    private readonly configuredToken: string | undefined,
+  ) {}
 
-  async issue(input: { registrarUserId: string; name: string; now: Date }): Promise<{
-    id: string;
-    name: string;
-    token: string;
-  }> {
-    const name = requireName(input.name);
-    const token = `chn_${randomBytes(32).toString("base64url")}`;
-    const id = crypto.randomUUID();
-    await this.store.insert({
-      id,
-      name,
-      nodeKey: null,
-      tokenHash: hashHostToken(token),
-      registrarUserId: input.registrarUserId,
-      lastSeenAt: null,
-    });
-    return { id, name, token };
+  async id(): Promise<string> {
+    return (await this.#configuredRecord()).id;
   }
 
   async register(input: {
@@ -67,9 +50,10 @@ export class HostDirectory {
     nodeKey: string;
     name: string;
     now: Date;
-  }): Promise<HostSnapshot> {
-    const record = await this.authenticate(input.token);
-    const nodeKey = requireNodeKey(input.nodeKey);
+  }): Promise<ClusterSnapshot> {
+    this.#assertPresented(input.token);
+    const record = await this.#configuredRecord();
+    const nodeKey = requireToken(input.nodeKey, "invalid node key");
     const name = requireName(input.name);
     if (record.nodeKey === null) {
       const taken = await this.store.findByNodeKey(nodeKey);
@@ -86,62 +70,65 @@ export class HostDirectory {
     return snapshot(record);
   }
 
-  async heartbeat(input: { token: string; now: Date }): Promise<HostSnapshot> {
-    const record = await this.authenticate(input.token);
+  async heartbeat(input: {
+    token: string;
+    accepting: boolean;
+    now: Date;
+  }): Promise<ClusterSnapshot> {
+    this.#assertPresented(input.token);
+    const record = await this.#configuredRecord();
     if (record.nodeKey === null) throw new HostDirectoryError(422, "host is not registered");
+    if (typeof input.accepting !== "boolean") {
+      throw new HostDirectoryError(422, "invalid accepting flag");
+    }
+    record.accepting = input.accepting;
     record.lastSeenAt = input.now;
     await this.store.save(record);
     return snapshot(record);
   }
 
-  async find(hostId: string): Promise<{ id: string } | undefined> {
-    const record = await this.store.findById(hostId);
-    return record ? { id: record.id } : undefined;
-  }
-
-  async findOnline(hostId: string, now: Date): Promise<{ id: string } | undefined> {
-    const record = await this.store.findById(hostId);
-    if (!record?.nodeKey || !record.lastSeenAt) return undefined;
-    if (record.lastSeenAt.getTime() < now.getTime() - HOST_ONLINE_WINDOW_MS) return undefined;
-    return { id: record.id };
-  }
-
-  async identify(token: string): Promise<{ id: string } | undefined> {
-    if (!HOST_TOKEN.test(token)) return undefined;
-    const record = await this.store.findByTokenHash(hashHostToken(token));
+  async authenticate(token: string): Promise<{ id: string; accepting: boolean } | undefined> {
+    const configured = configuredSecret(this.configuredToken);
+    if (!configured || !sameSecret(token, configured)) return undefined;
+    const record = await this.store.findByTokenHash(hashSecret(configured));
     if (!record?.nodeKey) return undefined;
-    const expected = Buffer.from(record.tokenHash);
-    const actual = Buffer.from(hashHostToken(token));
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return undefined;
-    return { id: record.id };
+    return { id: record.id, accepting: record.accepting };
   }
 
-  async listOnline(now: Date): Promise<HostSnapshot[]> {
-    const cutoff = new Date(now.getTime() - HOST_ONLINE_WINDOW_MS);
-    const records = await this.store.listSeenSince(cutoff);
-    return records
-      .filter((record) => record.nodeKey !== null && record.lastSeenAt !== null)
-      .map(snapshot)
-      .sort(
-        (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
-      );
-  }
-
-  private async authenticate(token: string): Promise<HostRecord> {
-    if (!HOST_TOKEN.test(token)) throw new HostDirectoryError(401, "invalid host token");
-    const tokenHash = hashHostToken(token);
-    const record = await this.store.findByTokenHash(tokenHash);
-    if (!record) throw new HostDirectoryError(401, "invalid host token");
-    const expected = Buffer.from(record.tokenHash);
-    const actual = Buffer.from(tokenHash);
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-      throw new HostDirectoryError(401, "invalid host token");
+  async #configuredRecord(): Promise<ClusterRecord> {
+    const token = configuredSecret(this.configuredToken);
+    if (!token) throw new HostDirectoryError(503, "cloud cluster is not configured");
+    const tokenHash = hashSecret(token);
+    const existing = await this.store.findByTokenHash(tokenHash);
+    if (existing) return existing;
+    const record: ClusterRecord = {
+      id: crypto.randomUUID(),
+      name: "cluster",
+      nodeKey: null,
+      tokenHash,
+      lastSeenAt: null,
+      accepting: true,
+    };
+    try {
+      await this.store.insert(record);
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const raced = await this.store.findByTokenHash(tokenHash);
+      if (raced) return raced;
+      throw error;
     }
     return record;
   }
+
+  #assertPresented(token: string): void {
+    const configured = configuredSecret(this.configuredToken);
+    if (!configured || !sameSecret(token, configured)) {
+      throw new HostDirectoryError(401, "invalid host token");
+    }
+  }
 }
 
-function snapshot(record: HostRecord): HostSnapshot {
+function snapshot(record: ClusterRecord): ClusterSnapshot {
   if (record.nodeKey === null || record.lastSeenAt === null) {
     throw new HostDirectoryError(422, "host is not registered");
   }
@@ -149,9 +136,16 @@ function snapshot(record: HostRecord): HostSnapshot {
     id: record.id,
     name: record.name,
     nodeKey: record.nodeKey,
-    registrarUserId: record.registrarUserId,
+    accepting: record.accepting,
     lastSeenAt: record.lastSeenAt.toISOString(),
   };
+}
+
+function configuredSecret(value: string | undefined): string | undefined {
+  const token = value?.trim() ?? "";
+  if (!token) return undefined;
+  if (token.length < 16 || token.length > 200 || /\s/.test(token)) return undefined;
+  return token;
 }
 
 function requireName(value: string): string {
@@ -160,14 +154,22 @@ function requireName(value: string): string {
   return name;
 }
 
-function requireNodeKey(value: string): string {
-  const nodeKey = value.trim();
-  if (!nodeKey || nodeKey.length > 200 || /\s/.test(nodeKey)) {
-    throw new HostDirectoryError(422, "invalid node key");
-  }
-  return nodeKey;
+function requireToken(value: string, message: string): string {
+  const token = value.trim();
+  if (!token || token.length > 200 || /\s/.test(token)) throw new HostDirectoryError(422, message);
+  return token;
 }
 
-function hashHostToken(value: string): string {
+function sameSecret(presented: string, configured: string): boolean {
+  const left = Buffer.from(hashSecret(presented));
+  const right = Buffer.from(hashSecret(configured));
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function hashSecret(value: string): string {
   return new Bun.CryptoHasher("sha256").update(value).digest("hex");
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }

@@ -52,6 +52,27 @@ test("a container writes one workspace binding and the daemon key", async () => 
   expect(written.join("\n")).not.toContain("alpha");
 });
 
+test("a second workspace is appended and the same workspace is not duplicated", async () => {
+  const directory = await stateDirectory();
+  expect(await prepareContainerBinding(env, directory)).toBe(true);
+  expect(
+    await prepareContainerBinding(
+      {
+        ...env,
+        COFORGE_WORKSPACE_ID: "workspace-2",
+        COFORGE_DAEMON_API_KEY: `dk_${"c".repeat(43)}`,
+      },
+      directory,
+    ),
+  ).toBe(true);
+  expect(await prepareContainerBinding(env, directory)).toBe(true);
+  const binding = await Bun.file(join(directory, "bindings.json")).json();
+  expect(binding.map((item: { workspaceId: string }) => item.workspaceId)).toEqual([
+    "workspace-1",
+    "workspace-2",
+  ]);
+});
+
 test("foreground without container environment leaves the state directory empty", async () => {
   const directory = await stateDirectory();
   expect(await prepareContainerBinding({}, directory)).toBe(false);

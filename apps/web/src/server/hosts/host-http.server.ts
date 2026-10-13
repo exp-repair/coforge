@@ -1,57 +1,10 @@
 import { HostDirectory, HostDirectoryError } from "./host-directory.server";
 
-type UserAuthenticator = (request: Request) => Promise<{ userId: string } | null>;
-
-export function createHostHttpHandler(dependencies: {
-  directory: HostDirectory;
-  authenticateUser: UserAuthenticator;
-  now: () => Date;
-}) {
+export function createHostHttpHandler(dependencies: { directory: HostDirectory; now: () => Date }) {
   return {
-    issue: (request: Request) => issueHost(request, dependencies),
-    list: (request: Request) => listHosts(request, dependencies),
     register: (request: Request) => registerHost(request, dependencies),
     heartbeat: (request: Request) => heartbeatHost(request, dependencies),
   };
-}
-
-async function issueHost(
-  request: Request,
-  dependencies: {
-    directory: HostDirectory;
-    authenticateUser: UserAuthenticator;
-    now: () => Date;
-  },
-): Promise<Response> {
-  const user = await dependencies.authenticateUser(request);
-  if (!user) return unauthorized();
-  const body = await readJson(request);
-  if (!body) return invalidRequest();
-  const name = typeof body.name === "string" ? body.name : "";
-  try {
-    const issued = await dependencies.directory.issue({
-      registrarUserId: user.userId,
-      name,
-      now: dependencies.now(),
-    });
-    return Response.json(issued);
-  } catch (error) {
-    return hostError(error);
-  }
-}
-
-async function listHosts(
-  request: Request,
-  dependencies: {
-    directory: HostDirectory;
-    authenticateUser: UserAuthenticator;
-    now: () => Date;
-  },
-): Promise<Response> {
-  const user = await dependencies.authenticateUser(request);
-  if (!user) return unauthorized();
-  const hosts = await dependencies.directory.listOnline(dependencies.now());
-  return Response.json({ hosts });
 }
 
 async function registerHost(
@@ -81,8 +34,14 @@ async function heartbeatHost(
 ): Promise<Response> {
   const token = bearerToken(request);
   if (!token) return invalidHostToken();
+  const body = await readJson(request);
+  if (!body || typeof body.accepting !== "boolean") return invalidRequest();
   try {
-    const host = await dependencies.directory.heartbeat({ token, now: dependencies.now() });
+    const host = await dependencies.directory.heartbeat({
+      token,
+      accepting: body.accepting,
+      now: dependencies.now(),
+    });
     return Response.json(host);
   } catch (error) {
     return hostError(error);
@@ -90,8 +49,7 @@ async function heartbeatHost(
 }
 
 function bearerToken(request: Request): string | undefined {
-  const header = request.headers.get("authorization") ?? "";
-  const match = /^Bearer (.+)$/.exec(header);
+  const match = /^Bearer (.+)$/.exec(request.headers.get("authorization") ?? "");
   return match?.[1];
 }
 
@@ -103,13 +61,6 @@ async function readJson(request: Request): Promise<Record<string, unknown> | und
   } catch {
     return undefined;
   }
-}
-
-function unauthorized(): Response {
-  return Response.json(
-    { error: { code: 401, message: "authentication required" } },
-    { status: 401 },
-  );
 }
 
 function invalidHostToken(): Response {

@@ -1,231 +1,289 @@
 import { describe, expect, test } from "bun:test";
 
-import { HostJobError, HostJobs, type HostJobRecord } from "#src/server/hosts/host-jobs.server";
+import {
+  compareJobs,
+  HostJobError,
+  HostJobs,
+  type CloudComputer,
+  type ClusterJobs,
+  type HostJobRecord,
+} from "#src/server/hosts/host-jobs.server";
 import { createHostJobHttpHandler } from "#src/server/hosts/host-job-http.server";
 
 const now = new Date("2026-09-30T06:00:00.000Z");
 const daemonKey = `dk_${"b".repeat(43)}`;
 
-class MemoryJobs {
-  readonly records: HostJobRecord[] = [];
-  async findByIdempotency(userId: string, idempotencyKey: string) {
-    return this.records.find(
-      (job) => job.requestedByUserId === userId && job.idempotencyKey === idempotencyKey,
+class MemoryFleet {
+  computers: CloudComputer[] = [];
+  links: Array<{ computerId: string; workspaceId: string }> = [];
+  async list(ownerId: string) {
+    return this.computers.filter((computer) => computer.ownerId === ownerId);
+  }
+  async insert(computer: CloudComputer) {
+    const clash = this.computers.some(
+      (item) =>
+        item.ownerId === computer.ownerId && item.slot === computer.slot && item.deletedAt === null,
+    );
+    if (clash) throw new HostJobError(409, "cloud computer slot is taken");
+    this.computers.push({ ...computer });
+  }
+  async markReady(id: string) {
+    const computer = this.computers.find((item) => item.id === id);
+    if (computer) computer.containerReady = true;
+  }
+  async markDeleted(id: string, at: Date) {
+    const computer = this.computers.find((item) => item.id === id);
+    if (computer) computer.deletedAt = at;
+  }
+  async isLinked(computerId: string, workspaceId: string) {
+    return this.links.some(
+      (link) => link.computerId === computerId && link.workspaceId === workspaceId,
     );
   }
-  async findById(id: string) {
-    return this.records.find((job) => job.id === id);
+  async link(computerId: string, workspaceId: string) {
+    this.links.push({ computerId, workspaceId });
+  }
+}
+
+class MemoryJobs implements ClusterJobs {
+  readonly records: HostJobRecord[] = [];
+  async findByIdempotency(ownerId: string, idempotencyKey: string) {
+    return this.records.find(
+      (job) => job.ownerId === ownerId && job.idempotencyKey === idempotencyKey,
+    );
   }
   async insert(record: HostJobRecord) {
     this.records.push({ ...record });
   }
-  async nextOpenForHost(hostId: string) {
+  async abandon(computerId: string, at: Date) {
+    for (const job of this.records) {
+      if (job.computerId === computerId && job.reportedAt === null && job.operation !== "delete") {
+        job.reportedAt = at;
+        job.daemonApiKey = null;
+      }
+    }
+  }
+  async next(clusterId: string, accepting: boolean) {
     return this.records
-      .filter((job) => job.hostId === hostId && job.reportedAt === null)
-      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())[0];
+      .filter(
+        (job) =>
+          job.clusterId === clusterId &&
+          job.reportedAt === null &&
+          (accepting || job.operation !== "create"),
+      )
+      .sort(compareJobs)[0];
   }
   async save(record: HostJobRecord) {
     const index = this.records.findIndex((job) => job.id === record.id);
     this.records[index] = { ...record };
   }
+  async findById(id: string) {
+    return this.records.find((job) => job.id === id);
+  }
 }
 
-function harness(input?: { member?: boolean; online?: boolean }) {
+function harness(input?: { member?: boolean; accepting?: boolean }) {
+  const fleet = new MemoryFleet();
   const jobs = new MemoryJobs();
-  const registered: Array<{
-    machineId: string;
-    kind: string;
-    userId: string;
-    workspaceId: string;
-  }> = [];
+  const issued: string[] = [];
+  let accepting = input?.accepting !== false;
   const hosts = new HostJobs({
-    membership: {
-      findAccessibleBySlug: async (slug, userId) =>
-        input?.member === false || slug !== "alpha" || userId !== "user-a"
+    workspaces: {
+      findMember: async (workspaceId, userId) =>
+        input?.member === false || workspaceId !== "workspace-1" || userId !== "user-a"
           ? undefined
-          : { id: "workspace-1", slug },
+          : { id: workspaceId, slug: "alpha" },
     },
-    hosts: {
-      find: async (hostId) => (hostId === "host-1" ? { id: hostId } : undefined),
-      findOnline: async (hostId) =>
-        hostId === "host-1" && input?.online !== false ? { id: hostId } : undefined,
-      identify: async (token) => {
-        if (token === "host-token") return { id: "host-1" };
-        if (token === "other-token") return { id: "host-2" };
-        return undefined;
-      },
-    },
-    computers: {
-      register: async (registration) => {
-        registered.push({
-          machineId: registration.machineId,
-          kind: registration.kind,
-          userId: registration.userId,
-          workspaceId: registration.workspaceId,
-        });
-        return { computerId: `computer-${registered.length}`, daemonApiKey: daemonKey };
-      },
-    },
+    fleet,
     jobs,
-    machineId: () => "cloud-machine-1",
+    cluster: {
+      id: async () => "cluster-1",
+      authenticate: async (token) =>
+        token === "host-token" ? { id: "cluster-1", accepting } : undefined,
+    },
+    keys: {
+      issue: async () => {
+        issued.push(daemonKey);
+        return daemonKey;
+      },
+    },
   });
-  return { hosts, jobs, registered };
+  return {
+    hosts,
+    fleet,
+    jobs,
+    issued,
+    setAccepting(value: boolean) {
+      accepting = value;
+    },
+  };
 }
 
-describe("HostJobs", () => {
-  test("a workspace member creates one cloud computer job and the host token claims the daemon key", async () => {
-    const { hosts, jobs, registered } = harness();
-    const created = await hosts.create({
-      userId: "user-a",
-      workspaceSlug: "alpha",
-      hostId: "host-1",
-      name: "lab",
-      idempotencyKey: "create-1",
-      now,
-    });
+const request = { userId: "user-a", workspaceId: "workspace-1", now };
 
-    expect(created).toEqual({
-      jobId: created.jobId,
-      hostId: "host-1",
-      workspaceId: "workspace-1",
-      computerId: "computer-1",
-      name: "lab",
-      containerId: null,
+describe("cloud computer quota", () => {
+  test("the first request creates the default computer and the cluster claims its daemon key", async () => {
+    const { hosts, jobs, issued } = harness();
+    const created = await hosts.ensureDefault(request);
+
+    expect(created).toMatchObject({
+      slot: "default",
+      name: "Cloud",
+      containerReady: false,
     });
     expect(JSON.stringify(created)).not.toContain(daemonKey);
-    expect(registered).toEqual([
-      {
-        machineId: "cloud-machine-1",
-        kind: "cloud",
-        userId: "user-a",
-        workspaceId: "workspace-1",
-      },
-    ]);
+    expect(issued).toEqual([daemonKey]);
     expect(jobs.records[0]?.daemonApiKey).toBe(daemonKey);
 
-    const claimed = await hosts.claim({ token: "host-token", now });
-    expect(claimed).toEqual({
-      jobId: created.jobId,
-      hostId: "host-1",
-      computerId: "computer-1",
-      workspaceId: "workspace-1",
+    const again = await hosts.ensureDefault(request);
+    expect(again.computerId).toBe(created.computerId);
+    expect(jobs.records).toHaveLength(1);
+
+    const claimed = await hosts.claim({ token: "host-token" });
+    expect(claimed).toMatchObject({
+      operation: "create",
+      computerId: created.computerId,
       workspaceSlug: "alpha",
-      name: "lab",
       daemonApiKey: daemonKey,
     });
-
-    const reported = await hosts.report({
+    await hosts.report({
       token: "host-token",
-      jobId: created.jobId,
-      containerId: "container-1",
+      jobId: claimed!.jobId,
+      containerId: "service-1",
       now,
     });
-    expect(reported.containerId).toBe("container-1");
     expect(jobs.records[0]?.daemonApiKey).toBeNull();
-    expect(await hosts.claim({ token: "host-token", now })).toBeUndefined();
+    expect((await hosts.ensureDefault(request)).containerReady).toBe(true);
+    expect(await hosts.claim({ token: "host-token" })).toBeUndefined();
   });
 
-  test("the same idempotency key does not register a second computer", async () => {
-    const { hosts, registered } = harness();
-    const first = await hosts.create({
-      userId: "user-a",
-      workspaceSlug: "alpha",
-      hostId: "host-1",
-      name: "lab",
-      idempotencyKey: "create-1",
+  test("a second workspace attaches the same default computer", async () => {
+    const { hosts, fleet, jobs } = harness();
+    const created = await hosts.ensureDefault(request);
+    const claimed = await hosts.claim({ token: "host-token" });
+    await hosts.report({
+      token: "host-token",
+      jobId: claimed!.jobId,
+      containerId: "service-1",
       now,
     });
-    const second = await hosts.create({
-      userId: "user-a",
-      workspaceSlug: "alpha",
-      hostId: "host-1",
-      name: "lab",
-      idempotencyKey: "create-1",
-      now,
-    });
-    expect(second.jobId).toBe(first.jobId);
-    expect(registered).toEqual([
-      {
-        machineId: "cloud-machine-1",
-        kind: "cloud",
-        userId: "user-a",
-        workspaceId: "workspace-1",
+
+    const hostsWithBeta = new HostJobs({
+      workspaces: {
+        findMember: async (workspaceId) =>
+          workspaceId === "workspace-2" ? { id: workspaceId, slug: "beta" } : undefined,
       },
-    ]);
-  });
-
-  test("a non-member and an offline host do not register a computer", async () => {
-    const outsider = harness({ member: false });
-    await expect(
-      outsider.hosts.create({
-        userId: "user-a",
-        workspaceSlug: "alpha",
-        hostId: "host-1",
-        name: "lab",
-        idempotencyKey: "create-1",
-        now,
-      }),
-    ).rejects.toEqual(new HostJobError(403, "workspace access denied"));
-    expect(outsider.registered).toEqual([]);
-
-    const offline = harness({ online: false });
-    await expect(
-      offline.hosts.create({
-        userId: "user-a",
-        workspaceSlug: "alpha",
-        hostId: "host-1",
-        name: "lab",
-        idempotencyKey: "create-1",
-        now,
-      }),
-    ).rejects.toEqual(new HostJobError(409, "host is offline"));
-    expect(offline.registered).toEqual([]);
-  });
-
-  test("another host token cannot report the job", async () => {
-    const { hosts } = harness();
-    const created = await hosts.create({
+      fleet,
+      jobs,
+      cluster: {
+        id: async () => "cluster-1",
+        authenticate: async () => ({ id: "cluster-1", accepting: true }),
+      },
+      keys: { issue: async () => daemonKey },
+    });
+    const attached = await hostsWithBeta.ensureDefault({
       userId: "user-a",
-      workspaceSlug: "alpha",
-      hostId: "host-1",
-      name: "lab",
-      idempotencyKey: "create-1",
+      workspaceId: "workspace-2",
       now,
     });
+    expect(attached.computerId).toBe(created.computerId);
+    expect(fleet.computers).toHaveLength(1);
+    expect(jobs.records.map((job) => job.operation)).toEqual(["create", "attach"]);
+    const attach = await hosts.claim({ token: "host-token" });
+    expect(attach?.operation).toBe("attach");
+    expect(attach?.workspaceSlug).toBe("beta");
+  });
+
+  test("one extra computer is allowed only after the default container exists, and a second extra is refused", async () => {
+    const { hosts } = harness();
+    await hosts.ensureDefault(request);
+    await expect(hosts.addExtra(request)).rejects.toEqual(
+      new HostJobError(409, "default cloud computer is not ready"),
+    );
+    const claimed = await hosts.claim({ token: "host-token" });
+    await hosts.report({
+      token: "host-token",
+      jobId: claimed!.jobId,
+      containerId: "service-1",
+      now,
+    });
+
+    const extra = await hosts.addExtra(request);
+    expect(extra.slot).toBe("extra");
+    await expect(hosts.addExtra(request)).rejects.toEqual(
+      new HostJobError(409, "an extra cloud computer already exists"),
+    );
+  });
+
+  test("the default computer cannot be deleted, and the extra slot frees only after the cluster reports removal", async () => {
+    const { hosts, fleet } = harness();
+    const created = await hosts.ensureDefault(request);
+    await expect(hosts.deleteExtra({ ...request, computerId: created.computerId })).rejects.toEqual(
+      new HostJobError(409, "the default cloud computer cannot be deleted"),
+    );
+
+    const claimed = await hosts.claim({ token: "host-token" });
+    await hosts.report({
+      token: "host-token",
+      jobId: claimed!.jobId,
+      containerId: "service-1",
+      now,
+    });
+    const extra = await hosts.addExtra(request);
+    const removal = await hosts.deleteExtra({ ...request, computerId: extra.computerId });
+    await expect(hosts.addExtra(request)).rejects.toEqual(
+      new HostJobError(409, "an extra cloud computer already exists"),
+    );
+
+    const job = await hosts.claim({ token: "host-token" });
+    expect(job).toMatchObject({ operation: "delete", jobId: removal.jobId, daemonApiKey: null });
+    await hosts.report({ token: "host-token", jobId: job!.jobId, now });
+    expect(fleet.computers.find((computer) => computer.id === extra.computerId)?.deletedAt).toEqual(
+      now,
+    );
+    expect((await hosts.addExtra(request)).slot).toBe("extra");
+  });
+
+  test("a create stays queued while the cluster is not accepting placements", async () => {
+    const { hosts, setAccepting } = harness();
+    await hosts.ensureDefault(request);
+    setAccepting(false);
+    expect(await hosts.claim({ token: "host-token" })).toBeUndefined();
+    setAccepting(true);
+    expect((await hosts.claim({ token: "host-token" }))?.operation).toBe("create");
+  });
+
+  test("someone outside the workspace cannot create a cloud computer", async () => {
+    const { hosts, fleet } = harness({ member: false });
+    await expect(hosts.ensureDefault(request)).rejects.toEqual(
+      new HostJobError(403, "workspace access denied"),
+    );
+    expect(fleet.computers).toEqual([]);
+  });
+
+  test("another cluster token cannot report the job", async () => {
+    const { hosts } = harness();
+    await hosts.ensureDefault(request);
+    const claimed = await hosts.claim({ token: "host-token" });
     await expect(
       hosts.report({
         token: "other-token",
-        jobId: created.jobId,
-        containerId: "container-1",
+        jobId: claimed!.jobId,
+        containerId: "service-1",
         now,
       }),
-    ).rejects.toEqual(new HostJobError(404, "job not found"));
+    ).rejects.toEqual(new HostJobError(401, "invalid host token"));
   });
 });
 
 describe("host job HTTP", () => {
-  test("a user session creates a job and cannot claim it; a host token claims and is not a user", async () => {
+  test("a user session cannot claim, and a cluster token can", async () => {
     const { hosts } = harness();
+    await hosts.ensureDefault(request);
     const http = createHostJobHttpHandler({
       jobs: hosts,
-      authenticateUser: async (request) =>
-        request.headers.get("cookie") === "session=user-a" ? { userId: "user-a" } : null,
       now: () => now,
     });
-
-    const created = await http.create(
-      new Request("https://server.example/api/hosts/host-1/jobs", {
-        method: "POST",
-        headers: { cookie: "session=user-a", "content-type": "application/json" },
-        body: JSON.stringify({ workspaceSlug: "alpha", name: "lab", idempotencyKey: "create-1" }),
-      }),
-      "host-1",
-    );
-    expect(created.status).toBe(200);
-    const body = await created.json();
-    expect(body).toMatchObject({ computerId: "computer-1", containerId: null });
-    expect(JSON.stringify(body)).not.toContain(daemonKey);
-
     const claimAsUser = await http.claim(
       new Request("https://server.example/api/hosts/jobs/claim", {
         method: "POST",
@@ -240,16 +298,8 @@ describe("host job HTTP", () => {
         headers: { authorization: "Bearer host-token" },
       }),
     );
-    expect(await claimAsHost.json()).toMatchObject({ job: { daemonApiKey: daemonKey } });
-
-    const createAsHost = await http.create(
-      new Request("https://server.example/api/hosts/host-1/jobs", {
-        method: "POST",
-        headers: { authorization: "Bearer host-token", "content-type": "application/json" },
-        body: JSON.stringify({ workspaceSlug: "alpha", name: "lab", idempotencyKey: "create-2" }),
-      }),
-      "host-1",
-    );
-    expect(createAsHost.status).toBe(401);
+    const body = await claimAsHost.json();
+    expect(body.job.daemonApiKey).toBe(daemonKey);
+    expect(body.job.operation).toBe("create");
   });
 });

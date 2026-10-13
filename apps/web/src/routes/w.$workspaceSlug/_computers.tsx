@@ -5,6 +5,7 @@ import { latestComputerVersionQuery } from "#src/features/computers/latest-versi
 import { AddComputerDialog } from "#src/features/computers/add-computer-dialog";
 import { ComputerLayout, UpgradingComputerProvider } from "#src/features/computers/computer-layout";
 import { ComputersPending } from "#src/features/computers/computers-pending";
+import { ensureCloudComputer } from "#src/features/computers/cloud-computers.functions";
 import { listComputers } from "#src/features/computers/computers.functions";
 import { PageLoadError } from "#src/features/errors/page-load-error";
 import { getInstallOrigin } from "#src/features/install/install.functions";
@@ -15,6 +16,9 @@ const appRoute = getRouteApi("/w/$workspaceSlug");
 
 export const Route = createFileRoute("/w/$workspaceSlug/_computers")({
   loader: async () => {
+    // The account's default cloud computer is created the first time this page
+    // opens. A deployment without a cluster still shows the computers it has.
+    await ensureCloudComputer();
     const [computers, preferences, installOrigin] = await Promise.all([
       listComputers(),
       getUserPreferences(),
