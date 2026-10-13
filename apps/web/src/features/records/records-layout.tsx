@@ -819,7 +819,9 @@ function CollapsibleSection({
           className="min-w-0 flex-1 justify-start px-1 text-left text-sm text-primary"
         >
           <span className="truncate">{title}</span>
-          {marker ? <span className="ml-1.5 inline-flex shrink-0 align-middle">{marker}</span> : null}
+          {marker ? (
+            <span className="ml-1.5 inline-flex shrink-0 align-middle">{marker}</span>
+          ) : null}
         </Button>
         {actions}
       </div>
