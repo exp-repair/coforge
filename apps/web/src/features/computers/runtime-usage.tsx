@@ -6,6 +6,7 @@ import {
   Popover as AriaPopover,
 } from "react-aria-components";
 import type { ReactNode } from "react";
+import { useHydrated } from "@tanstack/react-router";
 
 import {
   RUNTIME_PROVIDER_SUPPORTS_USAGE_SCAN,
@@ -13,6 +14,7 @@ import {
 } from "@lrm/coforge-sdk/internal";
 import { Badge } from "#src/components/base/badges/badges";
 import { ProgressBarBase } from "#src/components/base/progress-indicators/progress-indicators";
+import { Button } from "#src/components/base/buttons/button";
 import { ButtonUtility } from "#src/components/base/buttons/button-utility";
 import { Skeleton } from "#src/components/ui/skeleton";
 import { HoverPopover } from "#src/components/ui/hover-popover";
@@ -246,6 +248,7 @@ export function RuntimeUsagePopoverContent({
   onClose?: () => void;
   footer?: ReactNode;
 }) {
+  const hydrated = useHydrated();
   const snapshot = data?.result?.snapshot;
   const badge = data?.result ? usageBadge(data.result) : undefined;
   const reason =
@@ -284,23 +287,30 @@ export function RuntimeUsagePopoverContent({
           <h2 className="truncate font-semibold text-primary">{runtime.displayName}</h2>
           <p className="truncate text-xs text-tertiary">
             {runtime.version}
-            {showUsage && data?.result && (
+            {/* RelativeTime is blank until hydration; the separator waits with it. */}
+            {hydrated && showUsage && data?.result && (
               <>
                 {runtime.version ? " · " : ""}
-                <RelativeTime value={data.result.collectedAt} timeZone={timeZone} />
+                <RelativeTime value={data.result.collectedAt} timeZone={timeZone} plain />
               </>
             )}
           </p>
         </div>
         {showUsage && (
-          <ButtonUtility
+          // Two React Aria behaviours keep the peek open across a refresh (task #109):
+          // - `isLoading` is React Aria's `isPending`: the button ignores presses but keeps focus.
+          //   `isDisabled` would drop focus to the page mid-press, and the peek follows focus out.
+          // - No Tooltip. PreviewTrigger shares React Aria's one-open-tooltip-at-a-time state, so a
+          //   tooltip opening inside the peek closes the peek. The aria-label names the button.
+          <Button
             size="xs"
             color="tertiary"
-            icon={RefreshCw}
-            tooltip={scanning ? m.computer_usage_refreshing() : m.computer_usage_refresh()}
-            isDisabled={scanning || computerOnline === false}
-            className={cn("shrink-0", scanning && "*:data-icon:motion-safe:animate-spin")}
-            onClick={onRefresh}
+            iconLeading={RefreshCw}
+            aria-label={scanning ? m.computer_usage_refreshing() : m.computer_usage_refresh()}
+            isLoading={scanning}
+            isDisabled={computerOnline === false}
+            className="shrink-0"
+            onPress={onRefresh}
           />
         )}
         {onClose && (
@@ -380,6 +390,7 @@ function UsageWindow({
   // The header line is label + a short value + reset, kept on one line: a credit plan's amounts
   // ("7,517.29 / 10,000 credits used") would squeeze the label onto two lines in the popover, so
   // they move under the bar and the header shows the percentage, like a session window (task #109).
+  const hydrated = useHydrated();
   const value =
     window.usedPercent !== undefined
       ? formatPercent(window.usedPercent)
@@ -397,10 +408,10 @@ function UsageWindow({
         <p className="min-w-0 truncate font-medium text-secondary">{label}</p>
         <p className="shrink-0 text-tertiary tabular-nums">
           <span className="font-medium text-primary">{value}</span>
-          {window.resetsAt !== undefined && (
+          {hydrated && window.resetsAt !== undefined && (
             <>
               {" · "}
-              <RelativeTime value={window.resetsAt} timeZone={timeZone} />
+              <RelativeTime value={window.resetsAt} timeZone={timeZone} plain />
             </>
           )}
         </p>
