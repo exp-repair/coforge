@@ -129,13 +129,18 @@ export function AgentProfilePanel({
   const canManage = profile ? canManageAgent(profile) : false;
   const canSeeWorkspace = profile ? profile.ownedByCurrentUser : false;
   const loadComputers = useServerFn(listComputers);
+  // An unbound Agent needs a Computer before its runtime can be saved. A weekly-report
+  // assistant keeps the picker after that first bind, so a retired Computer can be replaced.
+  const offerComputerPicker = Boolean(
+    profile && canManage && (!profile.computer || profile.isWeeklyReportAssistant),
+  );
   const computersQuery = useQuery({
     queryKey: ["agent-runtime-computers", profile?.id, profile?.computerId ?? "none"],
     queryFn: () => loadComputers(),
-    enabled: Boolean(profile && canManage && !profile.computer),
+    enabled: offerComputerPicker,
   });
   const setupComputers =
-    profile && !profile.computer && computersQuery.isSuccess
+    offerComputerPicker && computersQuery.isSuccess
       ? (computersQuery.data ?? []).map((computer) => ({
           id: computer.id,
           displayName: computer.displayName || computer.name || m.agent_computer_unnamed(),

@@ -221,9 +221,10 @@ export class ManageAgents {
         throw new AppError("INVALID_INPUT", { errorId: "agent-runtime-unavailable" });
       // A stopped Agent has nothing running under the old configuration, so config
       // changes persist without the stop -> ... -> start dance; a confirmed Stop would make a
-      // stopped Agent on an offline Computer uneditable.
+      // stopped Agent on an offline Computer uneditable. Moving Computers stops the process
+      // on the Computer it is leaving, even when the runtime selection itself is unchanged.
       const stopped = Boolean(current.stoppedAt);
-      if (runtimeChanged && current.computerId && !stopped)
+      if ((runtimeChanged || computerChanged) && current.computerId && !stopped)
         await this.runtimeControl.stop(
           {
             protocolMajor: 1,

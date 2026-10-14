@@ -15,6 +15,7 @@ function fixture(options?: {
 }) {
   const records: AgentRecord[] = [];
   const starts: unknown[] = [];
+  const stops: unknown[] = [];
   const controls: string[] = [];
   const selections: Array<{ hasApiKey?: boolean }> = [];
   const updates: Array<Parameters<AgentRepository["update"]>[1]> = [];
@@ -54,8 +55,9 @@ function fixture(options?: {
         starts.push({ intent, userId });
         if (options?.publishFails) throw new Error("daemon unavailable");
       },
-      stop: async () => {
+      stop: async (intent) => {
         controls.push("stop");
+        stops.push(intent);
         if (options?.stopFails) throw new Error("stop unavailable");
       },
     },
@@ -73,7 +75,7 @@ function fixture(options?: {
       },
     }),
   );
-  return { agentManagement, records, starts, controls, updates, selections };
+  return { agentManagement, records, starts, stops, controls, updates, selections };
 }
 
 describe("ManageAgents", () => {
@@ -171,6 +173,48 @@ describe("ManageAgents", () => {
       intent: { computerId: "computer-1", agentId: "assistant-agent" },
       userId: "user-1",
     });
+  });
+
+  test("moves a bound weekly-report assistant onto another Computer", async () => {
+    const { agentManagement, records, starts, stops } = fixture();
+    records.push({
+      id: "assistant-agent",
+      workspaceId: "workspace-1",
+      ownerId: "user-1",
+      name: "weekly-report-assistant-user-1",
+      displayName: "李健的周报助手",
+      computerId: "computer-1",
+      runtimeConfig: {
+        runtime: RUNTIME_PROVIDER.PI,
+        provider: { kind: "default" },
+        model: "",
+        modelProvider: "",
+        reasoning: "",
+      },
+      createdAt: new Date(),
+    });
+
+    const result = await agentManagement.update(
+      { userId: "user-1", workspaceId: "workspace-1", role: "admin" as const },
+      {
+        agentId: "assistant-agent",
+        description: "",
+        provider: RUNTIME_PROVIDER.PI,
+        computerId: "computer-2",
+      },
+    );
+
+    expect(records[0]?.computerId).toBe("computer-2");
+    expect(result.restart).toBe("published");
+    expect(stops).toEqual([
+      expect.objectContaining({ computerId: "computer-1", agentId: "assistant-agent" }),
+    ]);
+    expect(starts).toEqual([
+      expect.objectContaining({
+        intent: expect.objectContaining({ computerId: "computer-2", agentId: "assistant-agent" }),
+        userId: "user-1",
+      }),
+    ]);
   });
 
   test("profile runtime edits preserve encrypted environment while list and starts omit it", async () => {
