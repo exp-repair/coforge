@@ -656,5 +656,6 @@
   "conversation_pending_mention_queued": "Notification queued for {target} · still not in {channel}",
   "conversation_pending_mention_queued_label": "Queued",
   "conversation_pending_mention_notify_failed": "Notifying failed. Please try again.",
-  "search_preview_loading": "Loading the conversation…"
+  "search_preview_loading": "Loading the conversation…",
+  "conversation_paste_no_image": "No image found in what you pasted. Nothing was attached."
 }
