@@ -18,9 +18,9 @@ describe("thrownMessage", () => {
   });
 
   test("reads the message of a realtime rejection that is not an Error", () => {
-    expect(
-      refusalText({ code: 403, message: "Agent Session snapshot is not authorized" }),
-    ).toBe("Agent Session snapshot is not authorized");
+    expect(refusalText({ code: 403, message: "Agent Session snapshot is not authorized" })).toBe(
+      "Agent Session snapshot is not authorized",
+    );
     expect(refusalText(new Error("gone"))).toBe("gone");
   });
 });
