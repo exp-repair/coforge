@@ -4,8 +4,17 @@ import {
   workspaceStateDirectory,
 } from "@lrm/coforge-daemon";
 
-/** Fixed workspace directory inside the cloud Computer image. */
-export const CONTAINER_WORKSPACE_ROOT = "/workspace";
+/** Agent workspaces live on the computer volume, so a replaced container can
+ * resume the sessions already stored there. */
+export const CONTAINER_WORKSPACE_ROOT = "/root/.coforge/agent-workspaces";
+
+export type RunningWorkspaceStart = {
+  workspaceId: string;
+  computerId: string;
+  workspaceRoot: string;
+  daemonApiKey: string;
+  serverHttpUrl: string;
+};
 
 const REQUIRED_ENV = [
   "COFORGE_DAEMON_API_KEY",
@@ -61,6 +70,31 @@ export async function prepareContainerBinding(
     computerId,
     daemonApiKey,
   );
+  return true;
+}
+
+/** Writes the new workspace beside the ones already stored, then asks the running
+ * supervisor to start only that workspace. */
+export async function attachRunningWorkspace(
+  env: Record<string, string | undefined>,
+  stateDirectory: string,
+  expectedServerUrl: string | undefined,
+  startWorkspace: (config: RunningWorkspaceStart) => Promise<void>,
+): Promise<boolean> {
+  const wrote = await prepareContainerBinding(env, stateDirectory, expectedServerUrl);
+  if (!wrote) return false;
+  const workspaceId = text(env.COFORGE_WORKSPACE_ID);
+  const computerId = text(env.COFORGE_COMPUTER_ID);
+  const daemonApiKey = text(env.COFORGE_DAEMON_API_KEY);
+  const serverHttpUrl = text(env.COFORGE_SERVER_URL)?.replace(/\/+$/, "");
+  if (!workspaceId || !computerId || !daemonApiKey || !serverHttpUrl) return false;
+  await startWorkspace({
+    workspaceId,
+    computerId,
+    workspaceRoot: CONTAINER_WORKSPACE_ROOT,
+    daemonApiKey,
+    serverHttpUrl,
+  });
   return true;
 }
 

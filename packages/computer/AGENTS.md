@@ -128,6 +128,8 @@ that environment; login, setup, and lifecycle adapters share that public seam.
   Computer. It does not open a Daemon WebSocket or interpret Workspace messages.
   A container's `foreground` start, and `__attach-workspace`, write the Daemon
   API key and append one enabled workspace binding on the service volume.
+  `__attach-workspace` then asks the running supervisor to start only that
+  workspace. Agent workspaces are `/root/.coforge/agent-workspaces` on that volume.
   `docker/Dockerfile` is the local image; its entrypoint is `coforge-computer foreground`.
 - `workspace/` owns the direct Workspace lookup used by setup intent. Computer
   never lists or interactively selects Workspaces; do not add a picker or a

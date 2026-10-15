@@ -84,7 +84,7 @@ sudo systemctl enable --now coforge-host.service
 
 一个账号只有一台不能删除的默认云电脑，名字是 Cloud。打开某个工作区的电脑页，会把这同一台挂进该工作区，所以每个工作区都能看到它。每个工作区一个 Daemon，都在同一个容器里，可以同时在线。在线灯是这个工作区的 Daemon 在 90 秒内向 staging 报过在线。
 
-再挂一个工作区时，`host` 对整台容器执行 `docker service update --force`。已经连上的 Daemon 先断开，新容器起来后大约半分钟内重新连上。刷新电脑页后，已经挂上的工作区都会显示在线。
+再挂一个工作区时，`host` 在正在运行的容器里执行 `__attach-workspace`，只启动这个工作区的 Daemon。已经连上的其他工作区保持运行。刷新电脑页后，已经挂上的工作区都会显示在线。
 
 「此电脑未关联 Agent」表示这个工作区还没有把 Agent 指派到这台电脑。镜像里已经有 Pi，不会因此自动出现 Agent。
 
