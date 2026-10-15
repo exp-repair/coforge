@@ -208,6 +208,53 @@ test("downloads end with the transfer", async () => {
   ).toEqual({ status: "refused", code: "invalid_state" });
 });
 
+test("completion preserves state fencing and applied retries when chunks are absent", async () => {
+  const context = await setup();
+  const complete = (generation: number, expectedRevision: number) =>
+    context.transport.completeUpload(source, {
+      migrationId: context.id,
+      generation,
+      expectedRevision,
+      manifest: MANIFEST,
+    });
+  expect(await complete(1, 0)).toEqual({ status: "refused", code: "invalid_transition" });
+  await stopSource(context);
+  expect(await complete(2, 1)).toEqual({ status: "refused", code: "stale_generation" });
+  expect(await complete(1, 0)).toEqual({ status: "refused", code: "stale_revision" });
+  expect(await upload(context)).toMatchObject({ status: "advanced" });
+  (context.objectStore as ReturnType<typeof objects>).sizes.clear();
+  expect(await complete(1, 1)).toMatchObject({
+    status: "already_applied",
+    migration: { state: "uploaded", revision: 2 },
+  });
+});
+
+test("completion cannot skip missing chunks when the source stops during its first read", async () => {
+  const context = await setup();
+  const find = context.store.find;
+  let stopDuringRead = true;
+  context.store.find = async (id) => {
+    const snapshot = await find(id);
+    if (stopDuringRead) {
+      stopDuringRead = false;
+      await stopSource(context);
+    }
+    return snapshot;
+  };
+  expect(
+    await context.transport.completeUpload(source, {
+      migrationId: context.id,
+      generation: 1,
+      expectedRevision: 1,
+      manifest: MANIFEST,
+    }),
+  ).toEqual({ status: "refused", code: "stale_revision" });
+  expect(await context.transport.view(source, context.id)).toMatchObject({
+    migration: { state: "source_stopped", revision: 1 },
+    manifest: null,
+  });
+});
+
 test("refuses a manifest whose chunks do not line up with the bundle", async () => {
   const context = await setup();
   await stopSource(context);
