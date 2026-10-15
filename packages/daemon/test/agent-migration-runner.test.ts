@@ -1,8 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { realpathSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { AGENT_MIGRATION_COMMIT_MARKER } from "#src/agent-migration/bundle-commit";
 import { AGENT_MIGRATION_IGNORE_FILE } from "#src/agent-migration/selection-rules";
 import { AgentMigrationRunner } from "#src/agent-migration/migration-runner";
 import {
@@ -250,6 +251,38 @@ test("a leased source and then a leased target move the Agent's workspace betwee
   expect(await exists(join(target.workspace, ".env"))).toBe(false);
   // The attempt's chunks are gone once the Agent has switched.
   expect(await exists(join(target.state, "migrations", migrationId, "1"))).toBe(false);
+  // The source keeps what the Agent left behind as a backup, out of the Agents' tree.
+  expect(await exists(source.workspace)).toBe(false);
+  const archived = join(
+    source.state,
+    "migration-workspace-backups",
+    agentId,
+    `source-${migrationId}`,
+  );
+  expect(await readFile(join(archived, "MEMORY.md"), "utf8")).toBe("what I remember");
+  expect(await readFile(join(archived, "work/repo/README.md"), "utf8")).toBe("code stays behind");
+});
+
+test("a source whose migration failed keeps its workspace where it is", async () => {
+  const shared = cloud();
+  const { source, run } = await uploaded(shared, { "MEMORY.md": "stays" });
+  shared.record.state = "failed";
+  await run;
+  expect(await readFile(join(source.workspace, "MEMORY.md"), "utf8")).toBe("stays");
+});
+
+test("leftover attempts older than a week are cleared when the runner starts", async () => {
+  const shared = cloud();
+  const target = await computer("target", shared, "target");
+  const old = join(target.state, "migrations", "old-migration", "1", "chunks");
+  const recent = join(target.state, "migrations", "recent-migration", "1", "chunks");
+  await mkdir(old, { recursive: true });
+  await mkdir(recent, { recursive: true });
+  const weekAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  await utimes(join(target.state, "migrations", "old-migration"), weekAgo, weekAgo);
+  await target.runner.pruneLeftovers();
+  expect(await exists(join(target.state, "migrations", "old-migration"))).toBe(false);
+  expect(await exists(recent)).toBe(true);
 });
 
 test("a lease delivered again joins the run already going", async () => {
@@ -518,4 +551,30 @@ test("a stale-generation cancel leaves newer chunks intact", async () => {
   } finally {
     await target.runner.close();
   }
+});
+
+test("a source never archives a workspace a later migration has placed here meanwhile", async () => {
+  const shared = cloud();
+  const { source, run } = await uploaded(shared, { "MEMORY.md": "left behind" });
+  // Before the source sees the switch, the Agent is moved back here: a later placement now sits in
+  // the same directory, with its own commit marker.
+  await write(source.workspace, {
+    "MEMORY.md": "moved back",
+    [AGENT_MIGRATION_COMMIT_MARKER]: JSON.stringify({
+      schema: "coforge.agent-migration-commit/v1",
+      agentId,
+      migrationId: "migration-2",
+      generation: 1,
+      bundleSha256: "f".repeat(64),
+      committedAt: new Date().toISOString(),
+    }),
+  });
+  shared.record.state = "completed";
+  await run;
+  expect(await readFile(join(source.workspace, "MEMORY.md"), "utf8")).toBe("moved back");
+  expect(
+    await exists(
+      join(source.state, "migration-workspace-backups", agentId, `source-${migrationId}`),
+    ),
+  ).toBe(false);
 });

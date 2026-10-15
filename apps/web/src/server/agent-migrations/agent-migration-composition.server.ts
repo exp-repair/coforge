@@ -56,6 +56,18 @@ export function agentMigrationOrchestrator(
     dispatch: new AgentMigrationDispatch(createCentrifugoServerApi()),
     runtime: agentMigrationRuntime(db),
     lock: getAgentRuntimeLock(),
+    // A bucket that cannot be set up reads as none here; the bucket's lifecycle rule still clears
+    // what a migration left in it.
+    bucket: () =>
+      getAgentMigrationStorage().catch((error: unknown) => {
+        console.warn(
+          JSON.stringify({
+            event: "agent_migration:bucket_unavailable",
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        return null;
+      }),
   });
 }
 
