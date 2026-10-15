@@ -74,7 +74,7 @@ export const unlockCloudComputerService = createServerFn({ method: "POST" })
       "Set-Cookie",
       serializeCloudServiceCookie(sealCloudServiceUnlock(now, secret), secureCookie()),
     );
-    const page = await connections(context.db).servicePage(publicOrigin(request), now);
+    const page = await cloudServicePage(context.db, publicOrigin(request), now);
     return { ok: true as const, page };
   });
 
@@ -88,17 +88,11 @@ export const lockCloudComputerService = createServerFn({ method: "POST" })
 
 export const loadCloudComputerService = createServerFn({ method: "GET" })
   .middleware([workspaceUserMiddleware])
-  .handler(
-    async ({ context }): Promise<CloudComputerServicePage & { clusterName: string | null }> => {
-      declareNoStore();
-      await requireUnlock();
-      const page = await connections(context.db).servicePage(
-        publicOrigin(getRequest()),
-        new Date(),
-      );
-      return { ...page, clusterName: await boundClusterName(context.db) };
-    },
-  );
+  .handler(async ({ context }) => {
+    declareNoStore();
+    await requireUnlock();
+    return cloudServicePage(context.db, publicOrigin(getRequest()), new Date());
+  });
 
 export const downloadHostBootstrap = createServerFn({ method: "POST" })
   .middleware([workspaceUserMiddleware])
@@ -137,6 +131,15 @@ export const downloadHostBootstrap = createServerFn({ method: "POST" })
       throw error;
     }
   });
+
+async function cloudServicePage(
+  db: PrismaClient,
+  origin: string,
+  now: Date,
+): Promise<CloudComputerServicePage & { clusterName: string | null }> {
+  const page = await connections(db).servicePage(origin, now);
+  return { ...page, clusterName: await boundClusterName(db) };
+}
 
 async function boundClusterName(db: PrismaClient): Promise<string | null> {
   try {
