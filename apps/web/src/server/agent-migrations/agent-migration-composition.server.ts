@@ -1,5 +1,13 @@
 import type { PrismaClient } from "#src/generated/prisma/client";
 import { isAdminLike, type WorkspaceMemberRole } from "#src/server/workspaces/member-role.server";
+import {
+  parseAgentRuntimeConfig,
+  type AgentRuntimeConfig,
+} from "#src/server/agents/agent-runtime-config.server";
+import {
+  computerCanRunAgent,
+  storedRuntimeSelection,
+} from "#src/server/agents/computer-runtime-availability.server";
 import { ACTIVE_AGENT_WHERE } from "#src/server/agents/active-agent.server";
 import { getAgentRuntimeLock } from "#src/server/agents/agent-runtime-lock.server";
 import { agentStartIntent, agentStopIntent } from "#src/server/agents/manage-agents.server";
@@ -107,6 +115,26 @@ export function agentMigrationRequests(db: PrismaClient) {
         select: { displayName: true, name: true },
       });
       return computer?.displayName || computer?.name || null;
+    },
+    // The same check that create and edit place an Agent with, on the Agent's stored selection.
+    canRunAgent: async (workspaceId, agentId, computerId) => {
+      const agent = await db.agent.findFirst({
+        where: { id: agentId, workspaceId, ...ACTIVE_AGENT_WHERE },
+        select: { ownerId: true, runtimeConfig: true },
+      });
+      if (!agent) return false;
+      let config: AgentRuntimeConfig;
+      try {
+        config = parseAgentRuntimeConfig(agent.runtimeConfig);
+      } catch {
+        return false;
+      }
+      return computerCanRunAgent(
+        db,
+        { workspaceId, userId: agent.ownerId },
+        computerId,
+        storedRuntimeSelection(config),
+      );
     },
     // A misconfigured bucket reads as "not set up" here; the daemons' route reports the error.
     available: async () =>

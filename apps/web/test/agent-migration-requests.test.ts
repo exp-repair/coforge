@@ -2,13 +2,16 @@ import { expect, test } from "bun:test";
 import { AgentMigrations } from "#src/server/agent-migrations/agent-migrations.server";
 import { AgentMigrationRequests } from "#src/server/agent-migrations/agent-migration-requests.server";
 import { AgentMigrationSourceStopError } from "#src/server/agent-migrations/agent-migration-orchestrator.server";
+import { storedRuntimeSelection } from "#src/server/agents/computer-runtime-availability.server";
 import { memoryStore } from "./helpers/agent-migration-memory-store";
 
 const owner = { userId: "user-1", workspaceId: "workspace-1" };
 const stranger = { userId: "user-2", workspaceId: "workspace-1" };
 const admin = { userId: "user-3", workspaceId: "workspace-1" };
 
-function setup(options: { available?: boolean; fails?: "stop" | "lease" } = {}) {
+function setup(
+  options: { available?: boolean; fails?: "stop" | "lease"; runtimeMissing?: boolean } = {},
+) {
   const fixture = memoryStore();
   const migrations = new AgentMigrations(fixture.store);
   const requested: string[] = [];
@@ -27,6 +30,7 @@ function setup(options: { available?: boolean; fails?: "stop" | "lease" } = {}) 
     agentOwner: async (_workspaceId, agentId) => (agentId === "agent-1" ? "user-1" : undefined),
     isWorkspaceAdmin: async (_workspaceId, userId) => userId === "user-3",
     computerName: async (computerId) => (computerId === "computer-b" ? "Studio Mac" : null),
+    canRunAgent: async () => !options.runtimeMissing,
     available: async () => options.available ?? true,
   });
   return { requests, requested, fixture };
@@ -117,4 +121,41 @@ test("a failure after the source stopped is not reported as a source that never 
       targetComputerId: "computer-b",
     }),
   ).rejects.toThrow("centrifugo is unreachable");
+});
+
+test("a Computer that cannot run the Agent's runtime is refused before anything stops", async () => {
+  const { requests, requested } = setup({ runtimeMissing: true });
+  await expect(
+    requests.request(owner, { agentId: "agent-1", targetComputerId: "computer-b" }),
+  ).rejects.toMatchObject({
+    code: "INVALID_INPUT",
+    errorId: "agent-migration-runtime-unavailable",
+  });
+  expect(requested).toEqual([]);
+});
+
+test("a move checks the target against the Agent's stored selection, key included", () => {
+  const base = {
+    runtime: "pi" as const,
+    model: "claude-sonnet",
+    modelProvider: "anthropic",
+    reasoning: "high",
+  };
+  expect(storedRuntimeSelection({ ...base, provider: { kind: "default" } })).toEqual({
+    provider: "pi",
+    model: "claude-sonnet",
+    modelProvider: "anthropic",
+    reasoning: "high",
+    hasApiKey: false,
+  });
+  expect(
+    storedRuntimeSelection({
+      ...base,
+      provider: {
+        kind: "coforge",
+        providerId: "anthropic",
+        apiKey: { keyId: "v1", ciphertext: "x", nonce: "n", hint: "••••1234" },
+      },
+    } as never).hasApiKey,
+  ).toBe(true);
 });
