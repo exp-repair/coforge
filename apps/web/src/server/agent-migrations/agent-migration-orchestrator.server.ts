@@ -1,5 +1,8 @@
 import type { AgentRuntimeLock } from "#src/server/agents/agent-runtime-lock.server";
-import type { AgentMigrationDispatch } from "./agent-migration-dispatch.server";
+import {
+  AGENT_MIGRATION_LEASE_MS,
+  type AgentMigrationDispatch,
+} from "./agent-migration-dispatch.server";
 import type {
   AgentMigrationRecord,
   AgentMigrations,
@@ -25,6 +28,9 @@ export type AgentMigrationRuntime = {
   /** Starts the Agent on the Computer it is placed on now. */
   start(agent: AgentScope): Promise<void>;
 };
+
+/** How far past its lease the server waits before expiring a migration a Computer may still be running. */
+const EXPIRY_GRACE_MS = 60 * 1000;
 
 const scopeOf = (migration: AgentMigrationRecord): AgentScope => ({
   workspaceId: migration.workspaceId,
@@ -102,12 +108,17 @@ export class AgentMigrationOrchestrator {
   }
 
   /**
-   * The attempt ended before finishing: the source runs the Agent again, then both Computers are
-   * told to stop their runs. Safe to repeat, so a daemon retrying its report ends it again; a
-   * Computer that cannot be told is reported after the restart, never instead of it.
+   * The attempt ended before finishing: both Computers are told to stop their runs, then the
+   * source runs the Agent again. The cancel goes first, on the same channel, so the source has let
+   * go of the Agent when the Start reaches it. Safe to repeat, so a daemon retrying its report ends
+   * it again; a Computer that cannot be told is reported after the restart, never instead of it.
    */
   async ended(migration: AgentMigrationRecord) {
     const { dispatch, runtime, lock } = this.deps;
+    const told = await dispatch.cancel(migration).then(
+      () => null,
+      (error: unknown) => ({ error }),
+    );
     if (!migration.switchedAt) {
       const agent = scopeOf(migration);
       await lock
@@ -125,7 +136,7 @@ export class AgentMigrationOrchestrator {
           ),
         );
     }
-    await dispatch.cancel(migration);
+    if (told) throw told.error;
   }
 
   /** As `ended`, for a migration a report found already ended before its switch. */
@@ -137,6 +148,37 @@ export class AgentMigrationOrchestrator {
       (migration.state === "failed" || migration.state === "canceled")
     )
       await this.ended(migration);
+  }
+
+  /**
+   * A Computer of the Workspace has just reconnected. Each of its migrations moves on the way no
+   * one else would move it while it was away:
+   * - one that has not switched and has had no step for a whole lease, plus a grace for the
+   *   Computers' own clocks, fails and ends (their runs give up at the lease itself);
+   * - one whose switch landed with no start or `arrived` after it is finished;
+   * - every other one leases this Computer again, for the work it still has.
+   * One that cannot be moved on does not keep the others from it; the first failure is reported.
+   */
+  async recover(workspaceId: string, computerId: string, now = Date.now()) {
+    const { migrations, dispatch } = this.deps;
+    const failures: unknown[] = [];
+    const attempt = (work: () => Promise<unknown>) =>
+      work().catch((error: unknown) => {
+        failures.push(error);
+      });
+    const leased: AgentMigrationRecord[] = [];
+    for (const migration of await migrations.activeFor({ workspaceId, computerId })) {
+      const idle = now - migration.updatedAt.getTime();
+      if (!migration.switchedAt && idle > AGENT_MIGRATION_LEASE_MS + EXPIRY_GRACE_MS)
+        await attempt(async () => {
+          const expired = await migrations.expire(migration);
+          if (expired) await this.ended(expired);
+        });
+      else if (migration.state === "switched") await attempt(() => this.switched(migration));
+      else leased.push(migration);
+    }
+    await attempt(() => dispatch.reissue(leased, computerId, now));
+    if (failures.length) throw failures[0];
   }
 
   /** A user's cancel; after the switch the target keeps the Agent. */
