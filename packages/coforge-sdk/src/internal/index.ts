@@ -465,6 +465,7 @@ export const COMPUTER_CLI_COMMANDS = [
   "foreground",
   "logs",
   "status",
+  "host",
 ] as const;
 export type ComputerCliCommand = (typeof COMPUTER_CLI_COMMANDS)[number];
 export type RuntimeMetadata = {

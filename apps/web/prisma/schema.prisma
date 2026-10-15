@@ -17,6 +17,8 @@ model Workspace {
   members                WorkspaceMembership[]
   joinLinks              WorkspaceJoinLink[]
   computers              WorkspaceComputer[]
+  serverConnection       WorkspaceServerConnection?
+  hostJobs               HostJob[]
   computerRuntimes       ComputerRuntime[]
   modelCatalogs          ComputerModelCatalog[]
   agents                 Agent[]
@@ -130,6 +132,8 @@ model User {
   agentApiKeys                AgentApiKey[]
   daemonApiKeys               DaemonApiKey[]
   computers                   Computer[]
+  submittedServerConnections  WorkspaceServerConnection[]
+  requestedHostJobs           HostJob[]
   conversationMembers         ConversationMember[]
   webPushSubscriptions        WebPushSubscription[]
   attachments                 Attachment[]
@@ -675,14 +679,21 @@ model Computer {
   osVersion         String?
   metadataStartedAt BigInt?
   /// Where this Computer runs: "local" on a machine the User controls,
-  /// "cloud" on a CoForge-hosted sandbox node.
+  /// "cloud" on the deployment's Swarm cluster.
   kind              String                 @default("local")
+  /// "default" or "extra" for a cloud Computer. Local Computers leave this empty.
+  /// One live default and one live extra per account are partial unique indexes below.
+  cloudSlot         String?
+  /// Set when the cluster reports that an extra cloud Computer's service is gone.
+  /// The extra slot stays taken until then. The default Computer is never deleted.
+  deletedAt         DateTime?
   workspaces        WorkspaceComputer[]
   runtimes          ComputerRuntime[]
   modelCatalogs     ComputerModelCatalog[]
   agents                        Agent[]
   agentApiKeys                  AgentApiKey[]
   daemonApiKeys                 DaemonApiKey[]
+  hostJobs                      HostJob[]
   agentActivity                 AgentActivity[]
   reminders                     Reminder[]
   weeklyReportCollectorBindings WeeklyReportCollectorBinding[]
@@ -690,6 +701,8 @@ model Computer {
   owner                         User                   @relation(fields: [ownerId], references: [id])
 
   @@unique([ownerId, machineId])
+  @@unique([ownerId], map: "computers_one_live_cloud_default", where: raw("\"kind\" = 'cloud' AND \"cloudSlot\" = 'default' AND \"deletedAt\" IS NULL"))
+  @@unique([ownerId], map: "computers_one_live_cloud_extra", where: raw("\"kind\" = 'cloud' AND \"cloudSlot\" = 'extra' AND \"deletedAt\" IS NULL"))
   @@map("computers")
 }
 
@@ -736,6 +749,21 @@ model WorkspaceComputer {
 
   @@unique([workspaceId, computerId])
   @@map("workspace_computers")
+}
+
+/// One submitted server connection per Workspace. The install command is not stored: a later
+/// read shows who submitted it and whether a Daemon is online, and does not mint another command.
+model WorkspaceServerConnection {
+  workspaceId       String    @id @db.Uuid
+  installOrigin     String
+  workspaceSlug     String
+  submittedByUserId String    @db.Uuid
+  submittedAt       DateTime
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  submittedBy       User      @relation(fields: [submittedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([submittedByUserId])
+  @@map("workspace_server_connections")
 }
 
 model Conversation {
@@ -1688,4 +1716,47 @@ model WorkspaceMemoryCleanupWork {
   @@index([workspaceId, state])
   @@index([state, leaseExpiresAt])
   @@map("workspace_memory_cleanup_work")
+}
+
+/// The one Swarm cluster this deployment controls. The token is stored only as a hash of
+/// COFORGE_CLOUD_CLUSTER_TOKEN. accepting is the runtime's latest "can place another service" flag.
+model HostNode {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  name       String
+  nodeKey    String?   @unique @map("node_key")
+  tokenHash  String    @unique @map("token_hash")
+  accepting  Boolean   @default(true)
+  lastSeenAt DateTime? @map("last_seen_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  jobs       HostJob[]
+
+  @@index([lastSeenAt])
+  @@map("host_nodes")
+}
+
+/// One create, attach, or delete for a cloud Computer. The daemon key stays here until the
+/// cluster reports the job, then it is cleared. The browser never receives it.
+model HostJob {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  hostId            String    @map("host_id") @db.Uuid
+  /// "create", "delete", or "attach".
+  operation         String    @default("create")
+  workspaceId       String    @map("workspace_id") @db.Uuid
+  workspaceSlug     String    @map("workspace_slug")
+  computerId        String    @map("computer_id") @db.Uuid
+  requestedByUserId String    @map("requested_by_user_id") @db.Uuid
+  idempotencyKey    String    @map("idempotency_key")
+  name              String
+  daemonApiKey      String?   @map("daemon_api_key")
+  containerId       String?   @map("container_id")
+  createdAt         DateTime  @map("created_at")
+  reportedAt        DateTime? @map("reported_at")
+  host              HostNode  @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  computer          Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  requestedBy       User      @relation(fields: [requestedByUserId], references: [id], onDelete: Cascade)
+
+  @@unique([requestedByUserId, idempotencyKey])
+  @@index([hostId, reportedAt])
+  @@map("host_jobs")
 }

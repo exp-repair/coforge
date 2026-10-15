@@ -148,6 +148,7 @@ responsibility.
 - `server/computers/` — Computer registration, metadata, restart and upgrade
   operations, runtime visibility, explicit model catalog refresh, and what the server remembers across a
   daemon's shutdown and return.
+- `server/hosts/` — host-node enrollment, registration, heartbeat, the global online list, and container-computer jobs.
 - `server/conversations/` — public channels, channel authority, stopping and resuming a channel's Agents, direct messages, history, message search, action cards, reactions, tracked @mention delivery outcomes (`mention-deliveries`), and conversation realtime.
 - `server/db/` — the Prisma client, repositories (a DM's list preferences apart from its messages; the Agent attention rule in `agent-attention`), and the shared unique-violation check.
 - `server/errors/` — public error mapping and request error handling.
@@ -162,7 +163,7 @@ responsibility.
 - `server/records/` — Workspace Records (see the last section).
 - `server/reminders/` — cloud Agent Reminders.
 - `server/tasks/` — the message-backed TaskBoard, the shape a Task command must have, the Tasks page's overview reads, its Task view, history records, and notice wording.
-- `server/workspaces/` — Workspace catalog (name, icon and URL, with the former slugs that keep naming a Workspace; their persistence is `db/repositories/workspace-slugs.repositories.server.ts`), selection, enrollment, member roles, member directory, join links, admitting a member (`admitWorkspaceMember`, the one step a join link takes), deleting a Workspace, removing its memory first and its stored files after, and going out of a Workspace (leaving or deleting it) to the next one.
+- `server/workspaces/` — Workspace catalog (name, icon and URL, with the former slugs that keep naming a Workspace; their persistence is `db/repositories/workspace-slugs.repositories.server.ts`), selection, enrollment, member roles, member directory, join links, admitting a member (`admitWorkspaceMember`, the one step a join link takes), one submitted server connection per Workspace (`server-connection.server.ts`), deleting a Workspace, removing its memory first and its stored files after, and going out of a Workspace (leaving or deleting it) to the next one.
 - `prisma/` (app root) — schema and migrations; `messages/` — UI translations.
 
 ## A changed file ends without a blank line
@@ -191,6 +192,7 @@ it, so a deletion trips this as easily as an addition. Reproduce what CI sees be
 - Rules for `src/server/agents/` → [`src/server/agents/AGENTS.md`](src/server/agents/AGENTS.md)
 - Rules for `src/server/centrifugo/` → [`src/server/centrifugo/AGENTS.md`](src/server/centrifugo/AGENTS.md)
 - Rules for `src/server/computers/` → [`src/server/computers/AGENTS.md`](src/server/computers/AGENTS.md)
+- Rules for `src/server/hosts/` → [`src/server/hosts/AGENTS.md`](src/server/hosts/AGENTS.md)
 - Rules for `src/server/conversations/` → [`src/server/conversations/AGENTS.md`](src/server/conversations/AGENTS.md)
 - Rules for `src/server/db/` → [`src/server/db/AGENTS.md`](src/server/db/AGENTS.md)
 - Rules for `src/server/integrations/` → [`src/server/integrations/AGENTS.md`](src/server/integrations/AGENTS.md)
