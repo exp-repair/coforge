@@ -26,7 +26,6 @@ import {
   saveConversationOpenMode,
   saveDateTimePreferences,
 } from "#src/features/settings/settings.functions";
-import { loadServerConnection } from "#src/features/settings/server-connection.functions";
 import { loadWorkspaceMembers } from "#src/features/workspaces/members.functions";
 import { MEMBER_PAGE_SIZE } from "#src/features/workspaces/member-directory";
 import { getLocale, setLocale } from "#src/paraglide/runtime";
@@ -83,24 +82,16 @@ export const Route = createFileRoute("/w/$workspaceSlug/settings")({
     avatar: z.literal("choose").optional().catch(undefined),
   }),
   loader: async () => {
-    const [
-      preferences,
-      members,
-      generalChannel,
-      archivedChannels,
-      createdAgents,
-      serverConnection,
-    ] = await Promise.all([
-      getUserPreferences(),
-      loadWorkspaceMembers(),
-      loadGeneralChannelHidden(),
-      loadArchivedChannels(),
-      loadMemberAgentPage({ data: { owner: "mine", query: "", limit: MEMBER_PAGE_SIZE } }),
-      loadServerConnection(),
-    ]);
+    const [preferences, members, generalChannel, archivedChannels, createdAgents] =
+      await Promise.all([
+        getUserPreferences(),
+        loadWorkspaceMembers(),
+        loadGeneralChannelHidden(),
+        loadArchivedChannels(),
+        loadMemberAgentPage({ data: { owner: "mine", query: "", limit: MEMBER_PAGE_SIZE } }),
+      ]);
     return {
       ...preferences,
-      serverConnection,
       createdAgents: createdAgents.items.map(({ id, name, avatarUrl }) => ({
         id,
         name,
@@ -135,7 +126,6 @@ function SettingsPage() {
     createdAgents,
     generalChannelHidden,
     archivedChannels,
-    serverConnection,
   } = Route.useLoaderData();
   const { user: profile, notifications, currentWorkspace } = appRoute.useLoaderData();
   const [notificationPermission, setNotificationPermission] = useState<
@@ -414,7 +404,6 @@ function SettingsPage() {
           actorRole={members.actorRole}
         />
       }
-      serverConnection={serverConnection}
     />
   );
 }

@@ -35,10 +35,15 @@ These rules apply to `src/server/workspaces/`.
   returns. That record is the only way a Computer learns its Workspace is gone
   and parks the binding; without it the Computer retries forever. A soft delete
   that keeps the keys valid never parks a Computer.
-- `server-connection.server.ts` stores one submitted connection per Workspace.
-  The command installs `coforge-computer` and starts `host` against this
-  deployment. It does not join a Workspace. The light is on only while that
-  host's heartbeat is under 90 seconds old.
+- `server-connection.server.ts` stores one submitted connection per Workspace
+  and builds the cloud computer service page: the install command and the
+  system unit, neither of which carries a secret. The light is on only while
+  that host's heartbeat is under 90 seconds old.
+- `cloud-service-access.server.ts` checks the deployment operating password
+  (`COFORGE_CLOUD_SERVICE_PASSWORD`) and seals a short-lived unlock cookie.
+  The settings page withholds the install script until that cookie is valid.
+- `host-bootstrap.server.ts` builds the manager install script. The cluster
+  token is inside the file and is not shown on the page.
 
 ## Role capabilities
 

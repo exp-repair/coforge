@@ -80,6 +80,13 @@ describe("cluster directory", () => {
       new HostDirectoryError(422, "host is not registered"),
     );
   });
+
+  test("the operator binding is empty until the runtime registers, then returns that node key", async () => {
+    const hosts = directory();
+    expect(await hosts.operatorBinding()).toEqual({ clusterName: null, nodeKey: null });
+    await hosts.register({ token, nodeKey: "manager-1", name: "lab", now });
+    expect(await hosts.operatorBinding()).toEqual({ clusterName: "lab", nodeKey: "manager-1" });
+  });
 });
 
 describe("cluster HTTP", () => {

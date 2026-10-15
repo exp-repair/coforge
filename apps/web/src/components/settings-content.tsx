@@ -164,8 +164,6 @@ interface SettingsContentProps {
   archivedChannelsGroup?: React.ReactNode;
   /** The Danger zone Settings → Workspace profile ends with. */
   dangerZone?: React.ReactNode;
-  /** This Workspace's one server connection, when the settings page loaded it. */
-  serverConnection?: React.ComponentProps<typeof ServerConnectionSettings>["connection"];
 }
 
 export function SettingsContent(props: SettingsContentProps) {
@@ -256,6 +254,8 @@ export function SettingsContent(props: SettingsContentProps) {
               label={m.settings_members()}
               onClick={() => selectSection("members")}
             />
+          </SettingsNavigationGroup>
+          <SettingsNavigationGroup label={m.settings_system_group()}>
             <SettingsNavigationButton
               active={section === "server-connection"}
               icon={Server}
@@ -349,11 +349,7 @@ export function SettingsContent(props: SettingsContentProps) {
             ) : section === "preferences" ? (
               <Preferences {...props} />
             ) : section === "server-connection" ? (
-              <ServerConnectionSettings
-                connection={props.serverConnection ?? { configured: false, connected: false }}
-                timeZone={props.timeZone}
-                timeFormat={props.timeFormat}
-              />
+              <ServerConnectionSettings />
             ) : section === "integrations" ? (
               <GitHubSettings
                 callbackError={props.githubCallbackError ?? false}

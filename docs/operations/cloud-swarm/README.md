@@ -46,7 +46,9 @@ docker swarm init --advertise-addr <节点之间可达的地址>
 
 ## 启动 host
 
-在管理节点使用带 `host` 子命令的 `coforge-computer`。五个值缺一不可，可以用环境变量，也可以用同名参数：
+在管理节点使用带 `host` 子命令的 `coforge-computer`。五个值缺一不可，可以用环境变量，也可以用同名参数。设置里的「云电脑服务」在核对操作密码之后，可以下载一份在管理节点执行的安装脚本。脚本写入令牌和已绑定的节点密钥，页面上不显示这两项。操作密码是 Web 进程的 `COFORGE_CLOUD_SERVICE_PASSWORD`，6 到 200 个字符。没设这个变量时，这一页打不开。
+
+这台机器上如果已经有一份绑定到其他服务器的 Computer，不要用页面上的 `curl | sh` 升级它。安装器会换成这套环境的二进制，现有绑定对不上时监督进程退出（`Binding server does not match this daemon build`），然后回滚，`host` 不会启动。把 `host` 用的二进制放到单独目录。Staging 的具体步骤见 [在 staging 上启用云电脑](staging-bring-up.md)。
 
 | 变量 | 作用 |
 | --- | --- |
@@ -70,7 +72,9 @@ coforge-computer host
 
 用户打开某个工作区的电脑页时，服务端确保该账号的默认云电脑，并放入一条 `create` 任务。`host` 领到后创建单副本服务，名称是 `coforge-<电脑编号>`，标签 `coforge.computer_id=<电脑编号>`，数据卷挂到容器内 `/root/.coforge`。服务起来后，容器里的 `foreground` 为这个工作区启动 Daemon。
 
-该用户再打开另一个工作区的电脑页，并且这台电脑的容器已经就绪时，服务端放入一条 `attach` 任务。`host` 在正在运行的任务里执行 `coforge-computer __attach-workspace`，然后 `docker service update --force`。同一个容器里保留已有工作区，并多一个 Daemon。一个 Daemon 只连接一个工作区。
+该用户再打开另一个工作区的电脑页，并且这台电脑的容器已经就绪时，服务端放入一条 `attach` 任务。`host` 在正在运行的任务里执行 `coforge-computer __attach-workspace`，然后 `docker service update --force`。同一个容器里保留已有工作区，并多一个 Daemon。一个 Daemon 只连接一个工作区，多个工作区的 Daemon 可以同时在线。强制重建时已经连上的 Daemon 会先断开，大约半分钟后重新连上。
+
+电脑页上的「此电脑未关联 Agent」表示这个工作区还没有把 Agent 指派到这台电脑。镜像里有 Pi 不会自动创建 Agent。
 
 领取顺序是删除、挂载、创建。Daemon 密钥只在领取 `create` 或 `attach` 时出现，回报后从任务行清掉。
 

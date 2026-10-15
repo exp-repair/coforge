@@ -45,6 +45,15 @@ export class HostDirectory {
     return (await this.#configuredRecord()).id;
   }
 
+  /** The name and node key already bound to this deployment, for the manager install script. */
+  async operatorBinding(): Promise<{ clusterName: string | null; nodeKey: string | null }> {
+    const token = configuredSecret(this.configuredToken);
+    if (!token) throw new HostDirectoryError(503, "cloud cluster is not configured");
+    const existing = await this.store.findByTokenHash(hashSecret(token));
+    if (!existing?.nodeKey) return { clusterName: null, nodeKey: null };
+    return { clusterName: existing.name, nodeKey: existing.nodeKey };
+  }
+
   async register(input: {
     token: string;
     nodeKey: string;
