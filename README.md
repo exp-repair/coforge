@@ -60,6 +60,7 @@ The architecture invariants every change must respect are in
 | [docs/agent-cli/](docs/agent-cli/README.md) | `coforge` Agent CLI command reference |
 | [packages/coforge-sdk/README.md](packages/coforge-sdk/README.md) | Shared contracts and transports |
 | [infra/README.md](infra/README.md) | Local Docker Compose services |
+| [docs/operations/cloud-swarm/](docs/operations/cloud-swarm/README.md) | Attach one Swarm cluster when standing up a CoForge deployment |
 | [docs/operations/staging/](docs/operations/staging/README.md) | Staging environment runbook |
 | [docs/operations/production/](docs/operations/production/README.md) | Production environment runbook |
 | [infra/production/README.md](infra/production/README.md) | Production Compose environment (points to its runbook) |

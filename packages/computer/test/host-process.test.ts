@@ -223,6 +223,7 @@ describe("swarm service arguments", () => {
     ).toEqual([
       "service",
       "create",
+      "--no-resolve-image",
       "--name",
       "coforge-computer-1",
       "--replicas",

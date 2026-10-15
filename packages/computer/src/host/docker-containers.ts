@@ -17,6 +17,7 @@ export function dockerServiceCreateArgs(input: {
   const args = [
     "service",
     "create",
+    "--no-resolve-image",
     "--name",
     serviceName(input.computerId),
     "--replicas",
@@ -86,7 +87,7 @@ export function createDockerContainers(spawn: DockerSpawn = spawnDocker): Contai
         dockerServiceCreateArgs(input),
         "docker service create failed",
       );
-      const id = result.stdout.trim();
+      const id = firstId(result);
       if (!id) throw new Error("docker service create returned an empty service id");
       return id;
     },

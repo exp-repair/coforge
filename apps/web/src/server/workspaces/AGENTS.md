@@ -35,3 +35,7 @@ These rules apply to `src/server/workspaces/`.
   returns. That record is the only way a Computer learns its Workspace is gone
   and parks the binding; without it the Computer retries forever. A soft delete
   that keeps the keys valid never parks a Computer.
+- `server-connection.server.ts` stores one submitted connection per Workspace.
+  The command installs `coforge-computer` and starts `host` against this
+  deployment. It does not join a Workspace. The light is on only while that
+  host's heartbeat is under 90 seconds old.

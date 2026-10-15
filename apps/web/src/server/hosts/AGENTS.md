@@ -10,3 +10,4 @@ These rules apply to `src/server/hosts/`.
 - Claim order is delete, then attach, then create. A cluster that is not accepting skips create and still claims delete and attach.
 - The daemon key is returned only when the cluster claims a create or attach, and it is cleared when the job is reported. Browser and list APIs never return it.
 - `host-production.server.ts` wires the database and the token. Routes stay thin adapters over it.
+- Operator steps for a new deployment are in `docs/operations/cloud-swarm/README.md`.
