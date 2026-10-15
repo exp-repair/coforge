@@ -52,8 +52,24 @@ type ConfiguredView = {
 
 export type ServerConnectionView = { configured: false; connected: false } | ConfiguredView;
 
+export type CloudComputerServicePage = {
+  connected: boolean;
+  command: string;
+  serviceUnit: string;
+};
+
 export class WorkspaceServerConnection {
   constructor(private readonly ports: ServerConnectionPorts) {}
+
+  /** The page's command and system unit. Neither needs a saved row, and neither carries a secret. */
+  async servicePage(origin: string, now: Date): Promise<CloudComputerServicePage> {
+    const installOrigin = requireInstallOrigin(origin);
+    return {
+      connected: await this.#connected(now),
+      command: hostConnectionCommand(installOrigin),
+      serviceUnit: hostServiceUnit(installOrigin),
+    };
+  }
 
   async read(workspaceId: string, now: Date): Promise<ServerConnectionView> {
     const row = await this.ports.find(workspaceId);
@@ -100,6 +116,27 @@ export class WorkspaceServerConnection {
  * The token, node key, cluster name, and image stay in that machine's environment. */
 export function hostConnectionCommand(origin: string): string {
   return `curl -fsSL '${origin}/computer/install.sh' | sh && "$HOME/.local/bin/coforge-computer" host --server-url '${origin}'`;
+}
+
+/** A system unit. A user service stops when that login ends, so the host does not use one. */
+export function hostServiceUnit(origin: string): string {
+  return `[Unit]
+Description=CoForge Swarm host
+After=docker.service
+Wants=docker.service
+
+[Service]
+User=<user>
+Group=<user>
+SupplementaryGroups=docker
+EnvironmentFile=/home/<user>/.coforge-host/host.env
+ExecStart=/home/<user>/.coforge-host/coforge-computer host --server-url ${origin}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+`;
 }
 
 function viewOf(row: ServerConnectionRow) {

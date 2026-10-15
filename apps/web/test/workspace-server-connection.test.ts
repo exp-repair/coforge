@@ -127,6 +127,36 @@ describe("WorkspaceServerConnection", () => {
     expect((await service.read("workspace-1", now)).connected).toBe(false);
   });
 
+  test("the service page gives the host command and system unit without saving a row", async () => {
+    const { ports, service } = connection();
+    ports.lastSeen = new Date(now.getTime() - 1_000);
+
+    const page = await service.servicePage(origin, now);
+
+    expect(page).toEqual({
+      connected: true,
+      command: hostCommand,
+      serviceUnit: `[Unit]
+Description=CoForge Swarm host
+After=docker.service
+Wants=docker.service
+
+[Service]
+User=<user>
+Group=<user>
+SupplementaryGroups=docker
+EnvironmentFile=/home/<user>/.coforge-host/host.env
+ExecStart=/home/<user>/.coforge-host/coforge-computer host --server-url http://127.0.0.1:8789
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+`,
+    });
+    expect(ports.row).toBeUndefined();
+  });
+
   test("rejects an origin that is not this deployment's bare origin", async () => {
     const { ports, service } = connection();
 
