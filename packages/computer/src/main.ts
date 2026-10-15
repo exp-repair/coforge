@@ -45,19 +45,27 @@ if (Bun.argv[2] === "__agent-cli") {
   }
 } else if (Bun.argv[2] === "__attach-workspace") {
   const { homedir } = await import("node:os");
-  const { COFORGE_DAEMON_SERVER_URL } = await import("@lrm/coforge-daemon");
-  const { prepareContainerBinding } = await import("./host/container-binding");
-  const { resolveComputerStateDirectory } = await import("./paths");
+  const { COFORGE_DAEMON_SERVER_URL, LocalDaemonLauncher } = await import("@lrm/coforge-daemon");
+  const { attachRunningWorkspace } = await import("./host/container-binding");
+  const { resolveComputerStateDirectory, resolveDaemonSocketPath } = await import("./paths");
   const { currentComputerPlatform } = await import("./platform");
   const platform = currentComputerPlatform();
-  const wrote = await prepareContainerBinding(
+  const stateDirectory = resolveComputerStateDirectory({
+    platform: platform.os,
+    homeDirectory: homedir(),
+    environment: process.env,
+  });
+  const launcher = new LocalDaemonLauncher({
+    executablePath: process.execPath,
+    socketPath: resolveDaemonSocketPath({ platform: platform.os, stateDirectory }),
+    stateDirectory,
+    serverUrl: COFORGE_DAEMON_SERVER_URL,
+  });
+  const wrote = await attachRunningWorkspace(
     process.env,
-    resolveComputerStateDirectory({
-      platform: platform.os,
-      homeDirectory: homedir(),
-      environment: process.env,
-    }),
+    stateDirectory,
     COFORGE_DAEMON_SERVER_URL,
+    (config) => launcher.ensureStarted(config).then(() => undefined),
   );
   if (!wrote) {
     console.error("attach environment is incomplete");

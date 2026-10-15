@@ -149,6 +149,7 @@ import {
   type WeeklyReportResponse,
   agentEnvironmentViolation,
   utf8Encoder,
+  refusalText,
   thrownMessage,
 } from "@lrm/coforge-sdk/internal";
 import { isAgentApiKey } from "#src/credentials/agent-api-key";
@@ -2168,6 +2169,7 @@ export class DaemonConnection implements DaemonConnectionClient {
         agent_id: report.agentId,
         provider: report.provider,
         error_code: diagnosticErrorCode(error),
+        error_message: refusalText(error).slice(0, 200),
         outcome: "failed",
       });
       throw error;

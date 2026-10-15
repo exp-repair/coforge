@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  createDockerContainers,
   dockerAttachExecArgs,
   dockerServiceCreateArgs,
   dockerServiceFindArgs,
-  dockerServiceForceUpdateArgs,
   dockerServiceRemoveArgs,
   swarmAccepting,
 } from "#src/host/docker-containers";
@@ -90,7 +90,7 @@ describe("host process", () => {
     expect(runs).toBe(0);
   });
 
-  test("delete removes the service and attach writes the workspace then restarts the task", async () => {
+  test("delete removes the service and attach writes the workspace into the running task", async () => {
     const calls: string[] = [];
     await acceptClaimedJob({ ...job, operation: "delete", daemonApiKey: null }, config, {
       containers: {
@@ -247,11 +247,29 @@ describe("swarm service arguments", () => {
       "coforge-computer",
       "__attach-workspace",
     ]);
-    expect(dockerServiceForceUpdateArgs("computer-1")).toEqual([
-      "service",
-      "update",
-      "--force",
-      "coforge-computer-1",
+  });
+
+  test("attach runs inside the existing task and does not replace the service", async () => {
+    const calls: string[][] = [];
+    const containers = createDockerContainers(async (args) => {
+      calls.push(args);
+      if (args[0] === "ps") return { exitCode: 0, stdout: "task-1\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await containers.attachWorkspace({
+      computerId: "computer-1",
+      env: { COFORGE_WORKSPACE_ID: "workspace-2" },
+    });
+    expect(calls).toEqual([
+      ["ps", "-q", "--filter", "label=com.docker.swarm.service.name=coforge-computer-1"],
+      [
+        "exec",
+        "--env",
+        "COFORGE_WORKSPACE_ID=workspace-2",
+        "task-1",
+        "coforge-computer",
+        "__attach-workspace",
+      ],
     ]);
   });
 

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
-import { prepareContainerBinding } from "#src/host/container-binding";
+import { attachRunningWorkspace, prepareContainerBinding } from "#src/host/container-binding";
 
 const daemonKey = `dk_${"b".repeat(43)}`;
 const directories: string[] = [];
@@ -38,7 +38,7 @@ test("a container writes one workspace binding and the daemon key", async () => 
     {
       workspaceId: "workspace-1",
       computerId: "computer-1",
-      workspaceRoot: "/workspace",
+      workspaceRoot: "/root/.coforge/agent-workspaces",
       serverHttpUrl: "https://server.example",
       enabled: true,
     },
@@ -50,6 +50,39 @@ test("a container writes one workspace binding and the daemon key", async () => 
   const written = await Promise.all(names.map(async (name) => Bun.file(name).text()));
   expect(written.join("\n")).not.toContain("refresh-secret");
   expect(written.join("\n")).not.toContain("alpha");
+});
+
+test("attaching a workspace starts only that workspace on the persisted volume", async () => {
+  const directory = await stateDirectory();
+  expect(await prepareContainerBinding(env, directory)).toBe(true);
+  const started: string[] = [];
+  expect(
+    await attachRunningWorkspace(
+      {
+        ...env,
+        COFORGE_WORKSPACE_ID: "workspace-2",
+        COFORGE_DAEMON_API_KEY: `dk_${"c".repeat(43)}`,
+      },
+      directory,
+      "https://server.example",
+      async (config) => {
+        started.push(config.workspaceId);
+        expect(config).toEqual({
+          workspaceId: "workspace-2",
+          computerId: "computer-1",
+          workspaceRoot: "/root/.coforge/agent-workspaces",
+          daemonApiKey: `dk_${"c".repeat(43)}`,
+          serverHttpUrl: "https://server.example",
+        });
+      },
+    ),
+  ).toBe(true);
+  expect(started).toEqual(["workspace-2"]);
+  const binding = await Bun.file(join(directory, "bindings.json")).json();
+  expect(binding.map((item: { workspaceId: string }) => item.workspaceId)).toEqual([
+    "workspace-1",
+    "workspace-2",
+  ]);
 });
 
 test("a second workspace is appended and the same workspace is not duplicated", async () => {

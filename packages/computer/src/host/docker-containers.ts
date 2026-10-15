@@ -51,10 +51,6 @@ export function dockerAttachExecArgs(containerId: string, env: Record<string, st
   return args;
 }
 
-export function dockerServiceForceUpdateArgs(computerId: string): string[] {
-  return ["service", "update", "--force", serviceName(computerId)];
-}
-
 export function dockerNodeStatusArgs(): string[] {
   return ["node", "ls", "--format", "{{.Status}}"];
 }
@@ -102,11 +98,6 @@ export function createDockerContainers(spawn: DockerSpawn = spawnDocker): Contai
       );
       if (!containerId) throw new Error("cloud computer task is not running");
       await run(spawn, dockerAttachExecArgs(containerId, input.env), "docker exec failed");
-      await run(
-        spawn,
-        dockerServiceForceUpdateArgs(input.computerId),
-        "docker service update failed",
-      );
     },
   };
 }
