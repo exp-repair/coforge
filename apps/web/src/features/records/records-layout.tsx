@@ -136,6 +136,7 @@ export function RecordsLayout({
   const [membersExpanded, setMembersExpanded] = useState(false);
   const [formatEditing, setFormatEditing] = useState(false);
   const [settingsHintDismissed, setSettingsHintDismissed] = useState(false);
+  const [settingsHintVisible, setSettingsHintVisible] = useState(false);
   const [myReportsOpen, setMyReportsOpen] = useState(sectionDefaults.myReports);
   const [membersOpen, setMembersOpen] = useState(sectionDefaults.members);
   const [notesOpen, setNotesOpen] = useState(sectionDefaults.notes);
@@ -144,7 +145,7 @@ export function RecordsLayout({
   const listHidden = recordOpen && !showMobileList;
 
   useEffect(() => {
-    if (!formatEditing) setSettingsHintDismissed(false);
+    if (formatEditing) setSettingsHintVisible(true);
   }, [formatEditing]);
 
   const applyActiveSection = useCallback((section: RecordsSidebarSectionId) => {
@@ -563,7 +564,7 @@ export function RecordsLayout({
             </TabPanel>
 
             <div className="relative border-t border-secondary px-2 py-2">
-              {catalog.canManageWeeklyReports && formatEditing && !settingsHintDismissed ? (
+              {catalog.canManageWeeklyReports && settingsHintVisible && !settingsHintDismissed ? (
                 <div className="absolute bottom-full left-2 z-20 mb-2 w-60 rounded-xl border border-brand bg-brand-primary px-3 py-2 text-xs text-brand-secondary shadow-sm">
                   <div className="flex items-start gap-2">
                     <p className="min-w-0 flex-1">

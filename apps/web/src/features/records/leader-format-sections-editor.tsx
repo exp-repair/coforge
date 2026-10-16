@@ -61,7 +61,6 @@ export function LeaderFormatSectionsEditor({
             type="button"
             size="sm"
             color="link-gray"
-            iconLeading={Plus}
             onPress={() => addAfter(-1)}
           >
             {m.records_template_add_heading_level_two()}

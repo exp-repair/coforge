@@ -25,9 +25,11 @@ import {
   reportContentForAuthor,
   reportContentForRecipient,
   switchReportBodyVersion,
+  memberReportMatchesReceived,
   reportTabsEqual,
   retainMemberReportDelivery,
   withAssignmentUnread,
+  withReceivedSnapshot,
   withAutoSendCancelled,
   withWeekSendDismissed,
   type ReportContent,
@@ -68,6 +70,27 @@ type Db = PrismaClient;
 
 function asReportContent(value: unknown): ReportContent {
   return normalizeReportContent(value);
+}
+
+async function memberSubmitMatchesReceived(
+  db: PrismaClient,
+  input: {
+    workspaceId: string;
+    sourceTemplateId: string | null;
+    content: ReportContent;
+  },
+): Promise<boolean> {
+  if (memberReportMatchesReceived(input.content)) return true;
+  if (input.content.received || !input.sourceTemplateId) return false;
+  const template = await db.weeklyReport.findFirst({
+    where: { id: input.sourceTemplateId, workspaceId: input.workspaceId },
+    select: { content: true },
+  });
+  if (!template) return false;
+  return memberReportMatchesReceived({
+    ...input.content,
+    received: { tabs: asReportContent(template.content).tabs ?? {} },
+  });
 }
 
 function isSentMemberReport(kind: string, status: string): boolean {
@@ -1009,7 +1032,7 @@ export class RecordCatalog {
         title,
         status: "draft",
         content: withAssignmentUnread(
-          asReportContent(template.content),
+          withReceivedSnapshot(asReportContent(template.content)),
           true,
         ) as unknown as Prisma.InputJsonValue,
       },
@@ -1767,6 +1790,7 @@ export class RecordCatalog {
         sourceTemplate: {
           select: {
             authorId: true,
+            content: true,
             author: {
               select: REPORT_PERSON_SELECT,
             },
@@ -1804,13 +1828,24 @@ export class RecordCatalog {
       }
 
       const isTemplateAuthor = report.author.id === input.userId;
-      const content =
+      let content =
         report.kind === "member"
           ? memberReportContentForViewer(asReportContent(report.content), {
               viewerIsAuthor: isTemplateAuthor,
               status: report.status,
             })
           : asReportContent(report.content);
+      if (
+        report.kind === "member" &&
+        report.author.id === input.userId &&
+        !content.received &&
+        report.sourceTemplate?.content != null
+      ) {
+        content = {
+          ...content,
+          received: { tabs: asReportContent(report.sourceTemplate.content).tabs ?? {} },
+        };
+      }
       const assignmentCount =
         report.kind === "template"
           ? await this.db.weeklyReport.count({
@@ -2078,6 +2113,7 @@ export class RecordCatalog {
         hiddenFromAuthor: true,
         settingsId: true,
         content: true,
+        sourceTemplateId: true,
         cycle: { select: { year: true, week: true } },
         submissions: { where: { kind: "member" }, select: { id: true }, take: 1 },
       },
@@ -2109,8 +2145,22 @@ export class RecordCatalog {
     if (stored.bodyRestore && !content.bodyRestore) {
       content = { ...content, bodyRestore: stored.bodyRestore };
     }
+    if (stored.received && !content.received) {
+      content = { ...content, received: stored.received };
+    }
     if (input.assistantInsertMessageId) {
       content = insertAssistantReportBody(stored, content, input.assistantInsertMessageId);
+    }
+    if (
+      report.kind === "member" &&
+      (input.status === "submitted" || input.status === "shared") &&
+      (await memberSubmitMatchesReceived(this.db, {
+        workspaceId: input.workspaceId,
+        sourceTemplateId: report.sourceTemplateId,
+        content,
+      }))
+    ) {
+      throw new AppError("INVALID_INPUT", { errorId: "weekly-report-unmodified" });
     }
     const publishing = isSentMemberReport(report.kind, input.status ?? "");
     const alreadySent = isSentMemberReport(report.kind, report.status);

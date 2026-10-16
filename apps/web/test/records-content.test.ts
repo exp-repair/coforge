@@ -9,7 +9,9 @@ import {
   isAutoSendCancelled,
   memberReportTitle,
   formatWeeklyReportCompletedAt,
+  memberReportMatchesReceived,
   normalizeReportContent,
+  withReceivedSnapshot,
   removeKeyPointPromptHistoryEntry,
   reportBodyRestoreView,
   reportContentForAuthor,
@@ -77,19 +79,42 @@ test("template alignment and clearing keep the assistant original", () => {
     assistantDraft,
   );
   expect(clearReportContent(content).assistantDraft).toEqual(assistantDraft);
-  expect(clearReportContent(content).tabs).toEqual({
-    Summary: { markdown: "" },
-    Old: { markdown: "" },
+  expect(clearReportContent(content).tabs).toEqual({});
+});
+
+test("clearReportContent removes every heading level", () => {
+  expect(
+    clearReportContent({
+      tabs: {
+        Summary: { markdown: "## Work Summary\n\none" },
+        Research: { markdown: "## New paper\n\ntwo" },
+      },
+      assignment: { unread: true },
+    }),
+  ).toEqual({
+    tabs: {},
+    assignment: { unread: true },
   });
 });
 
-test("clearReportContent clears every page and keeps its names", () => {
+test("a member report cannot send until its body differs from the one received", () => {
+  const received = withReceivedSnapshot({
+    tabs: { Summary: { markdown: "## Work Summary\n\n" } },
+  });
+  expect(memberReportMatchesReceived(received)).toBe(true);
   expect(
-    clearReportContent({
-      tabs: { Summary: { markdown: "one" }, Research: { markdown: "two" } },
+    memberReportMatchesReceived({
+      ...received,
+      tabs: { Summary: { markdown: "## Work Summary\n\nshipped the parser" } },
     }),
-  ).toEqual({
-    tabs: { Summary: { markdown: "" }, Research: { markdown: "" } },
+  ).toBe(false);
+  expect(normalizeReportContent(received).received).toEqual(received.received);
+});
+
+test("normalizeReportContent keeps a report that has no headings", () => {
+  expect(normalizeReportContent({ tabs: {}, assignment: { unread: true } })).toEqual({
+    tabs: {},
+    assignment: { unread: true },
   });
 });
 
