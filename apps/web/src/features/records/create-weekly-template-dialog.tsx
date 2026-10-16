@@ -5,11 +5,10 @@ import {
   useMemo,
   useState,
   type FormEvent,
-  type Key,
   type ReactNode,
 } from "react";
 import { XClose as X } from "@untitledui/icons";
-import { Heading } from "react-aria-components";
+import { Heading, type Key } from "react-aria-components";
 
 import { BadgeWithButton } from "#src/components/base/badges/badges";
 import { Button } from "#src/components/base/buttons/button";
