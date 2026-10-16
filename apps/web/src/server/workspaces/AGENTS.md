@@ -35,6 +35,9 @@ These rules apply to `src/server/workspaces/`.
   returns. That record is the only way a Computer learns its Workspace is gone
   and parks the binding; without it the Computer retries forever. A soft delete
   that keeps the keys valid never parks a Computer.
+- `create-workspace.server.ts` starts the account's default cloud computer for a
+  Workspace, including after a Workspace is created. A deployment without a
+  cluster still returns the Workspace.
 - `server-connection.server.ts` stores one submitted connection per Workspace
   and builds the cloud computer service page: the install command and the
   system unit, neither of which carries a secret. The light is on only while

@@ -82,7 +82,7 @@ sudo systemctl enable --now coforge-host.service
 
 ## 工作区里的电脑
 
-一个账号只有一台不能删除的默认云电脑，名字是 Cloud。打开某个工作区的电脑页，会把这同一台挂进该工作区，所以每个工作区都能看到它。每个工作区一个 Daemon，都在同一个容器里，可以同时在线。在线灯是这个工作区的 Daemon 在 90 秒内向 staging 报过在线。
+一个账号只有一台不能删除的默认云电脑，名字是 Cloud。新用户完成注册，或再创建一个工作区之后，会把这同一台挂进该工作区，所以每个工作区都能看到它。每个工作区一个 Daemon，都在同一个容器里，可以同时在线。在线灯是这个工作区的 Daemon 在 90 秒内向 staging 报过在线。容器当时还没就绪时，打开该工作区的电脑页会再挂一次。
 
 再挂一个工作区时，`host` 在正在运行的容器里执行 `__attach-workspace`，只启动这个工作区的 Daemon。已经连上的其他工作区保持运行。刷新电脑页后，已经挂上的工作区都会显示在线。
 
@@ -92,6 +92,6 @@ sudo systemctl enable --now coforge-host.service
 
 - `systemctl is-active coforge-host.service` 为 `active`，没有令牌或节点密钥错误。注销后这个状态不变。
 - 「云电脑服务」页的灯在心跳到达后变绿。心跳超过 90 秒未到则变回未连接。
-- 打开工作区电脑页后，`docker service ls` 出现 `coforge-<电脑编号>`，镜像是 `coforge-computer:staging`，副本为 `1/1`。
+- 创建一个工作区后，`docker service ls` 出现 `coforge-<电脑编号>`，镜像是 `coforge-computer:staging`，副本为 `1/1`。
 - 容器里每个已挂载工作区有一个 `__workspace-daemon`，日志里有 `Daemon cloud connection established`。
 - 电脑页上 Cloud 在线。要使用它，还要在该工作区把 Agent 指派到这台电脑。

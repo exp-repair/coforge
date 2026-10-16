@@ -8,10 +8,12 @@ import {
 } from "#src/features/workspaces/workspace-slug";
 import { isUniqueViolation } from "#src/server/db/unique-violation.server";
 import { isWorkspaceSlugFree } from "#src/server/db/repositories/workspace-slugs.repositories.server";
+import { productionCloudComputers } from "#src/server/hosts/host-production.server";
 import {
   PrismaWorkspaceEnrollmentStore,
   WorkspaceEnrollment,
 } from "#src/server/workspaces/enrollment.server";
+import { startDefaultCloudComputer } from "#src/server/workspaces/create-workspace.server";
 
 /** Where a person's display name lives. */
 export type FirstSignInNames = {
@@ -45,16 +47,24 @@ function workspaceSlugPrefill(username: string): string {
   return isValidWorkspaceSlug(slug) && !isReservedWorkspaceSlug(slug) ? slug : "";
 }
 
+export type CloudComputerStart = (input: {
+  userId: string;
+  workspaceId: string;
+  now: Date;
+}) => Promise<unknown>;
+
 /**
  * The step of first sign-in that asks a person for their display name and their personal
  * Workspace's URL: what the page needs to know (`readNameStep`) and what submitting it does
- * (`complete`): the Workspace is made at that URL, titled with the name, and the name is saved. Sign-in itself finishes without either; a person without a
+ * (`complete`): the Workspace is made at that URL, titled with the name, the default cloud
+ * computer is started for it, and the name is saved. Sign-in itself finishes without either; a person without a
  * name is sent here before anything is created for them.
  */
 export class FirstSignIn {
   constructor(
     private readonly names: FirstSignInNames,
     private readonly enrollment: WorkspaceEnrollment,
+    private readonly startCloudComputer?: CloudComputerStart,
   ) {}
 
   /** Whether to ask at all, and what the fields start with: the provider's own name, when it reads
@@ -103,6 +113,11 @@ export class FirstSignIn {
       if (isUniqueViolation(error)) return { ok: false, problem: "slug_taken" };
       throw error;
     }
+    await this.startCloudComputer?.({
+      userId: input.user.id,
+      workspaceId,
+      now: new Date(),
+    });
     await this.names.setDisplayNameOnce(input.user.id, checked.name);
     return { ok: true, workspaceId };
   }
@@ -139,6 +154,11 @@ function firstSignIn(db: PrismaClient): FirstSignIn {
   return new FirstSignIn(
     new PrismaFirstSignInNames(db),
     new WorkspaceEnrollment(new PrismaWorkspaceEnrollmentStore(db)),
+    (request) =>
+      startDefaultCloudComputer(
+        (input) => productionCloudComputers(db).ensureDefault(input),
+        request,
+      ),
   );
 }
 
