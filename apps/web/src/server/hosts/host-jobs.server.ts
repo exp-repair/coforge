@@ -15,6 +15,8 @@ export type CloudComputer = {
   id: string;
   ownerId: string;
   slot: CloudSlot;
+  /** The Workspace an extra computer is for. The default computer has none. */
+  homeWorkspaceId: string | null;
   name: string;
   containerReady: boolean;
   deletedAt: Date | null;
@@ -131,7 +133,11 @@ export class HostJobs {
       (computer) => computer.slot === "default" && computer.containerReady,
     );
     if (!ready) throw new HostJobError(409, "default cloud computer is not ready");
-    if (computers.some((computer) => computer.slot === "extra")) {
+    if (
+      computers.some(
+        (computer) => computer.slot === "extra" && computer.homeWorkspaceId === workspace.id,
+      )
+    ) {
       throw new HostJobError(409, "an extra cloud computer already exists");
     }
     return this.#create(
@@ -227,6 +233,7 @@ export class HostJobs {
       id: crypto.randomUUID(),
       ownerId: userId,
       slot,
+      homeWorkspaceId: slot === "extra" ? workspace.id : null,
       name,
       containerReady: false,
       deletedAt: null,

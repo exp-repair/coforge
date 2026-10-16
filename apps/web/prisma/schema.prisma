@@ -689,10 +689,12 @@ model Computer {
   /// "cloud" on the deployment's Swarm cluster.
   kind              String                 @default("local")
   /// "default" or "extra" for a cloud Computer. Local Computers leave this empty.
-  /// One live default and one live extra per account are partial unique indexes below.
+  /// One live default per account, and one live extra per Workspace, are partial unique indexes below.
   cloudSlot         String?
+  /// The Workspace an extra cloud Computer is for. Empty for the default and for local Computers.
+  homeWorkspaceId   String?                @db.Uuid
   /// Set when the cluster reports that an extra cloud Computer's service is gone.
-  /// The extra slot stays taken until then. The default Computer is never deleted.
+  /// That Workspace's extra slot stays taken until then. The default Computer is never deleted.
   deletedAt         DateTime?
   workspaces        WorkspaceComputer[]
   runtimes          ComputerRuntime[]
@@ -711,7 +713,7 @@ model Computer {
 
   @@unique([ownerId, machineId])
   @@unique([ownerId], map: "computers_one_live_cloud_default", where: raw("\"kind\" = 'cloud' AND \"cloudSlot\" = 'default' AND \"deletedAt\" IS NULL"))
-  @@unique([ownerId], map: "computers_one_live_cloud_extra", where: raw("\"kind\" = 'cloud' AND \"cloudSlot\" = 'extra' AND \"deletedAt\" IS NULL"))
+  @@unique([ownerId, homeWorkspaceId], map: "computers_one_live_cloud_extra_per_workspace", where: raw("\"kind\" = 'cloud' AND \"cloudSlot\" = 'extra' AND \"deletedAt\" IS NULL AND \"homeWorkspaceId\" IS NOT NULL"))
   @@map("computers")
 }
 

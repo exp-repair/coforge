@@ -35,6 +35,7 @@ export class PrismaCloudFleet implements CloudFleet {
         id: true,
         ownerId: true,
         cloudSlot: true,
+        homeWorkspaceId: true,
         name: true,
         deletedAt: true,
         hostJobs: {
@@ -51,6 +52,7 @@ export class PrismaCloudFleet implements CloudFleet {
           id: row.id,
           ownerId: row.ownerId,
           slot: row.cloudSlot,
+          homeWorkspaceId: row.homeWorkspaceId,
           name: row.name,
           containerReady: row.hostJobs.length > 0,
           deletedAt: row.deletedAt,
@@ -70,6 +72,7 @@ export class PrismaCloudFleet implements CloudFleet {
           displayName: computer.name,
           kind: "cloud",
           cloudSlot: computer.slot,
+          homeWorkspaceId: computer.homeWorkspaceId,
         },
       });
     } catch (error) {

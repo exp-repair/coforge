@@ -13,5 +13,6 @@ These rules apply to `src/features/computers/`.
   reader's account-specific `unsupported` result remains visible in its popover.
 - A cloud Computer belongs to the account: one default, started when first
   sign-in creates the personal Workspace and again when another Workspace is
-  created, and ensured once more when the Computers page opens, and at most one
-  extra. The cluster places it. The page does not ask the user to pick a host.
+  created, and ensured once more when the Computers page opens. Each Workspace
+  can add one extra. The cluster places it. The page does not ask the user to
+  pick a host.
