@@ -181,7 +181,6 @@ function ReportDetail({
   const router = useRouter();
   const navigate = useNavigate();
   const workspaceSlug = useWorkspaceSlug();
-  const toast = useAppToast();
   const save = useServerFn(saveWeeklyReportContent);
   const switchBody = useServerFn(switchWeeklyReportBodyVersion);
   const removeReport = useServerFn(deleteMemberWeeklyReport);
