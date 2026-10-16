@@ -11,10 +11,12 @@ import {
 
 import { authMiddleware, workspaceUserMiddleware } from "#src/features/auth/function-auth";
 import { requireDatabaseClient } from "#src/server/db/client.server";
+import { productionCloudComputers } from "#src/server/hosts/host-production.server";
 import {
   PrismaWorkspaceCatalogStore,
   WorkspaceCatalog,
 } from "#src/server/workspaces/catalog.server";
+import { createWorkspaceAndStartCloudComputer } from "#src/server/workspaces/create-workspace.server";
 import {
   preferredWorkspaceSlugFromRequest,
   rememberedWorkspaceCookie,
@@ -133,7 +135,15 @@ export const createWorkspace = createServerFn({ method: "POST" })
   .validator(createWorkspaceInputSchema)
   .handler(async ({ data, context }) => {
     const user = context.user;
-    const workspace = await catalog().createForUser(user.id, data);
+    const workspace = await createWorkspaceAndStartCloudComputer(
+      {
+        createWorkspace: (userId, workspaceInput) =>
+          catalog().createForUser(userId, workspaceInput),
+        startCloudComputer: (request) =>
+          productionCloudComputers(requireDatabaseClient()).ensureDefault(request),
+      },
+      { userId: user.id, name: data.name, slug: data.slug, now: new Date() },
+    );
     writePreferredWorkspaceSlug(workspace.slug);
     return workspace;
   });

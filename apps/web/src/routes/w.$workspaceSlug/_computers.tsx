@@ -16,8 +16,9 @@ const appRoute = getRouteApi("/w/$workspaceSlug");
 
 export const Route = createFileRoute("/w/$workspaceSlug/_computers")({
   loader: async () => {
-    // The account's default cloud computer is created the first time this page
-    // opens. A deployment without a cluster still shows the computers it has.
+    // Creating a Workspace already starts this. Opening the page ensures it
+    // again, including an attach that waited because the container was not
+    // ready yet. A deployment without a cluster still shows the computers it has.
     await ensureCloudComputer();
     const [computers, preferences, installOrigin] = await Promise.all([
       listComputers(),
