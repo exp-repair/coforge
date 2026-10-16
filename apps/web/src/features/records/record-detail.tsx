@@ -7,7 +7,6 @@ import {
   Download01 as Download,
   Heart,
   MessageChatCircle as Message,
-  Share01 as Share,
   Trash01 as Trash,
 } from "@untitledui/icons";
 
@@ -65,7 +64,6 @@ import {
   type ReportBodyRestoreView,
   type ReportContent,
 } from "./records-content";
-import { copyText } from "#src/features/records/report-editor/lib/clipboard";
 import {
   BackToRecords,
   RecordsKeyPointReturnBack,
@@ -73,6 +71,7 @@ import {
   useFormatEditHint,
 } from "./records-layout";
 import { useWorkspaceSlug } from "#src/features/workspaces/workspace-route";
+import { RecordsDeleteConfirmDialog } from "./records-delete-confirm-dialog";
 import { RecordsReadingColumn } from "./records-reading-column";
 import { RecordSidePanel } from "./record-side-panel";
 import { readSidePanelPinned } from "./record-side-panel-pin";
@@ -238,7 +237,8 @@ function ReportDetail({
   const assignmentUnchanged =
     receivedBaseline != null && reportTabsEqual(content, { tabs: receivedBaseline });
   const catalog = recordsRoute.useLoaderData();
-  const readingScroll = leaderReading && sent;
+  // Leader reads a submitted assignment; the assignee turns the same pages while filling it in.
+  const readingScroll = (leaderReading && sent) || memberAssignee;
   const neighbors = readingScroll
     ? sameTemplateNeighbors(catalog.memberWeeks, report.id)
     : { previousId: null, nextId: null };
@@ -280,14 +280,6 @@ function ReportDetail({
       if (sendAckTimerRef.current) clearTimeout(sendAckTimerRef.current);
     };
   }, []);
-
-  async function shareReport() {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    if (!url) return;
-    const ok = await copyText(url);
-    if (ok) toast.success(m.records_report_share_copied());
-    else toast.error(m.records_report_share_failed());
-  }
 
   function exportReport() {
     const markdown = reportContentToMarkdown(contentRef.current);
@@ -666,12 +658,10 @@ function ReportDetail({
                     <Dropdown.Menu
                       onAction={(key) => {
                         if (key === "favorite") void toggleFavorite();
-                        if (key === "share") void shareReport();
                         if (key === "export") exportReport();
                         if (key === "delete") void removeCurrentReport();
                       }}
                     >
-                      <Dropdown.Item id="share" icon={Share} label={m.records_report_share()} />
                       <Dropdown.Item
                         id="export"
                         icon={Download}
@@ -1255,6 +1245,9 @@ function NoteDetail({ note }: { note: NoteSubject["note"] }) {
   noteIdRef.current = note.id;
   const [saving, setSaving] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   async function persist(next: { title?: string; body?: string }, noteId = noteIdRef.current) {
@@ -1309,17 +1302,21 @@ function NoteDetail({ note }: { note: NoteSubject["note"] }) {
   }
 
   async function removeNote() {
-    setSaving(true);
+    setDeleting(true);
+    setDeleteError("");
     try {
       await remove({ data: { noteId: note.id } });
+      setDeleteOpen(false);
       await router.invalidate({ sync: true });
       void router.navigate({
         to: "/w/$workspaceSlug/records",
         params: { workspaceSlug },
         search: { tab: "notes" },
       });
+    } catch {
+      setDeleteError(m.records_delete_error());
     } finally {
-      setSaving(false);
+      setDeleting(false);
     }
   }
 
@@ -1360,7 +1357,10 @@ function NoteDetail({ note }: { note: NoteSubject["note"] }) {
                 <Dropdown.Menu
                   onAction={(key) => {
                     if (key === "clear") void clearBody();
-                    if (key === "delete") void removeNote();
+                    if (key === "delete") {
+                      setDeleteError("");
+                      setDeleteOpen(true);
+                    }
                   }}
                 >
                   <Dropdown.Item id="clear" icon={Trash} label={m.records_report_clear()} />
@@ -1425,6 +1425,18 @@ function NoteDetail({ note }: { note: NoteSubject["note"] }) {
           </RecordsReadingColumn>
         </div>
       </div>
+      <RecordsDeleteConfirmDialog
+        open={deleteOpen}
+        title={m.records_note_delete_confirm_title({ name: title })}
+        description={m.records_note_delete_confirm_body()}
+        busy={deleting}
+        error={deleteError}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          setDeleteError("");
+        }}
+        onConfirm={() => void removeNote()}
+      />
     </div>
   );
 }
