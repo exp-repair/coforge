@@ -21,6 +21,7 @@ import {
   deleteAgentWorkspace,
   deleteComputer,
   refreshComputerRuntimeCatalog,
+  formatCloudComputer,
   setRuntimeVisibility,
   updateComputerDisplayName,
   upgradeComputer,
@@ -79,6 +80,7 @@ function ComputerDetailPage() {
   const scanWorkspaces = useServerFn(scanAgentWorkspaces);
   const deleteWorkspace = useServerFn(deleteAgentWorkspace);
   const removeComputer = useServerFn(deleteComputer);
+  const formatDisk = useServerFn(formatCloudComputer);
   const create = useServerFn(createAgent);
   const executeControl = useServerFn(executeAgentControl);
   const loadRuntimeCatalog = useServerFn(getComputerRuntimeCatalog);
@@ -109,6 +111,13 @@ function ComputerDetailPage() {
       onDeleteAgentWorkspace={
         computer.ownedByCurrentUser
           ? (agentId) => deleteWorkspace({ data: { computerId, agentId } })
+          : undefined
+      }
+      onFormatCloudComputer={
+        computer.ownedByCurrentUser && computer.kind === "cloud"
+          ? async (confirmName) => {
+              await formatDisk({ data: { computerId, confirmName } });
+            }
           : undefined
       }
       onDeleteComputer={
