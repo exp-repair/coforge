@@ -112,6 +112,38 @@ export function contentEdgeReached(input: {
   };
 }
 
+/** Body edge of a reading or presentation scroller, measured from its end sentinel. */
+export function measureBodyEdge(scroller: HTMLElement, end: HTMLElement | null) {
+  if (!end) return null;
+  const contentEnd =
+    end.getBoundingClientRect().bottom - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  return contentEdgeReached({
+    scrollTop: scroller.scrollTop,
+    clientHeight: scroller.clientHeight,
+    contentEnd,
+  });
+}
+
+/** A nested scroller between the event target and the page body still has room in this direction. */
+export function nestedScrollOwnsWheel(
+  target: EventTarget | null,
+  boundary: HTMLElement,
+  deltaY: number,
+) {
+  let node = target instanceof Element ? target : null;
+  while (node && node !== boundary) {
+    if (node instanceof HTMLElement && node.scrollHeight > node.clientHeight + 1) {
+      const overflowY = getComputedStyle(node).overflowY;
+      if (overflowY === "auto" || overflowY === "scroll") {
+        if (deltaY < 0 && node.scrollTop > 1) return true;
+        if (deltaY > 0 && node.scrollTop + node.clientHeight < node.scrollHeight - 1) return true;
+      }
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 let stagedEdge: { reportId: string; edge: ReadingEdge } | null = null;
 
 export function stageReadingEdge(reportId: string, edge: ReadingEdge) {

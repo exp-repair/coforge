@@ -23,7 +23,8 @@ import { ReportPresentMode } from "./report-present-mode";
 import { RecordsReadingColumn } from "./records-reading-column";
 import {
   clearReadingEdge,
-  contentEdgeReached,
+  measureBodyEdge,
+  nestedScrollOwnsWheel,
   noteReadingWheel,
   readReadingEdge,
   readingWheelPixels,
@@ -507,35 +508,13 @@ export function ReportTabsEditor({
           pages={tabNames.map((name) => ({ name, markdown: pages[name]?.markdown ?? "" }))}
           startIndex={Math.max(0, tabNames.indexOf(activeTab))}
           placeholder={placeholder ?? ""}
-          onClose={() => setPresenting(false)}
+          onClose={(pageIndex) => {
+            const name = tabNames[pageIndex];
+            if (name) setSelectedTab(name);
+            setPresenting(false);
+          }}
         />
       ) : null}
     </div>
   );
-}
-
-function measureBodyEdge(scroller: HTMLElement, end: HTMLElement | null) {
-  if (!end) return null;
-  const contentEnd =
-    end.getBoundingClientRect().bottom - scroller.getBoundingClientRect().top + scroller.scrollTop;
-  return contentEdgeReached({
-    scrollTop: scroller.scrollTop,
-    clientHeight: scroller.clientHeight,
-    contentEnd,
-  });
-}
-
-function nestedScrollOwnsWheel(target: EventTarget | null, boundary: HTMLElement, deltaY: number) {
-  let node = target instanceof Element ? target : null;
-  while (node && node !== boundary) {
-    if (node instanceof HTMLElement && node.scrollHeight > node.clientHeight + 1) {
-      const overflowY = getComputedStyle(node).overflowY;
-      if (overflowY === "auto" || overflowY === "scroll") {
-        if (deltaY < 0 && node.scrollTop > 1) return true;
-        if (deltaY > 0 && node.scrollTop + node.clientHeight < node.scrollHeight - 1) return true;
-      }
-    }
-    node = node.parentElement;
-  }
-  return false;
 }

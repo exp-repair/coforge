@@ -8,7 +8,7 @@ import { FeaturedIcon } from "#src/components/foundations/featured-icon/featured
 import { m } from "#src/paraglide/messages";
 
 /**
- * Confirms an irreversible delete in Records settings (a weekly template, or one key-point prompt
+ * Confirms an irreversible Records delete (a note, a weekly template, or one key-point prompt
  * history entry). Same shape as `WeeklySendConfirmDialog`; the confirm is the surface's one solid
  * red button.
  */
