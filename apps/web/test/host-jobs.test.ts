@@ -22,7 +22,10 @@ class MemoryFleet {
   async insert(computer: CloudComputer) {
     const clash = this.computers.some(
       (item) =>
-        item.ownerId === computer.ownerId && item.slot === computer.slot && item.deletedAt === null,
+        item.ownerId === computer.ownerId &&
+        item.deletedAt === null &&
+        item.slot === computer.slot &&
+        (computer.slot === "default" || item.homeWorkspaceId === computer.homeWorkspaceId),
     );
     if (clash) throw new HostJobError(409, "cloud computer slot is taken");
     this.computers.push({ ...computer });
@@ -213,6 +216,45 @@ describe("cloud computer quota", () => {
     await expect(hosts.addExtra(request)).rejects.toEqual(
       new HostJobError(409, "an extra cloud computer already exists"),
     );
+  });
+
+  test("another workspace can add its own extra computer", async () => {
+    const { hosts, fleet, jobs } = harness();
+    await hosts.ensureDefault(request);
+    const claimed = await hosts.claim({ token: "host-token" });
+    await hosts.report({
+      token: "host-token",
+      jobId: claimed!.jobId,
+      containerId: "service-1",
+      now,
+    });
+    const first = await hosts.addExtra(request);
+
+    const hostsWithBeta = new HostJobs({
+      workspaces: {
+        findMember: async (workspaceId) =>
+          workspaceId === "workspace-2" ? { id: workspaceId, slug: "beta" } : undefined,
+      },
+      fleet,
+      jobs,
+      cluster: {
+        id: async () => "cluster-1",
+        authenticate: async () => ({ id: "cluster-1", accepting: true }),
+      },
+      keys: { issue: async () => daemonKey },
+    });
+    const second = await hostsWithBeta.addExtra({
+      userId: "user-a",
+      workspaceId: "workspace-2",
+      now,
+    });
+
+    expect(second.slot).toBe("extra");
+    expect(second.computerId).not.toBe(first.computerId);
+    expect(fleet.computers.filter((computer) => computer.slot === "extra")).toHaveLength(2);
+    await expect(
+      hostsWithBeta.addExtra({ userId: "user-a", workspaceId: "workspace-2", now }),
+    ).rejects.toEqual(new HostJobError(409, "an extra cloud computer already exists"));
   });
 
   test("the default computer cannot be deleted, and the extra slot frees only after the cluster reports removal", async () => {
