@@ -19,6 +19,14 @@ export function isExplicitMemoryQuestion(body: string, memoryAgentId?: string): 
   );
 }
 
+/** The stored identity token also works after the workspace Memory Agent is renamed. */
+export function isExplicitMemoryDiagnosis(body: string, memoryAgentId: string): boolean {
+  return (
+    /(?:^|\s)@memory\s+diagnose\b/i.test(body) ||
+    new RegExp(`(?:^|\\s)<@agent:${memoryAgentId}>\\s+diagnose\\b`, "i").test(body)
+  );
+}
+
 export function channelSendNeedsMemoryOffer(input: {
   latestQuestionAt: Date | null;
   latestOfferAt: Date | null;
@@ -41,22 +49,13 @@ export async function explicitMemoryQuestionRequiresOffer(
   isDesignated: (workspaceId: string, agentId: string) => Promise<boolean>,
 ): Promise<boolean> {
   if (!(await isDesignated(input.workspaceId, input.agentId))) return false;
-  const question = await latestExplicitMemoryQuestion(
+  const question = await oldestUnansweredExplicitMemoryQuestion(
     db,
     input.workspaceId,
     [input.conversationId],
     input.agentId,
   );
-  if (!question) return false;
-  const offer = await db.memoryOfferRecord.findFirst({
-    where: {
-      workspaceId: input.workspaceId,
-      conversationId: input.conversationId,
-      createdAt: { gt: question.createdAt },
-    },
-    select: { id: true },
-  });
-  return offer === null;
+  return question !== null;
 }
 
 export async function resolveUnansweredMemoryOfferTarget(
@@ -74,22 +73,15 @@ export async function resolveUnansweredMemoryOfferTarget(
     select: { conversationId: true },
   });
   const conversationIds = memberships.map((membership) => membership.conversationId);
-  const question = await latestExplicitMemoryQuestion(
+  const question = await oldestUnansweredExplicitMemoryQuestion(
     db,
     workspaceId,
     conversationIds,
     memoryAgentId,
   );
   if (!question) return null;
-  const offer = await db.memoryOfferRecord.findFirst({
-    where: {
-      workspaceId,
-      conversationId: question.conversationId,
-      createdAt: { gt: question.createdAt },
-    },
-    select: { id: true },
-  });
-  if (offer) return null;
+  if (question.senderAgentId)
+    return { conversationId: question.conversationId, targetAgentId: question.senderAgentId };
   const peer = await db.conversationMember.findFirst({
     where: {
       workspaceId,
@@ -104,26 +96,74 @@ export async function resolveUnansweredMemoryOfferTarget(
   return { conversationId: question.conversationId, targetAgentId: peer.agentId };
 }
 
-async function latestExplicitMemoryQuestion(
+/**
+ * FIFO offer binding. When several explicit questions are pending, the agent
+ * composes for the oldest one it saw; binding the offer to the *newest*
+ * unanswered question instead drifts every answer one question behind and the
+ * backlog never drains. Each published offer answers at most one question:
+ * the oldest unanswered question strictly before it.
+ */
+export function fifoOldestUnansweredQuestion<T extends { createdAt: Date }>(
+  questions: readonly T[],
+  offerTimesAsc: readonly Date[],
+): T | null {
+  let next = 0;
+  for (const offer of offerTimesAsc) {
+    if (next < questions.length && questions[next].createdAt.getTime() < offer.getTime()) {
+      next += 1;
+    }
+  }
+  return questions[next] ?? null;
+}
+
+async function oldestUnansweredExplicitMemoryQuestion(
   db: PrismaClient,
   workspaceId: string,
   conversationIds: string[],
   memoryAgentId: string,
-): Promise<{ conversationId: string; createdAt: Date } | null> {
+): Promise<{ conversationId: string; createdAt: Date; senderAgentId: string | null } | null> {
   if (conversationIds.length === 0) return null;
   const rows = await db.message.findMany({
     where: {
       workspaceId,
       conversationId: { in: conversationIds },
       OR: [{ body: { contains: "@memory" } }, { body: { contains: `<@agent:${memoryAgentId}>` } }],
-      sender: { userId: { not: null } },
+      sender: {
+        OR: [{ userId: { not: null } }, { agentId: { not: null, notIn: [memoryAgentId] } }],
+      },
     },
     orderBy: { createdAt: "desc" },
     take: 40,
-    select: { body: true, createdAt: true, conversationId: true },
+    select: {
+      body: true,
+      createdAt: true,
+      conversationId: true,
+      sender: { select: { agentId: true } },
+    },
   });
-  const question = rows.find((row) => isExplicitMemoryQuestion(row.body, memoryAgentId));
-  return question
-    ? { conversationId: question.conversationId, createdAt: question.createdAt }
-    : null;
+  const questions = rows
+    .filter((row) => isExplicitMemoryQuestion(row.body, memoryAgentId))
+    .map((row) => ({
+      conversationId: row.conversationId,
+      createdAt: row.createdAt,
+      senderAgentId: row.sender?.agentId ?? null,
+    }))
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+  if (questions.length === 0) return null;
+  const offers = (
+    await db.memoryOfferRecord.findMany({
+      where: {
+        workspaceId,
+        conversationId: { in: conversationIds },
+        createdAt: { gte: questions[0].createdAt },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: { createdAt: true },
+    })
+  ).reverse();
+  return fifoOldestUnansweredQuestion(
+    questions,
+    offers.map((offer) => offer.createdAt),
+  );
 }

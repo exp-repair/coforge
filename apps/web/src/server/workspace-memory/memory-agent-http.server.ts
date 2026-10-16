@@ -1,3 +1,4 @@
+import { PrismaMemoryDispositionStore } from "#src/server/db/repositories/memory-disposition.repositories.server";
 /**
  * Thin HTTP assembly for the Memory Agent route. Routes stay adapters.
  */
@@ -20,6 +21,7 @@ import {
   type MemoryAgentCommands,
   type MemoryAgentDirectory,
 } from "./memory-agent-route";
+import { createPrismaExplicitMemoryDiagnosis } from "./explicit-diagnosis.server";
 import { createMemoryOffers } from "./memory-offers";
 import {
   createPrismaMemoryOfferChannels,
@@ -56,16 +58,32 @@ export function createScopedMemoryAgentHttpCommands(
   const profiles = new PrismaWorkspaceMemoryProfileStore(db);
   const citationsStore = new PrismaWorkspaceMemoryCitationStore(db);
   const citations = createMemoryCitationBindings({ openviking: citationsStore });
+  const offers = createMemoryOffers({
+    citations,
+    offers: citationsStore,
+    publisher: createPrismaMemoryOfferPublisher(db),
+    channels: createPrismaMemoryOfferChannels(db),
+    hints: {
+      prepare(input) {
+        const seconds = Number(Bun.env.COFORGE_MEMORY_HINT_TTL_SECONDS);
+        return new PrismaMemoryDispositionStore(db).prepare({
+          ...input,
+          ttlMilliseconds: seconds * 1000,
+        });
+      },
+    },
+  });
   return createMemoryAgentCommands({
     fence: createMemoryAgentFenceLookup(profiles),
     directory: extras.directory ?? createPrismaMemoryAgentDirectory(db),
     budgets,
     citations,
-    offers: createMemoryOffers({
+    offers,
+    diagnose: createPrismaExplicitMemoryDiagnosis({
+      db,
       citations,
-      offers: citationsStore,
-      publisher: createPrismaMemoryOfferPublisher(db),
-      channels: createPrismaMemoryOfferChannels(db),
+      offers,
+      authorization: resolveOpenVikingAuthorization,
     }),
     openviking: createOpenVikingMemoryReads({
       client: extras.openvikingReads ?? createDefaultOpenVikingReadClient(db),
@@ -112,21 +130,21 @@ function accountKeyFor(credentialRef: string): string | undefined {
   return key;
 }
 
-function createDefaultOpenVikingReadClient(db: PrismaClient): OpenVikingMemoryReadClient {
+export function createDefaultOpenVikingGateway(db: PrismaClient) {
   const bindings = new PrismaOpenVikingBindingStore(db);
-  const gateway = createOpenVikingPolicyGateway({
+  return createOpenVikingPolicyGateway({
     profiles: new PrismaWorkspaceMemoryProfileStore(db),
     bindings,
     runtime: createOpenVikingRuntimeClient({
       baseUrl: Bun.env.COFORGE_OPENVIKING_URL ?? "http://127.0.0.1:0",
     }),
-    async resolveAuthorization(credentialRef) {
-      if (!credentialRef.startsWith("secret:")) throw new Error("invalid credential ref");
-      const token = accountKeyFor(credentialRef) ?? Bun.env.COFORGE_OPENVIKING_RUNTIME_TOKEN;
-      if (!token) throw new Error("openviking runtime token is not configured");
-      return token.startsWith("Bearer ") ? token : `Bearer ${token}`;
-    },
+    resolveAuthorization: resolveOpenVikingAuthorization,
   });
+}
+
+function createDefaultOpenVikingReadClient(db: PrismaClient): OpenVikingMemoryReadClient {
+  const bindings = new PrismaOpenVikingBindingStore(db);
+  const gateway = createDefaultOpenVikingGateway(db);
   return createCatalogOpenVikingMemoryReadClient({
     async forward(request) {
       const result = await gateway.forward(
@@ -151,4 +169,11 @@ function createDefaultOpenVikingReadClient(db: PrismaClient): OpenVikingMemoryRe
       return parsed;
     },
   });
+}
+
+async function resolveOpenVikingAuthorization(credentialRef: string): Promise<string> {
+  if (!credentialRef.startsWith("secret:")) throw new Error("invalid credential ref");
+  const token = accountKeyFor(credentialRef) ?? Bun.env.COFORGE_OPENVIKING_RUNTIME_TOKEN;
+  if (!token) throw new Error("openviking runtime token is not configured");
+  return token.startsWith("Bearer ") ? token : `Bearer ${token}`;
 }

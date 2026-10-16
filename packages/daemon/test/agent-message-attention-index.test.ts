@@ -10,6 +10,7 @@ import type {
 } from "@lrm/coforge-sdk/internal";
 import { AgentMessageAttentionIndex } from "#src/daemon-runtime/agent-message-attention-index";
 import { AgentConsumedSeqStore } from "#src/persistence/agent-consumed-seq-store";
+import type { AgentNoticeOptions } from "@coforge/agent";
 import { captureDaemonLogs } from "./log-capture";
 
 const stateDirectories: string[] = [];
@@ -83,6 +84,143 @@ const session = (notify: (notice: string) => void = () => {}) => ({
   dispose: async () => {},
 });
 const runtime = { session: () => session() };
+
+test("fenced Memory inbox notices teach native reads and no CLI", async () => {
+  const notices: string[] = [];
+  const memorySession = session((notice) => notices.push(notice));
+  const index = new AgentMessageAttentionIndex(
+    "workspace-1",
+    {
+      session: () => memorySession,
+      runtime: () => ({
+        session: memorySession,
+        config: {
+          provider: "coforge",
+          model: "eval",
+          reasoning: "",
+          toolProfile: "openviking-memory",
+        },
+      }),
+    },
+    async () => {},
+  );
+  await index.receive({
+    ...delivery("memory"),
+    target: "#software-engineering",
+    mentionsAgent: true,
+  });
+  await index.recover("agent-1", [], { "#software-engineering": 1 });
+  expect(notices).toHaveLength(2);
+  expect(notices[0]).toContain("Read each listed target with message_read");
+  expect(notices[1]).toContain("continuing while hasNewer is true");
+  for (const notice of notices) {
+    expect(notice).toContain("message_read");
+    expect(notice).not.toContain("coforge message");
+    expect(notice).not.toContain("COFORGE_MESSAGE");
+  }
+});
+
+test("ordinary Memory channel updates are batched while personal mentions notify immediately", async () => {
+  const notices: string[] = [];
+  const acknowledgements: string[] = [];
+  const memorySession = session((notice) => notices.push(notice));
+  const index = new AgentMessageAttentionIndex(
+    "workspace-1",
+    {
+      session: () => memorySession,
+      runtime: () => ({
+        session: memorySession,
+        config: {
+          provider: "coforge",
+          model: "eval",
+          reasoning: "",
+          toolProfile: "openviking-memory",
+        },
+      }),
+    },
+    async (ack) => {
+      acknowledgements.push(ack.deliveryId);
+    },
+  );
+  for (const sequence of [1, 2, 3, 4]) {
+    await index.receive({ ...delivery(`ordinary-${sequence}`), target: "#team", sequence });
+  }
+  expect(notices).toEqual([]);
+  expect(acknowledgements).toHaveLength(4);
+  expect(index.modelSeenSequence("agent-1", "#team")).toBe(0);
+  await index.receive({ ...delivery("ordinary-5"), target: "#team", sequence: 5 });
+  expect(notices).toHaveLength(1);
+  expect(notices[0]).toContain("message_read");
+  expect(notices[0]).not.toContain("private body");
+  await index.receive({
+    ...delivery("personal"),
+    target: "#team",
+    sequence: 6,
+    mentionsAgent: true,
+  });
+  expect(notices).toHaveLength(2);
+  index.clearAgent("agent-1");
+});
+
+test("Memory keeps a held batch and retries a refused notification after the hold lifts", async () => {
+  await captureDaemonLogs(async () => {
+    const timers: (() => Promise<void>)[] = [];
+    const notices: string[] = [];
+    let held = true;
+    let refuse = true;
+    const memorySession = {
+      ...session(),
+      async notify(notice: string) {
+        if (refuse) {
+          refuse = false;
+          throw new Error("notify refused");
+        }
+        notices.push(notice);
+      },
+    };
+    const index = new AgentMessageAttentionIndex(
+      "workspace-1",
+      {
+        session: () => memorySession,
+        runtime: () => ({
+          session: memorySession,
+          config: {
+            provider: "coforge",
+            model: "eval",
+            reasoning: "",
+            toolProfile: "openviking-memory",
+          },
+        }),
+      },
+      async () => {},
+      () => {},
+      {
+        shouldHold: () => held,
+        enqueue: () => {
+          throw new Error("batch must remain retryable until notified");
+        },
+        busy: () => {},
+      },
+      {
+        schedule(callback) {
+          timers.push(callback);
+          return () => {};
+        },
+      },
+    );
+    for (const sequence of [1, 2, 3, 4, 5]) {
+      await index.receive({ ...delivery(`held-${sequence}`), target: "#team", sequence });
+    }
+    expect(notices).toEqual([]);
+    held = false;
+    await timers.at(-1)!();
+    expect(notices).toEqual([]);
+    await timers.at(-1)!();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("message_read");
+    index.clearAgent("agent-1");
+  });
+});
 
 test("server-authored assignment attention preserves system identity", async () => {
   const notices: string[] = [];
@@ -251,7 +389,7 @@ test("updates attention, sends only a body-free notice, and ACKs takeover", asyn
     }),
   ]);
   expect(notices).toEqual([
-    "[CoForge inbox notice:\nInbox update: 1 message delivered or held for you\n@ada  new: 1 message · latest sender @ada\nDrain each listed target with `coforge message check --target <target>`, or inspect with `coforge message read --target <target>`. Either may return nothing, because a message can already have been read.]",
+    "[CoForge inbox notice:\nInbox update: 1 message delivered or held for you\n@ada  new: 1 message · latest sender @ada\nDrain each listed target with `coforge message check --target '<target>'`, or inspect with `coforge message read --target '<target>'`. Either may return nothing, because a message can already have been read.\nTargets starting with # must be quoted. Send bodies on stdin, never a positional argument; double quotes expand backticks and $, so use a single-quoted heredoc delimiter:\ncoforge message check --target '#channel'\ncoforge message send --target '#channel' <<'COFORGE_MESSAGE'\nYour reply text, with literal `backticks` and $variables preserved.\nCOFORGE_MESSAGE]",
   ]);
   expect(notices[0]).not.toContain("private body");
   expect(acks).toEqual(["delivery-one"]);
@@ -557,8 +695,8 @@ test("recovery directs every target with messages beyond the batch to canonical 
   expect(notices[0]).toContain("[CoForge inbox notice (restart recovery):");
   expect(notices[0]).toContain("@ada  new: 1 message");
   expect(notices[0]).toContain("@grace  new: 1 message");
-  expect(notices[0]).toContain("coforge message check --target <target>");
-  expect(notices[0]).toContain("coforge message read --target <target>");
+  expect(notices[0]).toContain("coforge message check --target '<target>'");
+  expect(notices[0]).toContain("coforge message read --target '<target>'");
   expect(notices[0]).not.toContain("Please resume this work");
   expect(notices[0]).not.toContain("New message received:");
   expect(index.modelSeenSequence("agent-1", "@ada")).toBe(0);
@@ -1140,9 +1278,9 @@ test("a sender handle that fails the handle grammar never reaches the notice", a
   expect(notices[0]).toContain("#general  new: 1 message");
   expect(notices[0]).not.toContain("latest sender");
   // The notice's shape is fixed: the opening line, the headline, one line per target, then the
-  // one-line drain hint. A sender name cannot add a line to it.
+  // drain hint and fixed message example. A sender name cannot add a line to it.
   expect(notices).toHaveLength(1);
-  expect(notices[0]!.split("\n")).toHaveLength(4);
+  expect(notices[0]!.split("\n")).toHaveLength(9);
 });
 
 test("an unrecognized sender kind never reaches the notice", async () => {
@@ -1216,7 +1354,7 @@ test("a notice claims only what the daemon can establish, never the server's rea
   ])
     expect(notices[0]).not.toContain(readStateClaim);
   expect(notices[0]).toContain("delivered or held for you");
-  expect(notices[0]).toContain("coforge message check --target <target>");
+  expect(notices[0]).toContain("coforge message check --target '<target>'");
   expect(notices[0]).toContain("Either may return nothing");
 });
 
@@ -1632,4 +1770,42 @@ test("a persisted cursor of another conversation is reset, and one without a con
   expect(notices).toHaveLength(2);
   expect(index.modelSeenSequence("agent-1", "#general")).toBe(0);
   expect(index.modelSeenSequence("agent-1", "#legacy")).toBe(0);
+});
+
+test("Memory coalesced delivery separates conversations while preserving thread grouping", async () => {
+  const notices: { text: string; options?: AgentNoticeOptions }[] = [];
+  const native = {
+    ...session(),
+    notify: async (text: string, options?: AgentNoticeOptions) => {
+      notices.push({ text, options });
+    },
+  };
+  const index = new AgentMessageAttentionIndex(
+    "workspace-1",
+    {
+      session: () => native,
+      runtime: () => ({
+        config: {
+          toolProfile: "openviking-memory",
+          provider: "coforge",
+          model: "test",
+          reasoning: "",
+        },
+        session: native,
+      }),
+    },
+    async () => {},
+  );
+  await index.flush("agent-1", [
+    { ...delivery("a", "human", "alice"), conversationId: "group-a", target: "#alpha" },
+    { ...delivery("b", "human", "bob"), conversationId: "group-b", target: "#beta" },
+    { ...delivery("thread", "human", "alice"), conversationId: "group-a", target: "#alpha:root" },
+  ]);
+  expect(notices).toHaveLength(2);
+  const alpha = notices.find((n) => n.options?.conversation?.conversationId === "group-a")!;
+  const beta = notices.find((n) => n.options?.conversation?.conversationId === "group-b")!;
+  expect(alpha.text).toContain("#alpha");
+  expect(alpha.text).not.toContain("#beta");
+  expect(beta.text).toContain("#beta");
+  expect(beta.text).not.toContain("#alpha");
 });

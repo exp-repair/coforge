@@ -30,6 +30,8 @@ import { ACTIVE_AGENT_WHERE } from "#src/server/agents/active-agent.server";
 import { AgentInboxPurgePublisher } from "#src/server/agents/agent-inbox-purge.server";
 import { channelThreadRootWhere } from "#src/server/db/message-anchor.server";
 import { AGENT_VISIBILITY } from "#src/features/agents/agent-visibility";
+import { attachDefaultMemoryAgent } from "#src/server/workspace-memory/default-memory-agent.server";
+import { isOpenVikingPrototypeEnabled } from "#src/server/workspace-memory/prototype-gate";
 import { agentMessageSender } from "./sender-display.server";
 import { channelListPreviews } from "./channel-list-preview.server";
 import {
@@ -178,10 +180,16 @@ export async function enrollGeneralChannel(db: Prisma.TransactionClient, workspa
   });
   // A private Agent is never an active channel member, #general included; making it public
   // enrolls it again (see `PrismaChangeAgentVisibilityStore`).
-  const agents = await db.agent.findMany({
-    where: { workspaceId, visibility: AGENT_VISIBILITY.PUBLIC, ...ACTIVE_AGENT_WHERE },
-    select: { id: true },
+  const memoryAgent = await db.workspaceMemoryAgent.findUnique({
+    where: { workspaceId },
+    select: { agentId: true },
   });
+  const agents = (
+    await db.agent.findMany({
+      where: { workspaceId, visibility: AGENT_VISIBILITY.PUBLIC, ...ACTIVE_AGENT_WHERE },
+      select: { id: true },
+    })
+  ).filter((agent) => agent.id !== memoryAgent?.agentId);
   await db.conversationMember.createMany({
     data: agents.map(({ id: agentId }) => ({
       workspaceId,
@@ -283,8 +291,10 @@ export async function resolveChannelThreadRoot(
  * and an action card keep their own rules: `server/tasks/task-board.server.ts` and
  * `action-cards.server.ts`.)
  *
- * Directed delivery: a message that @mentions at least one Agent wakes exactly those Agents (a
- * mention pierces mute), and no others. Mentioning only humans never narrows Agent delivery.
+ * Directed delivery wakes the mentioned Agents immediately (a mention pierces mute).
+ * The active Workspace Memory Agent additionally observes channel Messages through batched
+ * notices; its daemon coalesces ordinary updates and reads their bodies with message_read.
+ * Mentioning only humans never narrows ordinary Agent delivery.
  *
  * Without an Agent mention the audience depends on what the message *is*: a top-level message
  * belongs to the channel, so every unmuted Agent member receives it; a reply belongs to its
@@ -347,7 +357,25 @@ export async function channelAgentRecipients(
             select: { agentId: true },
           })
         ).map(({ agentId }) => agentId!);
-  return [...new Set(ids)].filter((id) => id !== message.senderAgentId);
+  const observers = await tx.conversationMember.findMany({
+    where: {
+      conversationId: message.conversationId,
+      ...ACTIVE_MEMBER_WHERE,
+      agent: {
+        ...ACTIVE_AGENT_WHERE,
+        stoppedAt: null,
+        workspaceMemoryAgent: { isNot: null },
+        workspace: { memoryProfile: { is: { desired: "openviking" } } },
+      },
+    },
+    select: { agentId: true },
+  });
+  return [
+    ...new Set([
+      ...ids,
+      ...observers.flatMap((member) => (member.agentId ? [member.agentId] : [])),
+    ]),
+  ].filter((id) => id !== message.senderAgentId);
 }
 
 /**
@@ -982,6 +1010,13 @@ export class PublicChannels {
       if (isUniqueViolation(error)) throw new AppError("CONFLICT");
       throw error;
     }
+    await attachDefaultMemoryAgent(this.db, {
+      workspaceId,
+      conversationId: created.id,
+      actorUserId: userId,
+      now: new Date(),
+      gate: { prototypeEnabled: isOpenVikingPrototypeEnabled(Bun.env) },
+    });
     await Promise.all([
       announceChannelCreated(this.realtime, {
         workspaceId,
@@ -2161,6 +2196,9 @@ export class PublicChannels {
     mentions?: readonly MentionSelectorInput[];
   }) {
     const { workspaceId, userId, channelId, idempotencyKey, attachmentIds, threadRootId } = input;
+    // This key is also the daemon delivery's request_id. A missing one is omitted on the wire
+    // and the daemon drops the frame, so the Agent never sees the message.
+    if (!idempotencyKey?.trim()) throw new AppError("INVALID_INPUT");
     const channel = await this.channel(workspaceId, userId, channelId);
     if (channel.archivedAt) throw new AppError("CONFLICT");
     const member = await this.db.conversationMember.findFirst({
@@ -2168,7 +2206,10 @@ export class PublicChannels {
     });
     if (!member) throw new AppError("ACCESS_DENIED");
     const body = input.body.trim();
-    if (!body || body.length > 8_000) throw new AppError("INVALID_INPUT");
+    // Postgres `message.body` is unbounded text. The browser composer stays at 8_000
+    // (`sendConversationMessageInputSchema`); this path also accepts an eval prompt or an
+    // Agent channel reply past that, which otherwise throws and kills the eval runner.
+    if (!body || body.length > 64_000) throw new AppError("INVALID_INPUT");
     let created = false;
     const saved = await (this.idempotency ?? getMessageRequestIdempotency()).execute(
       { workspaceId, senderKind: "user", senderId: userId, idempotencyKey },

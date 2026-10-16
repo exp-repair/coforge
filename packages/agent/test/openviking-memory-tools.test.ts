@@ -24,6 +24,24 @@ const MUTATION_TOOL_NAMES = [
 
 const CHANNEL_MESSAGE_TOOLS = ["message_check", "message_read", "send_channel_message"] as const;
 
+test("strict eval Memory exposes reads and server-owned controls but no ordinary send", () => {
+  const tools = createMemoryFenceTools(
+    OPENVIKING_TOOL_PROFILE,
+    new MemoryAgentTurnBudget(),
+    fakeProxy(),
+    { memoryOfferOnly: true },
+  );
+  expect(tools.map((tool) => tool.name)).toEqual([
+    "ov_find",
+    "ov_expand",
+    "ov_read",
+    "memory_offer",
+    "memory_diagnose",
+    "message_check",
+    "message_read",
+  ]);
+});
+
 function emptyItemsResponse(protocol: string, op: string, operationId: string) {
   return { protocol, op, operationId, duplicate: false, items: [] };
 }
@@ -77,15 +95,16 @@ test("Memory Agent sessions disable Pi skill, context, and extension injection",
   });
 });
 
-test("the openviking-memory fence exposes only ov_* reads, one offer, and channel message tools", () => {
+test("the openviking-memory fence exposes reads, scoped diagnosis, offers, and channel message tools", () => {
   const names = createMemoryFenceTools(OPENVIKING_TOOL_PROFILE, new MemoryAgentTurnBudget()).map(
     (tool) => tool.name,
   );
   expect(names).toEqual([
     OPENVIKING_TOOL_NAMES.find,
-    OPENVIKING_TOOL_NAMES.searchContext,
+    OPENVIKING_TOOL_NAMES.expand,
     OPENVIKING_TOOL_NAMES.read,
     OPENVIKING_TOOL_NAMES.offer,
+    OPENVIKING_TOOL_NAMES.diagnose,
     ...CHANNEL_MESSAGE_TOOLS,
   ]);
   expect(names.some((name) => name.startsWith("causal_"))).toBe(false);
@@ -202,22 +221,118 @@ test("openviking-memory search_context keeps the 3-read cap", () => {
   expect(() => budget.consume({ ...searchContext, operationId: "c4" })).toThrow("read budget");
 });
 
-test("openviking-memory ov_search_context forwards the native tokenBudget unchanged", async () => {
+test("empty ov_find arguments return an example error and do not spend the read budget", async () => {
+  const budget = new MemoryAgentTurnBudget();
   const proxy = fakeProxy();
+  const tools = createMemoryFenceTools(OPENVIKING_TOOL_PROFILE, budget, proxy);
+  const find = tools.find((tool) => tool.name === OPENVIKING_TOOL_NAMES.find);
+  expect(typeof find?.prepareArguments).toBe("function");
+  expect(() => find?.prepareArguments?.({})).toThrow(/missing operationId, query/);
+  expect(() => find?.prepareArguments?.({})).toThrow(/\{"operationId": "find-1"/);
+  await expect(executeTool(tools, OPENVIKING_TOOL_NAMES.find, {})).rejects.toThrow(
+    /missing operationId, query/,
+  );
+  expect(budget.snapshot()).toEqual({ reads: 0, offers: 0 });
+  expect(proxy.calls).toEqual([]);
+  const described = find?.parameters as { properties?: Record<string, { description?: string }> };
+  expect(described.properties?.operationId?.description).toContain("find-1");
+  expect(find?.description).toContain("不能空对象");
+});
+
+test("send_channel_message accepts message only as an alias of a missing content", async () => {
+  const proxy = fakeProxy(() => ({ accepted: true }));
   const tools = createMemoryFenceTools(OPENVIKING_TOOL_PROFILE, new MemoryAgentTurnBudget(), proxy);
-  await executeTool(tools, OPENVIKING_TOOL_NAMES.searchContext, {
-    operationId: "ctx-1",
-    query: "deploy",
-    tokenBudget: 8000,
+  const send = tools.find((tool) => tool.name === "send_channel_message");
+  expect(send?.prepareArguments?.({ target: "#general", message: "hello" })).toEqual({
+    target: "#general",
+    content: "hello",
   });
-  expect(proxy.calls[0]).toEqual({
-    path: agentApiRoutes.proxy.openviking.path,
-    body: {
-      protocol: OPENVIKING_AGENT_PROTOCOL,
-      op: "search_context",
-      operationId: "ctx-1",
-      query: "deploy",
-      tokenBudget: 8000,
+  expect(
+    send?.prepareArguments?.({ target: "#general", content: "kept", message: "ignored" }),
+  ).toEqual({ target: "#general", content: "kept" });
+  expect(() => send?.prepareArguments?.({})).toThrow(/The body field name is content, not message/);
+  await executeTool(tools, "send_channel_message", { target: "#general", message: "from-alias" });
+  expect(proxy.calls[0]?.body).toMatchObject({
+    operation: "send",
+    target: "#general",
+    content: "from-alias",
+  });
+  expect(proxy.calls[0]?.body).not.toHaveProperty("message");
+});
+
+test("Memory does not expose ov_search_context", () => {
+  const tools = createMemoryFenceTools(
+    OPENVIKING_TOOL_PROFILE,
+    new MemoryAgentTurnBudget(),
+    fakeProxy(),
+  );
+  expect(tools.some((tool) => tool.name === "ov_search_context")).toBe(false);
+});
+
+test("group Memory tools default to their own channel and reject another channel", async () => {
+  const proxy = fakeProxy();
+  const tools = createMemoryFenceTools(
+    OPENVIKING_TOOL_PROFILE,
+    new MemoryAgentTurnBudget(),
+    proxy,
+    { conversation: { conversationId: "group-alpha", target: "#alpha" } },
+  );
+  await executeTool(tools, "message_check", {});
+  expect(proxy.calls[0]!.body).toMatchObject({ operation: "check", target: "#alpha" });
+  await executeTool(tools, "message_check", { target: "#alpha:root" });
+  expect(proxy.calls[1]!.body).toMatchObject({ target: "#alpha:root" });
+  await expect(executeTool(tools, "message_read", { target: "#beta" })).rejects.toThrow(
+    "this conversation",
+  );
+  expect(proxy.calls).toHaveLength(2);
+});
+
+test("Memory control session exposes no tools that could consume another group's inbox", () => {
+  expect(
+    createMemoryFenceTools(OPENVIKING_TOOL_PROFILE, new MemoryAgentTurnBudget(), fakeProxy(), {
+      controlSession: true,
+    }),
+  ).toEqual([]);
+});
+
+test("native diagnosis forwards the request without consuming retrieval budget", async () => {
+  const budget = new MemoryAgentTurnBudget();
+  const posts: unknown[] = [];
+  const tool = createMemoryFenceTools(OPENVIKING_TOOL_PROFILE, budget, {
+    async post(path, body) {
+      posts.push({ path, body });
+      return {
+        protocol: OPENVIKING_AGENT_PROTOCOL,
+        op: "diagnose",
+        operationId: "diagnose-1",
+        duplicate: false,
+        status: "completed",
+        published: true,
+        messageId: "answer",
+      };
     },
-  });
+  }).find((tool) => tool.name === "memory_diagnose")!;
+  const args = { operationId: "diagnose-1", messageId: "00000000-0000-4000-8000-000000000001" };
+  const result = await tool.execute("call", args, undefined, undefined, {} as never);
+  expect(posts).toEqual([
+    {
+      path: agentApiRoutes.proxy.openviking.path,
+      body: { protocol: OPENVIKING_AGENT_PROTOCOL, op: "diagnose", ...args },
+    },
+  ]);
+  expect(result.content).toEqual([
+    {
+      type: "text",
+      text: JSON.stringify({
+        protocol: OPENVIKING_AGENT_PROTOCOL,
+        op: "diagnose",
+        operationId: "diagnose-1",
+        duplicate: false,
+        status: "completed",
+        published: true,
+        messageId: "answer",
+      }),
+    },
+  ]);
+  expect(budget.snapshot()).toEqual({ reads: 0, offers: 0 });
 });

@@ -849,6 +849,7 @@ describe("PrismaDirectConversationRepository", () => {
         return rows;
       },
       messageMention: { findMany: async () => [] },
+      memoryHintRecord: { findMany: async () => [] },
     } as unknown as PrismaClient;
 
     const result = await new PrismaDirectConversationRepository(db).readAgentRecoveryContext(
@@ -906,6 +907,7 @@ describe("PrismaDirectConversationRepository", () => {
   test("names channel senders individually and direct senders by the conversation user", async () => {
     const db = {
       messageMention: { findMany: async () => [] },
+      memoryHintRecord: { findMany: async () => [] },
       $queryRaw: async () => [
         {
           id: "message-1",
@@ -958,6 +960,7 @@ describe("PrismaDirectConversationRepository", () => {
   test("rejects recovery when an unread message has no Agent delivery", async () => {
     const db = {
       messageMention: { findMany: async () => [] },
+      memoryHintRecord: { findMany: async () => [] },
       $queryRaw: async () => [
         {
           id: "message-1",
@@ -984,6 +987,7 @@ describe("PrismaDirectConversationRepository", () => {
   test("rejects recovery for a direct conversation with no other member to target", async () => {
     const db = {
       messageMention: { findMany: async () => [] },
+      memoryHintRecord: { findMany: async () => [] },
       $queryRaw: async () => [
         {
           id: "message-1",
@@ -1012,6 +1016,7 @@ describe("PrismaDirectConversationRepository", () => {
     // while a DM's target is the conversation's *other* member — the one the Agent replies to.
     const db = {
       messageMention: { findMany: async () => [] },
+      memoryHintRecord: { findMany: async () => [] },
       $queryRaw: async () => [
         {
           id: "message-1",
@@ -1059,6 +1064,7 @@ describe("PrismaDirectConversationRepository", () => {
     // `"@agent"` or a bare `"@"` — the shape that previously poisoned daemon ready recovery.
     const db = {
       messageMention: { findMany: async () => [] },
+      memoryHintRecord: { findMany: async () => [] },
       $queryRaw: async () => [
         {
           id: "message-1",

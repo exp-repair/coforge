@@ -12,6 +12,11 @@ export {
   PI_MODEL_REFRESH_TIMEOUT_MS,
   resolveAgentSessionFile,
 } from "#src/runner";
+export {
+  exportAgentTrainingTrajectory,
+  type AgentTrainingStep,
+  type AgentTrainingTrajectory,
+} from "#src/training-trajectory";
 export { classifyPiLaunchFailure, PiLaunchError, piLaunchTrace } from "#src/launch-error";
 export type { PiLaunchCategory, PiLaunchTrace } from "#src/launch-error";
 export { getAgentDir, VERSION as PI_SDK_VERSION } from "@earendil-works/pi-coding-agent";
@@ -24,9 +29,11 @@ export {
   getCoforgeSessionDir,
   prepareAgentSessionDirectory,
 } from "#src/paths";
+export { isMemoryAgentRuntime } from "#src/contract";
 export type {
   AgentActivity,
   AgentActivityLevel,
+  AgentConversationScope,
   AgentNoticeOptions,
   AgentRuntimeConfig,
   AgentRuntimeEvent,
@@ -38,3 +45,4 @@ export type {
   UsageSnapshot,
   UsageWindow,
 } from "#src/contract";
+export { createMemoryDispositionTool } from "#src/memory-disposition-tool";

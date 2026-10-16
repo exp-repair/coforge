@@ -9,6 +9,8 @@ import {
 import { startAgentProxy } from "../src/agent-proxy";
 import {
   admitOpenVikingRead,
+  admitOpenVikingControl,
+  forwardOpenVikingControl,
   forwardOpenVikingRead,
   OpenVikingReadProxyError,
 } from "../src/openviking-read-proxy";
@@ -460,3 +462,125 @@ function fakeCentrifugeClient() {
   };
   return { client };
 }
+
+test("diagnosis is a fenced control operation, never an ordinary read", async () => {
+  const command = {
+    protocol: OPENVIKING_AGENT_PROTOCOL,
+    op: "diagnose" as const,
+    operationId: "diagnose-1",
+    messageId: "00000000-0000-4000-8000-000000000001",
+  };
+  expect(admitOpenVikingRead({ body: command, fence: OPENVIKING_TOOL_PROFILE }).ok).toBe(false);
+  expect(admitOpenVikingControl({ body: command, fence: undefined }).ok).toBe(false);
+  expect(admitOpenVikingControl({ body: command, fence: OPENVIKING_TOOL_PROFILE }).ok).toBe(true);
+  const response = {
+    ...command,
+    duplicate: false,
+    status: "completed",
+    published: true,
+    messageId: "answer",
+  };
+  const input = {
+    url: "http://web.internal",
+    command,
+    agentApiKey: "agent-key",
+    daemonApiKey: "daemon-key",
+  };
+  expect(
+    await forwardOpenVikingControl({ ...input, fetch: async () => Response.json(response) }),
+  ).toMatchObject({ status: "completed", published: true });
+  await expect(
+    forwardOpenVikingControl({
+      ...input,
+      fetch: async () => Response.json({ ...response, operationId: "another-request" }),
+    }),
+  ).rejects.toBeInstanceOf(OpenVikingReadProxyError);
+});
+
+test("the outer read deadline allows a healthy backend response beyond ten seconds", async () => {
+  const controller = new AbortController();
+  let deadline = 0;
+  const timeout = spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+    deadline = milliseconds;
+    return controller.signal;
+  });
+  fetchSpies.push(timeout);
+  let respond!: () => void;
+  const expected = {
+    protocol: OPENVIKING_AGENT_PROTOCOL,
+    op: "find",
+    operationId: FIND_COMMAND.operationId,
+    duplicate: false,
+    items: [],
+  };
+  const pending = forwardOpenVikingRead({
+    url: "http://coforge.test/read",
+    command: FIND_COMMAND,
+    agentApiKey: AGENT_API_KEY,
+    daemonApiKey: "fixture-daemon",
+    fetch: async (_url, init) =>
+      new Promise<Response>((resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("deadline", "AbortError")),
+          { once: true },
+        );
+        respond = () => resolve(Response.json(expected));
+      }),
+  });
+  // The real six-way BM25 request took about 10.1s; allow the full 60s backend budget
+  // without making this regression depend on wall-clock timing.
+  if (deadline <= 60_000) controller.abort();
+  respond();
+  await expect(pending).resolves.toEqual(expected);
+});
+
+test("the production connection preserves the enclosing OpenViking deadline", async () => {
+  const controller = new AbortController();
+  let deadline = 0;
+  fetchSpies.push(
+    spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      deadline = milliseconds;
+      return controller.signal;
+    }),
+  );
+  let respond!: () => void;
+  const expected = {
+    protocol: OPENVIKING_AGENT_PROTOCOL,
+    op: "find",
+    operationId: FIND_COMMAND.operationId,
+    duplicate: false,
+    items: [],
+  };
+  fetchSpies.push(
+    spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+          new Promise<Response>((resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("deadline", "AbortError")),
+              { once: true },
+            );
+            respond = () => resolve(Response.json(expected));
+          }),
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    ),
+  );
+  const fake = fakeCentrifugeClient();
+  const connection = new DaemonConnection("wss://cloud.example", () => fake.client);
+  await connection.start("daemon-token", {
+    computerId: "computer-a",
+    workspaceId: "workspace-a",
+    serverHttpUrl: "https://server.example/api/internal/centrifugo",
+  });
+  const pending = connection.agentOpenviking(FIND_COMMAND, AGENT_API_KEY);
+  if (deadline <= 60_000) controller.abort();
+  respond();
+  try {
+    await expect(pending).resolves.toEqual(expected);
+  } finally {
+    connection.stop();
+  }
+});

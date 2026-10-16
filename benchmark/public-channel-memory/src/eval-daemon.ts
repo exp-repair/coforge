@@ -53,7 +53,7 @@ function memoryApiKey(provider: string): string {
 
 async function encryptApiKey(agentId: string, providerId: string, apiKeyInput: string) {
   const associatedData = new TextEncoder().encode(`${agentId}\0${providerId}`);
-  const encryptionKey = readAgentRuntimeCredentialEncryptionKey(process.env);
+  const encryptionKey = await readAgentRuntimeCredentialEncryptionKey(process.env);
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = new Uint8Array(
     await crypto.subtle.encrypt(
@@ -189,8 +189,10 @@ export async function startEvalDaemon(input: {
       issueAgentContext: (agentId, context) => runtimeApi().issueAgentContext(agentId, context),
       agentCausal: (context, request, agentApiKey) =>
         runtimeApi().agentCausal(context, request, agentApiKey),
+      agentTask: (context, request, agentApiKey) =>
+        runtimeApi().agentTask(context, request, agentApiKey),
       agentOpenviking: (context, request, agentApiKey) =>
-        runtimeApi().agentOpenviking(context, request, agentApiKey),
+        runtimeApi().agentRequests.agentOpenviking(context, request, agentApiKey),
       memoryFence: (agentId) => runtimeApi().memoryFence(agentId),
     },
   });

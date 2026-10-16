@@ -1,3 +1,4 @@
+import { memoryHintMessage, readMemoryHint } from "./memory-hint";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
   DaemonHandshakeRequestSchema,
@@ -212,6 +213,8 @@ export type LocalAgentMessageRequest = {
     | "unreact";
   target?: string;
   content?: string;
+  /** Alias of `content`, used only when `content` is absent. Never forwarded upstream. */
+  message?: string;
   sendDraft?: boolean;
   /** `message send --send-draft` only: refuse, before any request, unless the saved draft still
    * belongs to the logical send with this idempotency key. */
@@ -249,6 +252,7 @@ export type LocalAttachment = {
   sizeBytes: number;
 };
 export type AgentMessageRecord = {
+  memoryHint?: import("#src/agent/memory-disposition").MemoryHintDelivery;
   id: string;
   sequence: number;
   senderKind: MessageSenderKind;
@@ -395,6 +399,7 @@ function encodeAgentMessageRecords(records: readonly AgentMessageRecord[]) {
     createdAt: m.createdAt,
     attachments: encodeLocalAttachments(m.attachments),
     task: m.task,
+    memoryHint: memoryHintMessage(m.memoryHint),
   }));
 }
 
@@ -411,6 +416,7 @@ function decodeAgentMessageRecords(
     attachments: readonly RawLocalAttachment[];
     task?: Parameters<typeof decodeMessageTask>[0];
     mentionsAgent?: boolean;
+    memoryHint?: { hintId: string; tool: string };
   }[],
 ): AgentMessageRecord[] {
   return records.map((m) => {
@@ -427,6 +433,7 @@ function decodeAgentMessageRecords(
       attachments: decodeLocalAttachments(m.attachments),
       ...(m.task ? { task: decodeMessageTask(m.task) } : {}),
       ...(m.mentionsAgent ? { mentionsAgent: true } : {}),
+      ...(m.memoryHint ? { memoryHint: readMemoryHint(m.memoryHint) } : {}),
     };
   });
 }

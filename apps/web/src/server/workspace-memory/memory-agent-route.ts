@@ -1,6 +1,6 @@
 /**
  * Memory Agent command composition for the Agent HTTPS routes.
- * OpenViking-only: reads and one cited Memory Offer per triggering message.
+ * OpenViking reads, cited offers, and task-requested server-owned diagnosis.
  */
 
 import {
@@ -9,15 +9,18 @@ import {
   OPENVIKING_TOOL_PROFILE,
   type MemoryAgentToolProfile,
   type OpenVikingAgentCommand,
+  type OpenVikingDiagnoseResponse,
   type OpenVikingAgentResponse,
   type OpenVikingCitation,
 } from "@lrm/coforge-sdk/agent";
 import { WorkspaceMemoryScopeError } from "../db/repositories/workspace-memory-errors.server";
 import { MemoryCitationUngroundedError, type MemoryCitationBindings } from "./memory-citations";
+import { RetiredFromMemoryDiscoveryError } from "./memory-discovery-eligibility";
 import { MemoryAgentBudgetError, type MemoryAgentBudgetLedger } from "./memory-agent-budget";
 import type { MemoryOffers } from "./memory-offers";
 import {
   MemoryAgentMutationError,
+  MemoryReadCapabilityError,
   type OpenVikingMemoryReads,
 } from "../openviking/openviking-memory-reads";
 import { DEFAULT_OFFER_RATIONALE, MemoryOfferTargetError } from "./explicit-memory-answer";
@@ -75,6 +78,12 @@ export function createMemoryAgentCommands(deps: {
   budgets: MemoryAgentBudgetLedger;
   citations: MemoryCitationBindings;
   offers: MemoryOffers;
+  diagnose?: (input: {
+    workspaceId: string;
+    agentId: string;
+    messageId: string;
+    operationId: string;
+  }) => Promise<OpenVikingDiagnoseResponse>;
   openviking: OpenVikingMemoryReads;
   offerTargets?: MemoryOfferTargetResolver;
 }): MemoryAgentCommands {
@@ -94,13 +103,27 @@ export function createMemoryAgentCommands(deps: {
         return failure(403, command.operationId, "unauthorized");
       }
       try {
-        deps.budgets
-          .forTrigger({
-            workspaceId: input.workspaceId,
-            agentId: input.agentId,
-            triggerMessageId: input.triggerMessageId,
-          })
-          .consume(command);
+        // An operationId that already published an offer is an idempotent
+        // replay; it must not touch the per-trigger budget. The model invents
+        // topic-derived operationIds and re-answers answered questions — a
+        // replay hitting the budget instead of the duplicate path stalls the
+        // whole turn (client slot burns, the pending question goes unanswered).
+        const replay =
+          command.op === "offer" &&
+          (await deps.offers.isReplay(input.workspaceId, command.operationId));
+        if (!replay) {
+          deps.budgets
+            .forTrigger({
+              workspaceId: input.workspaceId,
+              agentId: input.agentId,
+              triggerMessageId: input.triggerMessageId,
+            })
+            .consume(command);
+        }
+        if (command.op === "diagnose") {
+          if (!deps.diagnose) throw new Error("diagnosis_unavailable");
+          return { ok: true, response: await deps.diagnose({ ...input, ...command }) };
+        }
         return { ok: true, response: await handleOpenViking(deps, input, command) };
       } catch (error) {
         return translateError(command, error);
@@ -145,7 +168,7 @@ async function handleOpenViking(
   command: OpenVikingAgentCommand,
 ): Promise<OpenVikingAgentResponse> {
   if (command.op === "find") {
-    const items = await deps.openviking.find({
+    const result = await deps.openviking.find({
       workspaceId: input.workspaceId,
       agentId: input.agentId,
       operationId: command.operationId,
@@ -158,7 +181,7 @@ async function handleOpenViking(
       op: "find",
       operationId: command.operationId,
       duplicate: false,
-      items,
+      ...result,
     };
   }
   if (command.op === "search_context") {
@@ -195,6 +218,24 @@ async function handleOpenViking(
       content: read.content,
     };
   }
+  if (command.op === "diagnose") throw new Error("diagnosis_requires_coordinator");
+  if (command.op === "expand") {
+    const result = await deps.openviking.expand({
+      ...input,
+      operationId: command.operationId,
+      chainRef: command.chainRef,
+      uri: command.uri,
+      relation: command.relation,
+      ...(command.limit === undefined ? {} : { limit: command.limit }),
+    });
+    return {
+      protocol: OPENVIKING_AGENT_PROTOCOL,
+      op: "expand",
+      operationId: command.operationId,
+      duplicate: false,
+      ...result,
+    };
+  }
   const delivery = await offerDelivery(deps, input, command);
   const offer = await deps.offers.publish({
     workspaceId: input.workspaceId,
@@ -227,8 +268,14 @@ function fenceAllows(
 }
 
 function translateError(command: OpenVikingAgentCommand, error: unknown): MemoryAgentCommandResult {
+  if (error instanceof Error && /^diagnosis_[a-z_]+$/.test(error.message))
+    return failure(400, command.operationId, "invalid", error.message);
+  if (error instanceof MemoryReadCapabilityError)
+    return failure(503, command.operationId, "runtime", error.message);
   if (error instanceof MemoryAgentBudgetError)
     return failure(429, command.operationId, "budget", error.message);
+  if (error instanceof RetiredFromMemoryDiscoveryError)
+    return failure(400, command.operationId, "retired", error.message);
   if (error instanceof MemoryCitationUngroundedError)
     return failure(400, command.operationId, "citation", error.message);
   if (error instanceof MemoryAgentMutationError)
@@ -247,20 +294,24 @@ function translateError(command: OpenVikingAgentCommand, error: unknown): Memory
 function failure(
   status: number,
   operationId: string | undefined,
-  kind: "unauthorized" | "invalid" | "citation" | "budget",
+  kind: "unauthorized" | "invalid" | "citation" | "budget" | "retired" | "runtime",
   message?: string,
 ): MemoryAgentCommandResult {
   const codes = {
+    runtime: "openviking-runtime-unavailable",
     unauthorized: "openviking-unauthorized",
     invalid: "openviking-request-invalid",
     citation: "openviking-citation-ungrounded",
     budget: "openviking-budget-exhausted",
+    retired: "retired_from_memory_discovery",
   } as const;
   const messages = {
+    runtime: message ?? "OpenViking backend capability unavailable",
     unauthorized: "not the workspace Memory Agent",
     invalid: message ?? "invalid memory request",
     citation: message ?? "citation was not served",
     budget: message ?? "memory budget exhausted",
+    retired: message ?? "retired_from_memory_discovery",
   };
   return {
     ok: false,

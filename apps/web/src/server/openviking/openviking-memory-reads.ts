@@ -3,17 +3,44 @@
  * this module never writes OpenViking and never holds OpenViking HTTP paths.
  */
 
-import { OPENVIKING_CANDIDATE_LIMIT_MAX, type OpenVikingCitation } from "@lrm/coforge-sdk/agent";
+import {
+  decodeOpenVikingAgentResponse,
+  OPENVIKING_AGENT_PROTOCOL,
+  OPENVIKING_CANDIDATE_LIMIT_MAX,
+  type OpenVikingRetrieval,
+  type OpenVikingGraphRelation,
+  type OpenVikingCitation,
+} from "@lrm/coforge-sdk/agent";
 import {
   MemoryCitationUngroundedError,
   type MemoryCitationBindings,
 } from "../workspace-memory/memory-citations";
+import {
+  assertDiscoveryServable,
+  isRetiredFromMemoryDiscovery,
+} from "../workspace-memory/memory-discovery-eligibility";
 import type { OpenVikingMemoryReadClient } from "./memory-agent-reads";
 
 export { MemoryAgentMutationError } from "./memory-agent-reads";
 export type { OpenVikingMemoryReadClient } from "./memory-agent-reads";
 
+export class MemoryReadCapabilityError extends Error {}
+
+export type OpenVikingMemoryQueryResult = {
+  items: OpenVikingCitation[];
+  retrieval?: OpenVikingRetrieval;
+};
+
 export type OpenVikingMemoryReads = {
+  expand(input: {
+    workspaceId: string;
+    agentId: string;
+    operationId: string;
+    chainRef: string;
+    uri: string;
+    relation: OpenVikingGraphRelation;
+    limit?: number;
+  }): Promise<OpenVikingMemoryQueryResult>;
   find(input: {
     workspaceId: string;
     agentId: string;
@@ -21,7 +48,7 @@ export type OpenVikingMemoryReads = {
     query: string;
     limit?: number;
     targetUri?: string;
-  }): Promise<OpenVikingCitation[]>;
+  }): Promise<OpenVikingMemoryQueryResult>;
   searchContext(input: {
     workspaceId: string;
     agentId: string;
@@ -51,15 +78,54 @@ export function createOpenVikingMemoryReads(deps: {
         operation: "find",
         body: {
           query: input.query,
+          retrieval_mode: "bm25",
           limit: input.limit ?? OPENVIKING_CANDIDATE_LIMIT_MAX,
           ...(input.targetUri === undefined ? {} : { target_uri: input.targetUri }),
         },
       });
-      return deps.citations.bindOpenVikingHits(
+      const envelope =
+        payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+      const lexical =
+        envelope.result && typeof envelope.result === "object"
+          ? (envelope.result as Record<string, unknown>)
+          : envelope;
+      if (lexical.retrieval_mode !== "bm25")
+        throw new MemoryReadCapabilityError("bm25_backend_required");
+      const items = await deps.citations.bindOpenVikingHits(
         input.workspaceId,
         input.operationId,
-        collectHits(payload, input.workspaceId),
+        publicHits(payload, input.workspaceId),
       );
+      return { items, ...navigation(lexical, items) };
+    },
+    async expand(input) {
+      await deps.citations.resolveOfferCitations(input.workspaceId, [`ov:${input.uri}`]);
+      const payload = await deps.client.invoke({
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+        operation: "expand",
+        body: {
+          operation_id: input.operationId,
+          chain_ref: input.chainRef,
+          uri: input.uri,
+          relation: input.relation,
+          limit: input.limit ?? 10,
+        },
+      });
+      const envelope =
+        payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+      const result =
+        envelope.result && typeof envelope.result === "object"
+          ? (envelope.result as Record<string, unknown>)
+          : envelope;
+      if (result.retrieval_mode !== "bm25")
+        throw new MemoryReadCapabilityError("bm25_backend_required");
+      const items = await deps.citations.bindOpenVikingHits(
+        input.workspaceId,
+        input.operationId,
+        publicHits(payload, input.workspaceId),
+      );
+      return { items, ...navigation(result, items) };
     },
 
     async searchContext(input) {
@@ -78,18 +144,21 @@ export function createOpenVikingMemoryReads(deps: {
       return deps.citations.bindOpenVikingHits(
         input.workspaceId,
         input.operationId,
-        collectHits(payload, input.workspaceId),
+        publicHits(payload, input.workspaceId),
       );
     },
 
     async read(input) {
+      assertDiscoveryServable(input.uri);
       const payload = await deps.client.invoke({
         workspaceId: input.workspaceId,
         agentId: input.agentId,
         operation: "read",
         query: { uri: input.uri },
       });
+      assertDiscoveryServable(payload);
       const hit = asReadHit(payload, input);
+      assertDiscoveryServable(hit);
       const [citation] = await deps.citations.bindOpenVikingHits(
         input.workspaceId,
         input.operationId,
@@ -99,6 +168,10 @@ export function createOpenVikingMemoryReads(deps: {
       return { citation, content: hit.content };
     },
   };
+}
+
+function publicHits(payload: unknown, workspaceId: string): unknown[] {
+  return collectHits(payload, workspaceId).filter((hit) => !isRetiredFromMemoryDiscovery(hit));
 }
 
 function collectHits(payload: unknown, workspaceId: string): unknown[] {
@@ -178,11 +251,13 @@ function asReadHit(
 ): Record<string, unknown> & { content: string } {
   const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
   const content =
-    typeof record.content === "string"
-      ? record.content
-      : typeof record.body === "string"
-        ? record.body
-        : "";
+    record.status === "ok" && typeof record.result === "string"
+      ? record.result
+      : typeof record.content === "string"
+        ? record.content
+        : typeof record.body === "string"
+          ? record.body
+          : "";
   const uri = typeof record.uri === "string" ? record.uri : input.uri;
   return {
     ...record,
@@ -201,4 +276,40 @@ function contentSha256(content: string): string {
   const hasher = new Bun.CryptoHasher("sha256");
   hasher.update(content);
   return `sha256:${hasher.digest("hex")}`;
+}
+
+function navigation(
+  result: Record<string, unknown>,
+  items: OpenVikingCitation[],
+): { retrieval?: OpenVikingRetrieval } {
+  if (result.chain_ref === undefined) return {};
+  const resources = Array.isArray(result.resources)
+    ? (result.resources as { uri: string; metadata?: Record<string, unknown> }[])
+    : [];
+  const allowed = new Set(items.map((item) => item.uri));
+  const response = decodeOpenVikingAgentResponse("find", {
+    protocol: OPENVIKING_AGENT_PROTOCOL,
+    op: "find",
+    operationId: "navigation",
+    duplicate: false,
+    items,
+    retrieval: {
+      mode: "bm25",
+      chainRef: result.chain_ref,
+      step: result.step,
+      remainingHops: result.remaining_hops,
+      exhausted: result.exhausted,
+      nodes: resources
+        .filter((row) => allowed.has(row.uri))
+        .map((row) => ({
+          uri: row.uri,
+          kind: row.metadata?.kind ?? "document",
+          status: row.metadata?.status,
+          sourceRef: row.metadata?.source_ref,
+          relations: row.metadata?.relations ?? [],
+        })),
+    },
+  });
+  if (response.op !== "find") throw new Error("invalid navigation response");
+  return { retrieval: response.retrieval };
 }

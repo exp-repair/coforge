@@ -14,18 +14,24 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   agentApiRoutes,
+  CHANNEL_ARGUMENT_EXAMPLES,
   decodeOpenVikingAgentCommand,
   decodeOpenVikingAgentResponse,
+  formatOpenVikingMissingArgumentsError,
   isMemoryAgentToolProfile,
+  listMissingOpenVikingFields,
   MEMORY_OFFER_BUDGET_PER_TRIGGER,
   MEMORY_READ_BUDGET_PER_TRIGGER,
   OPENVIKING_AGENT_PROTOCOL,
   OPENVIKING_CANDIDATE_LIMIT_MAX,
   OPENVIKING_TOOL_NAMES,
+  OPENVIKING_GRAPH_RELATIONS,
   toolsForMemoryFence,
   type MemoryAgentToolProfile,
   type OpenVikingAgentCommand,
+  type OpenVikingAgentOperation,
 } from "@lrm/coforge-sdk/agent";
+import type { AgentConversationScope } from "./contract";
 import { Type } from "typebox";
 import { join, resolve } from "node:path";
 import { readdir, readFile } from "node:fs/promises";
@@ -38,7 +44,9 @@ import {
 import { API_KEY_ENV_BY_PROVIDER, configureRuntimeEnvironment } from "./runtime-provider";
 import { classifyPiLaunchFailure, PI_MODEL_UNAVAILABLE } from "./launch-error";
 
-const MEMORY_READ_OPS = new Set(["find", "search_context", "read"]);
+import { createMemoryDispositionTool } from "./memory-disposition-tool";
+
+const MEMORY_READ_OPS = new Set(["find", "search_context", "read", "expand"]);
 
 export type MemoryAgentProxy = {
   post(path: string, body: unknown): Promise<unknown>;
@@ -165,12 +173,69 @@ function coerceNumericToolParams<P extends Record<string, unknown>>(params: P): 
   return coerced;
 }
 
+const FENCE_ARGUMENTS_SENTENCE = "所有参数必须放进 arguments JSON，不能空对象。";
+
+function isEmptyToolArguments(args: unknown): boolean {
+  if (args == null) return true;
+  if (typeof args !== "object" || Array.isArray(args)) return true;
+  return Object.keys(args).length === 0;
+}
+
+function formatChannelMissingArguments(
+  toolName: string,
+  missing: readonly string[],
+  example: string,
+): string {
+  const alias =
+    toolName === "send_channel_message" ? " The body field name is content, not message." : "";
+  return `invalid ${toolName} arguments: missing ${missing.join(", ")}. Example: ${example}.${alias}`;
+}
+
+/**
+ * Rejects an empty arguments object before schema validation and before
+ * `decodeOpenVikingAgentCommand`, so the model gets a copyable example and
+ * the read budget is never touched. `message` fills `content` only when
+ * `content` is absent.
+ */
+function prepareFenceArguments(input: {
+  args: unknown;
+  emptyError?: string;
+  aliasMessage?: boolean;
+}): Record<string, unknown> {
+  if (input.emptyError && isEmptyToolArguments(input.args)) throw new Error(input.emptyError);
+  const record =
+    input.args && typeof input.args === "object" && !Array.isArray(input.args)
+      ? { ...(input.args as Record<string, unknown>) }
+      : {};
+  if (input.aliasMessage && record.content == null && typeof record.message === "string")
+    record.content = record.message;
+  if (input.aliasMessage) delete record.message;
+  return coerceNumericToolParams(record);
+}
+
+function openVikingEmptyArgumentsError(op: OpenVikingAgentOperation): string {
+  return formatOpenVikingMissingArgumentsError(
+    op,
+    listMissingOpenVikingFields({ protocol: OPENVIKING_AGENT_PROTOCOL, op }),
+  );
+}
+
+function withFenceArgumentSentence(description: string): string {
+  return `${description} ${FENCE_ARGUMENTS_SENTENCE}`;
+}
+
 /** The only model-callable tools available under a Memory Agent fence. */
 export function createMemoryFenceTools(
   profile: MemoryAgentToolProfile,
   budget: MemoryAgentTurnBudget,
   proxy: MemoryAgentProxy = defaultMemoryProxy(),
+  options: {
+    memoryOfferOnly?: boolean;
+    conversation?: AgentConversationScope;
+    controlSession?: boolean;
+  } = {},
 ) {
+  if (options.controlSession) return [];
   const openvikingTool = <Params extends Record<string, unknown>>(
     name: string,
     label: string,
@@ -181,17 +246,41 @@ export function createMemoryFenceTools(
     defineTool({
       name,
       label,
-      description,
-      parameters,
-      execute: async (_toolCallId, params) => {
+      description: withFenceArgumentSentence(description),
+      parameters: Type.Object(parameters),
+      prepareArguments: (args) =>
+        prepareFenceArguments({
+          args,
+          emptyError: openVikingEmptyArgumentsError(op),
+        }) as never,
+      execute: async (_toolCallId, params, signal) => {
+        signal?.throwIfAborted();
+        // Decode throws before consume, so an empty or invalid ov_* call does not
+        // spend the triggering message's read budget and never reaches OpenViking.
         const command = decodeOpenVikingAgentCommand({
           protocol: OPENVIKING_AGENT_PROTOCOL,
           op,
           ...coerceNumericToolParams(params as Params),
         });
         budget.consume(command);
-        const response = await proxy.post(agentApiRoutes.proxy.openviking.path, command);
-        return toolResult(decodeOpenVikingAgentResponse(command.op, response));
+        let decoded = decodeOpenVikingAgentResponse(
+          command.op,
+          await proxy.post(agentApiRoutes.proxy.openviking.path, command),
+        );
+        // Poll inside the native tool, avoiding a model turn for every status check.
+        for (
+          let poll = 0;
+          poll < 10 && decoded.op === "diagnose" && decoded.status === "running";
+          poll++
+        ) {
+          await Bun.sleep(5000);
+          signal?.throwIfAborted();
+          decoded = decodeOpenVikingAgentResponse(
+            command.op,
+            await proxy.post(agentApiRoutes.proxy.openviking.path, command),
+          );
+        }
+        return toolResult(decoded);
       },
     });
 
@@ -205,14 +294,50 @@ export function createMemoryFenceTools(
     defineTool({
       name,
       label,
-      description,
-      parameters,
+      description: name === "message_check" ? description : withFenceArgumentSentence(description),
+      parameters: Type.Object(parameters),
+      prepareArguments: (args) =>
+        prepareFenceArguments({
+          args,
+          emptyError:
+            name === "message_read"
+              ? formatChannelMissingArguments(
+                  name,
+                  ["target"],
+                  CHANNEL_ARGUMENT_EXAMPLES.message_read,
+                )
+              : name === "send_channel_message"
+                ? formatChannelMissingArguments(
+                    name,
+                    ["target", "content"],
+                    CHANNEL_ARGUMENT_EXAMPLES.send_channel_message,
+                  )
+                : undefined,
+          aliasMessage: name === "send_channel_message",
+        }) as never,
       execute: async (_toolCallId, params) => {
-        const request = {
-          requestId: crypto.randomUUID(),
+        // The post-merge message contract keys a request by `idempotencyKey`
+        // (`requestId` is not read anywhere: daemon parseMessageRequest and the web
+        // send route both reject its absence as 400). Some models pass the schema's
+        // Integer `limit` as a numeric string; the daemon only accepts a number.
+        // `message` is an alias of `content` only when content was omitted.
+        const raw = { ...(params as Record<string, unknown>) };
+        if (options.conversation) {
+          const parent = options.conversation.target.split(":")[0]!;
+          raw.target ??= parent;
+          if (typeof raw.target !== "string" || raw.target.split(":")[0] !== parent)
+            throw new Error("Memory messages must stay within this conversation");
+        }
+        if (operation === "send" && raw.content == null && typeof raw.message === "string")
+          raw.content = raw.message;
+        if (operation === "send") delete raw.message;
+        const request: Record<string, unknown> = {
+          idempotencyKey: crypto.randomUUID(),
           operation,
-          ...(params as { target?: string; content?: string }),
+          ...raw,
         };
+        if (typeof request.limit === "string" && /^\d+$/.test(request.limit))
+          request.limit = Number(request.limit);
         if (
           operation === "send" &&
           typeof request.target === "string" &&
@@ -224,29 +349,57 @@ export function createMemoryFenceTools(
     });
 
   const openvikingByName: Record<string, ReturnType<typeof defineTool>> = {
+    [OPENVIKING_TOOL_NAMES.diagnose]: openvikingTool(
+      OPENVIKING_TOOL_NAMES.diagnose,
+      "Diagnose with four roles",
+      "Start or poll four-role AIG diagnosis for a task agent message containing @memory diagnose. Read messages to get messageId. The server binds evidence and recipient and publishes the approved report. Repeat the same messageId while running; stop after published=true or failed. This never dispatches remediation.",
+      "diagnose",
+      {
+        operationId: Type.String(),
+        messageId: Type.String({
+          description:
+            "Full UUID of the task agent’s saved @memory diagnose message, obtained with message_read.",
+        }),
+      },
+    ),
+    [OPENVIKING_TOOL_NAMES.expand]: openvikingTool(
+      OPENVIKING_TOOL_NAMES.expand,
+      "Expand memory graph",
+      "Follow an explicit relation from a Fork or AIG node already returned by ov_find or ov_expand. Reuse retrieval.chainRef and choose a node URI and one of its listed relations. Expansion is bounded and uses no embedding.",
+      "expand",
+      {
+        operationId: Type.String(),
+        chainRef: Type.String(),
+        uri: Type.String(),
+        relation: Type.Union(OPENVIKING_GRAPH_RELATIONS.map((value) => Type.Literal(value))),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
+      },
+    ),
     [OPENVIKING_TOOL_NAMES.find]: openvikingTool(
       OPENVIKING_TOOL_NAMES.find,
       "OpenViking find",
-      "Find cited OpenViking documents for the current public-channel question.",
+      "Use BM25 only to find cited documents, experiences, Fork nodes, and AIG nodes for the current question. No embedding or vector fallback is used.",
       "find",
       {
-        operationId: Type.String(),
-        query: Type.String(),
-        limit: Type.Optional(Type.Integer({ minimum: 1 })),
-        targetUri: Type.Optional(Type.String()),
-      },
-    ),
-    [OPENVIKING_TOOL_NAMES.searchContext]: openvikingTool(
-      OPENVIKING_TOOL_NAMES.searchContext,
-      "OpenViking search context",
-      "Expand hierarchical OpenViking context within the remaining shared token budget.",
-      "search_context",
-      {
-        operationId: Type.String(),
-        query: Type.String(),
-        limit: Type.Optional(Type.Integer({ minimum: 1 })),
-        targetUri: Type.Optional(Type.String()),
-        tokenBudget: Type.Optional(Type.Integer({ minimum: 1 })),
+        operationId: Type.String({
+          description:
+            "Required. Client-invented idempotency handle matching ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$. Example: find-1. Use a new id on every call.",
+        }),
+        query: Type.String({
+          description: "Required. Search text. Example: deploy rollback.",
+        }),
+        limit: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            description: "Optional. Integer from 1 to 10. Example: 10.",
+          }),
+        ),
+        targetUri: Type.Optional(
+          Type.String({
+            description:
+              "Optional. URI scope. Omit to search the whole workspace. Example: viking://workspace/docs.",
+          }),
+        ),
       },
     ),
     [OPENVIKING_TOOL_NAMES.read]: openvikingTool(
@@ -254,7 +407,16 @@ export function createMemoryFenceTools(
       "OpenViking read",
       "Read one cited OpenViking document by URI.",
       "read",
-      { operationId: Type.String(), uri: Type.String() },
+      {
+        operationId: Type.String({
+          description:
+            "Required. Client-invented idempotency handle matching ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$. Example: read-1. Use a new id on every call.",
+        }),
+        uri: Type.String({
+          description:
+            "Required. Document URI returned by ov_find. Example: viking://workspace/docs/note.md.",
+        }),
+      },
     ),
     [OPENVIKING_TOOL_NAMES.offer]: openvikingTool(
       OPENVIKING_TOOL_NAMES.offer,
@@ -262,9 +424,24 @@ export function createMemoryFenceTools(
       "Publish one visible, cited Memory Offer. This is the only visible answer to an explicit @memory question. citationRefs are citation ids already returned in this workspace. The server binds the channel and recipient.",
       "offer",
       {
-        operationId: Type.String(),
-        citationRefs: Type.Array(Type.String(), { minItems: 1 }),
-        body: Type.String(),
+        operationId: Type.String({
+          description:
+            "Required. Client-invented idempotency handle matching ^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$. Example: offer-1. Use a new id on every call.",
+        }),
+        citationRefs: Type.Array(
+          Type.String({
+            description: "One citation id already returned in this workspace.",
+          }),
+          {
+            minItems: 1,
+            description:
+              'Required. Array of at least 1 citation id already returned in this workspace. Example: ["ov:wiki/deploy"].',
+          },
+        ),
+        body: Type.String({
+          description:
+            "Required. Offer text for the task agent. Example: the last deploy rolled back.",
+        }),
       },
     ),
   };
@@ -282,7 +459,13 @@ export function createMemoryFenceTools(
       "Check messages",
       "Check pending CoForge messages without shell or network access.",
       "check",
-      {},
+      {
+        target: Type.Optional(
+          Type.String({
+            description: "Optional. Exact target from this conversation or its threads.",
+          }),
+        ),
+      },
     ),
     messageTool(
       "message_read",
@@ -290,20 +473,46 @@ export function createMemoryFenceTools(
       "Read public-channel messages through the CoForge message route.",
       "read",
       {
-        target: Type.String(),
-        before: Type.Optional(Type.String()),
-        after: Type.Optional(Type.String()),
-        around: Type.Optional(Type.String()),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+        target: Type.String({
+          description: "Required. Public channel target. Example: #general.",
+        }),
+        before: Type.Optional(
+          Type.String({ description: "Optional. Read messages before this message id." }),
+        ),
+        after: Type.Optional(
+          Type.String({ description: "Optional. Read messages after this message id." }),
+        ),
+        around: Type.Optional(
+          Type.String({ description: "Optional. Read messages around this message id." }),
+        ),
+        limit: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: 100,
+            description: "Optional. Integer from 1 to 100. Example: 20.",
+          }),
+        ),
       },
     ),
-    messageTool(
-      "send_channel_message",
-      "Send channel message",
-      "Send a visible public-channel message through CoForge. This cannot answer an explicit @memory question; use memory_offer.",
-      "send",
-      { target: Type.String(), content: Type.String() },
-    ),
+    ...(options.memoryOfferOnly
+      ? []
+      : [
+          messageTool(
+            "send_channel_message",
+            "Send channel message",
+            "Send a visible public-channel message through CoForge. This cannot answer an explicit @memory question; use memory_offer. The body field name is content, not message.",
+            "send",
+            {
+              target: Type.String({
+                description: "Required. Public channel target starting with #. Example: #general.",
+              }),
+              content: Type.String({
+                description:
+                  "Required. Message body. The field name is content, not message. Example: the deploy rolled back.",
+              }),
+            },
+          ),
+        ]),
   ];
 }
 
@@ -376,7 +585,11 @@ export async function createSession(options: {
   instructions: string;
   environment?: Readonly<Record<string, string>>;
   sessionKind?: "coforge" | "pi";
+  conversation?: AgentConversationScope;
+  memoryControlSession?: boolean;
   toolProfile?: MemoryAgentToolProfile;
+  /** Eval-only Offer contract; ordinary product sessions retain channel send. */
+  memoryOfferOnly?: boolean;
 }) {
   const cwd = options.cwd;
   const environment = options.environment
@@ -440,7 +653,7 @@ export async function createSession(options: {
     modelRuntime,
     resourceLoaderOptions: resourceLoaderOptionsForSession({
       instructions: options.instructions,
-      memoryFence: Boolean(memoryFence),
+      memoryFence: Boolean(memoryFence) || Boolean(options.memoryControlSession),
       disableHostPiInjection:
         evalDisablesHostPiInjection(options.environment) || evalDisablesHostPiInjection(),
     }),
@@ -467,10 +680,17 @@ export async function createSession(options: {
   const memoryBudget = memoryFence ? new MemoryAgentTurnBudget() : undefined;
   const memoryTools =
     memoryFence && memoryBudget
-      ? createMemoryFenceTools(memoryFence, memoryBudget, defaultMemoryProxy(environment))
+      ? createMemoryFenceTools(memoryFence, memoryBudget, defaultMemoryProxy(environment), {
+          memoryOfferOnly: options.memoryOfferOnly,
+          conversation: options.conversation,
+          controlSession: options.memoryControlSession,
+        })
       : [];
   const customTools = [
-    ...(options.environment && !extensionDefinesBash && !memoryBudget
+    ...(options.environment &&
+    !extensionDefinesBash &&
+    !memoryBudget &&
+    !options.memoryControlSession
       ? [
           createBashTool(cwd, {
             shellPath: services.settingsManager.getShellPath(),
@@ -479,6 +699,7 @@ export async function createSession(options: {
               const childEnv = { ...env };
               for (const key of [
                 "COFORGE_AGENT_CONTEXT",
+                "COFORGE_AGENT_CONVERSATION_TARGET",
                 "COFORGE_AGENT_PROXY_URL",
                 "COFORGE_DAEMON_SOCKET",
                 "COFORGE_SUPERVISOR_SOCKET",
@@ -513,13 +734,14 @@ export async function createSession(options: {
         ]
       : []),
     ...memoryTools,
+    ...(!memoryFence ? [createMemoryDispositionTool(defaultMemoryProxy(environment))] : []),
   ];
   const created = await createAgentSessionFromServices({
     services,
     sessionManager,
     ...(model ? { model } : {}),
     ...(options.reasoning ? { thinkingLevel: options.reasoning as never } : {}),
-    ...(memoryBudget
+    ...(memoryBudget || options.memoryControlSession
       ? {
           noTools: "all" as const,
           tools: memoryTools.map((tool) => tool.name),

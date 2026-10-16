@@ -13,7 +13,7 @@ test("ordinary requests do not require task creation or per-turn memory bookkeep
   expect(instructions).toContain("Answer ordinary questions freely");
   expect(instructions).toContain("Before implementing a shared channel request");
   expect(instructions).toContain(
-    "coforge task claim --target <channel> --message-id <root-message-id>",
+    "coforge task claim --target '<channel>' --message-id <root-message-id>",
   );
   expect(instructions).toContain("Only a successful claimant implements");
   expect(instructions).toContain("others may analyze or review in its thread");
@@ -38,7 +38,7 @@ test("retains reply instructions and thread addressing without provider tool nam
   expect(instructions).toContain("exact `target=`");
   expect(instructions).toContain("including its thread suffix");
   expect(instructions).toContain(
-    "Send the reply on stdin with `coforge message send --target <target>`",
+    "Send the reply on stdin with `coforge message send --target '<target>'`",
   );
   expect(instructions).not.toContain("Bash tool");
 });
@@ -156,9 +156,12 @@ test("the openviking-memory profile requires an @memory query and never mentions
   const fenced = buildCoforgeAgentInstructions({
     agentWorkspaceDirectory: AGENT_WORKSPACES[0],
     toolProfile: "openviking-memory",
+    memoryOfferOnly: false,
   });
   expect(fenced).toContain("## Team memory (Memory Agent)");
-  expect(fenced).toContain("explicit @memory question requires a memory query");
+  expect(fenced).toContain("Other explicit @memory questions require a memory query");
+  expect(fenced).toContain("Use message_read with the exact target");
+  expect(fenced).not.toContain("Use message_check or message_read");
   expect(fenced).not.toContain("Bearer");
   expect(fenced).not.toContain("CAUSAL_MEMORY_TOKENS");
   expect(
@@ -166,7 +169,13 @@ test("the openviking-memory profile requires an @memory query and never mentions
   ).not.toContain("## Team memory (Memory Agent)");
 });
 
-const OPENVIKING_FENCE_TOOLS = ["ov_find", "ov_search_context", "ov_read", "memory_offer"] as const;
+const OPENVIKING_FENCE_TOOLS = [
+  "ov_find",
+  "ov_expand",
+  "ov_read",
+  "memory_offer",
+  "memory_diagnose",
+] as const;
 const CAUSAL_ONLY_TOOLS = [
   "causal_search",
   "causal_trace",
@@ -224,15 +233,18 @@ function instructionsForFence(toolProfile: "openviking-memory"): string {
   return buildCoforgeAgentInstructions({
     agentWorkspaceDirectory: AGENT_WORKSPACES[0],
     toolProfile,
+    memoryOfferOnly: false,
   });
 }
 
-test("the openviking-memory fence names only its read tools and memory_offer", () => {
+test("the openviking-memory fence names reads and server-owned memory controls", () => {
   const section = memoryAgentSection(instructionsForFence("openviking-memory"));
   const listing = allowedToolsetListing(section);
   for (const name of OPENVIKING_FENCE_TOOLS) expect(listing).toContain(name);
+  expect(listing).not.toContain("ov_search_context");
+  expect(section).toContain("memory_diagnose");
   for (const name of CAUSAL_ONLY_TOOLS) expect(listing).not.toContain(name);
-  expect(section).toContain("explicit @memory question requires a memory query");
+  expect(section).toContain("Other explicit @memory questions require a memory query");
   expect(section).toContain("cannot write files");
   expect(section).toContain("commit sessions");
   expect(section).toContain("skills or ACLs");
@@ -253,10 +265,55 @@ test("the memory fence lists no mutation tools and allows no mutation verbs", ()
   for (const phrase of ALLOWED_MUTATION_PHRASES) expect(lowered).not.toContain(phrase);
 });
 
+test("the memory fence shows copyable tool JSON and does not teach shell message send", () => {
+  const fenced = instructionsForFence("openviking-memory");
+  const section = memoryAgentSection(fenced);
+  expect(section).toContain('{"operationId": "find-1", "query": "<检索词>", "limit": 10}');
+  expect(section).toContain(
+    '{"operationId": "offer-1", "citationRefs": ["<ov_find 返回的 citation id>"], "body": "<给 @task 的正文>"}',
+  );
+  expect(section).toContain('{"target": "#<频道名>"}');
+  expect(section).toContain('{"target": "#<频道名>", "content": "<正文>"}');
+  expect(section).toContain("The body field name is content, not message.");
+  expect(section).toContain("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$");
+  expect(section).toContain("at least 1");
+  expect(fenced).not.toContain("coforge message send");
+  expect(fenced).toContain("## Boundaries");
+});
+
 test("the memory fence renders no credentials, tokens, or hidden endpoints", () => {
   const section = memoryAgentSection(instructionsForFence("openviking-memory"));
   for (const word of CREDENTIAL_WORDS) expect(section).not.toContain(word);
   expect(section).not.toContain("/api/");
   expect(section).not.toMatch(/https?:\/\//);
   expect(section).not.toContain("localhost");
+});
+
+test("strict eval Memory instructions agree with the Offer-only toolset", () => {
+  const fenced = buildCoforgeAgentInstructions({
+    agentWorkspaceDirectory: directory,
+    toolProfile: "openviking-memory",
+    memoryOfferOnly: true,
+  });
+  expect(allowedToolsetListing(memoryAgentSection(fenced))).toContain(
+    "message_check, and message_read",
+  );
+  expect(fenced).not.toContain("send_channel_message");
+  expect(fenced).not.toContain("coforge message");
+  expect(fenced).not.toContain("coforge task");
+  expect(fenced).toContain("check/read → query → one memory_offer");
+  expect(fenced).toContain("published=true");
+  expect(fenced).toContain("400 or isError");
+  expect(fenced).toContain("end this turn");
+  expect(fenced).toContain("body, not content");
+});
+
+test("CLI instructions include a quoted stdin submission example", () => {
+  expect(instructions).toContain(`coforge message check --target '#channel'
+coforge message send --target '#channel' <<'COFORGE_MESSAGE'
+Your reply text, with literal \`backticks\` and $variables preserved.
+COFORGE_MESSAGE`);
+  expect(instructions).toContain("Targets starting with # must be quoted");
+  expect(instructions).toContain("never a positional argument");
+  expect(instructions).toContain("double quotes expand backticks and $");
 });

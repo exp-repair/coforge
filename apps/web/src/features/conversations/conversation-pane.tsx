@@ -883,6 +883,7 @@ export function ConversationPane({
                   replies. */}
                 <ol className="flex flex-col">
                   <MessageRow
+                    conversationId={conversation.conversationId}
                     message={root}
                     own={isOwn(root)}
                     dayChanged={false}
@@ -1009,6 +1010,7 @@ export function ConversationPane({
                         {groupOpen &&
                           item.messages.map((message) => (
                             <MessageRow
+                              conversationId={conversation.conversationId}
                               key={message.id}
                               message={message}
                               own={false}
@@ -1036,6 +1038,7 @@ export function ConversationPane({
                   );
                   return (
                     <MessageRow
+                      conversationId={conversation.conversationId}
                       key={message.id}
                       message={message}
                       own={own}

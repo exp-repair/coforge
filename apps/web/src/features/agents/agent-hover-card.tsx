@@ -37,6 +37,7 @@ const CARD_PROFILE_STALE_MS = 5 * 60_000;
  */
 export function AgentHoverCard({
   agentId,
+  conversationId,
   name,
   handle,
   src,
@@ -45,6 +46,7 @@ export function AgentHoverCard({
   triggerClassName,
 }: {
   agentId: string;
+  conversationId?: string;
   /** The display name the message was sent under, shown until the card's profile read lands. */
   name: string;
   handle?: string;
@@ -66,6 +68,7 @@ export function AgentHoverCard({
     >
       <AgentCard
         agentId={agentId}
+        conversationId={conversationId}
         name={name}
         handle={handle}
         src={src}
@@ -79,12 +82,14 @@ export function AgentHoverCard({
  * reads below run on a peek (and warm the profile panel), never per row. */
 function AgentCard({
   agentId,
+  conversationId,
   name,
   handle,
   src,
   onOpenActivity,
 }: {
   agentId: string;
+  conversationId?: string;
   name: string;
   handle?: string;
   src?: string | null;
@@ -93,7 +98,7 @@ function AgentCard({
   const profile = useQuery({ ...agentProfileQuery(agentId), staleTime: CARD_PROFILE_STALE_MS });
   // Read here, beside the profile, so the two run side by side; the list itself shows only once
   // the profile says the viewer may see it.
-  const activity = useAgentRecentActivity(agentId);
+  const activity = useAgentRecentActivity(agentId, conversationId);
   const data = profile.data;
   // The live display once a publication has arrived; until then the profile read's own snapshot,
   // as the profile panel does.

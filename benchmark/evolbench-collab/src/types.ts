@@ -24,6 +24,11 @@ export const EVAL_ARMS = ["warm", "cold"] as const;
 export type EvalArm = (typeof EVAL_ARMS)[number];
 
 export type EpisodeStatus = "success" | "failure";
+export type EpisodeTerminationReason =
+  | "quiet_no_offer"
+  | "deadline"
+  | "runtime_failed"
+  | "final_settled";
 
 /** Row schema aligned with the evol_bench python graders: they join on
  * episode/task ids and read `final_output`; everything else is additive. */
@@ -35,7 +40,7 @@ export type AttemptRow = {
   family_id: string;
   domain: string;
   arm: EvalArm;
-  memory_policy: "read_write" | "no_shared_memory";
+  memory_policy: "read_write" | "no_shared_memory" | "frozen_readonly";
   seed: number;
   attempt: number;
   status: EpisodeStatus;
@@ -48,6 +53,19 @@ export type AttemptRow = {
   task_message_count: number;
   memory_leak_count: number;
   error: string | null;
+  knowledge?: import("./knowledge").KnowledgeReady;
+  memory_request_count?: number;
+  memory_request_message_ids?: string[];
+  memory_offer_message_ids?: string[];
+  trajectory_path?: string;
+  memory_hint_ids?: string[];
+  memory_reply_message_ids?: string[];
+  memory_dispositions?: import("@lrm/coforge-sdk/agent").MemoryDispositionRecord[];
+  /** Additive diagnostics; optional so earlier attempt rows remain readable. */
+  terminationReason?: EpisodeTerminationReason;
+  runtimeErrorCount?: number;
+  lastRuntimeErrorAt?: number;
+  lastProgressAt?: number;
   /** Set when the benchmark's env sidecar verified this episode (e.g.
    * SkillLearnBench official in-container verifier). */
   sidecar_verification?: {

@@ -1,8 +1,9 @@
 import { join } from "node:path";
+import { readKnowledgeAccountCreatedAt, validateKnowledgeReady } from "./knowledge";
 import { workspaceProfileToToolFence } from "../../../packages/coforge-sdk/src/agent/memory-tool-fences.ts";
 import { EVAL_FLAG, evalOptedIn, loadEvalEnv } from "./env";
 import { controlAgent, startAgent, startEvalDaemon, type EvalDaemon } from "./eval-daemon";
-import { runEpisode } from "./eval-qa";
+import { runEpisode, type EpisodeResult } from "./eval-qa";
 import { createEvalDispatcher, drainEpisodeToMemory } from "./ingest";
 import { episodesForArm, groupFamilies, loadManifest } from "./manifest";
 import { profileFor, reminderForEpisode } from "./benchmarks";
@@ -17,6 +18,8 @@ import {
   readSecretRootKey,
   rememberEvalAccountKey,
   rootIdentity,
+  rotateEvalAdminKey,
+  type OvUsers,
 } from "../../public-channel-memory/src/ov";
 import {
   connectEvalDb,
@@ -36,6 +39,22 @@ Bun.env.COFORGE_EVAL_DISABLE_HOST_PI_INJECTION = "1";
 process.env.COFORGE_EVAL_DISABLE_HOST_PI_INJECTION = "1";
 const manifest = await loadManifest(env.manifestPath, env.episodeMod);
 const benchmark = env.manifestBenchmark ?? manifest[0]!.benchmark;
+const knowledgePath = Bun.env.COFORGE_EVAL_KNOWLEDGE_READY;
+const frozenKnowledge = knowledgePath
+  ? validateKnowledgeReady(await Bun.file(knowledgePath).json())
+  : null;
+if (manifest.some((episode) => episode.domain === "information_retrieval") && !frozenKnowledge) {
+  throw new Error(
+    "IR requires COFORGE_EVAL_KNOWLEDGE_READY; direct BM25/GMS evaluation is disabled",
+  );
+}
+if (
+  frozenKnowledge &&
+  (env.arms.some((arm) => arm !== frozenKnowledge.arm) ||
+    manifest.some((episode) => episode.split !== "test"))
+) {
+  throw new Error("prepared knowledge arm must match the ready file and use a test-only manifest");
+}
 const profile = profileFor(benchmark);
 const episodeTimeoutMs = env.episodeTimeoutMs ?? profile.episodeTimeoutMs;
 const settleMs = env.settleMs ?? profile.settleMs;
@@ -45,7 +64,7 @@ const families = groupFamilies(manifest).filter(
 if (families.length === 0) throw new Error("no families selected");
 console.log(
   sanitizeDiagnostic(
-    `benchmark=${benchmark} manifest=${env.manifestPath} episodes=${manifest.length} mod=${env.episodeMod ?? "-"} families=${families.map((family) => family.familyId).join("|")} arms=${env.arms.join(",")} agents=${env.memoryAgentProvider}/${env.memoryAgentModel}+${env.taskAgentProvider}/${env.taskAgentModel} timeout=${episodeTimeoutMs}ms settle=${settleMs}ms closure=${env.episodeClosure}`,
+    `benchmark=${benchmark} manifest=${env.manifestPath} episodes=${manifest.length} mod=${env.episodeMod ?? "-"} families=${families.map((family) => family.familyId).join("|")} arms=${env.arms.join(",")} agents=${env.memoryAgentProvider}/${env.memoryAgentModel}+${env.taskAgentProvider}/${env.taskAgentModel} episodeTimeoutMs=${episodeTimeoutMs} abortQuietMs=${env.abortQuietMs} settleMs=${settleMs} closure=${env.episodeClosure}`,
   ),
 );
 Bun.env.OPENVIKING_PROTOTYPE_ENABLED = "1";
@@ -61,7 +80,11 @@ const writer = await createAttemptWriter(
   (Bun.env.COFORGE_EVAL_RESUME ?? "0") === "1",
 );
 if (writer.completedRunIds.size > 0) {
-  console.log(sanitizeDiagnostic(`resume: ${writer.completedRunIds.size} episodes already recorded, skipping them`));
+  console.log(
+    sanitizeDiagnostic(
+      `resume: ${writer.completedRunIds.size} episodes already recorded, skipping them`,
+    ),
+  );
 }
 const summaries: ArmSummary[] = [];
 
@@ -80,6 +103,10 @@ function attemptRow(input: {
   elapsedMs: number;
   mechanism: string;
   error: string | null;
+  diagnostics: Pick<
+    EpisodeResult,
+    "terminationReason" | "runtimeErrorCount" | "lastRuntimeErrorAt" | "lastProgressAt"
+  >;
 }): AttemptRow {
   const { episode } = input;
   return {
@@ -90,7 +117,11 @@ function attemptRow(input: {
     family_id: episode.familyId,
     domain: episode.domain,
     arm: input.arm,
-    memory_policy: input.arm === "warm" ? "read_write" : "no_shared_memory",
+    memory_policy: frozenKnowledge
+      ? "frozen_readonly"
+      : input.arm === "warm"
+        ? "read_write"
+        : "no_shared_memory",
     seed: env.seed,
     attempt: 1,
     status: input.finalOutput?.trim() ? "success" : "failure",
@@ -103,6 +134,7 @@ function attemptRow(input: {
     task_message_count: 0,
     memory_leak_count: 0,
     error: input.error,
+    ...input.diagnostics,
   };
 }
 
@@ -114,15 +146,91 @@ type FamilyWorkspace = {
   dispatcher: ReturnType<typeof createEvalDispatcher>;
 };
 
+// Crash-resume continuity for the warm arm: drained episode memory lives in the
+// OV account, not the workspace, so a resume must rebind to the previous
+// segment's account instead of minting a fresh one. The account id is recorded
+// per evaluation; COFORGE_EVAL_WARM_REUSE_ACCOUNT_ID overrides it explicitly.
+const warmReuseStatePath = join(env.resultDir, `${env.evaluationId}-warm-account.txt`);
+
+async function warmReuseAccountId(): Promise<string> {
+  const explicit = (Bun.env.COFORGE_EVAL_WARM_REUSE_ACCOUNT_ID ?? "").trim();
+  if (explicit.length > 0) return explicit;
+  try {
+    return (await Bun.file(warmReuseStatePath).text()).trim();
+  } catch {
+    return "";
+  }
+}
+
 async function provisionFamily(
   arm: "warm" | "cold",
   family: EpisodeFamily,
 ): Promise<FamilyWorkspace> {
   const health = await fetch(new URL("/health", env.ovUrl));
   if (health.status !== 200) throw new Error(`openviking /health ${health.status}`);
-  const accountId = `evol-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-  const users = await provisionDisposableAccount(runtime, root, accountId);
+  const reuseId = arm === "warm" ? await warmReuseAccountId() : "";
+  let accountId: string;
+  let users: OvUsers;
+  if (frozenKnowledge) {
+    accountId = frozenKnowledge.accountId;
+    if (
+      (await readKnowledgeAccountCreatedAt(runtime, root, accountId)) !==
+      frozenKnowledge.accountCreatedAt
+    )
+      throw new Error(
+        "prepared knowledge account was recreated; rebuild knowledge before evaluation",
+      );
+    const bindings = await db.openVikingBinding.findMany({
+      where: { accountId },
+      select: { workspaceId: true },
+    });
+    if (bindings.length > 0)
+      throw new Error(
+        "prepared knowledge account is already bound; refusing to delete another workspace",
+      );
+    users = await rotateEvalAdminKey(runtime, root, accountId);
+  } else if (reuseId.length > 0) {
+    try {
+      users = await rotateEvalAdminKey(runtime, root, reuseId);
+      accountId = reuseId;
+      console.log(sanitizeDiagnostic(`warm arm reusing ov account ${accountId} across resume`));
+      // A crash skips releaseFamily, so the previous segment's workspace still
+      // holds this account's binding, and the binding store rejects
+      // cross-workspace references. Free the account by deleting the stale
+      // workspace rows (bindings and mapped identities cascade; OV-side memory
+      // is account-scoped and untouched).
+      const staleBindings = await db.openVikingBinding.findMany({
+        where: { accountId },
+        select: { workspaceId: true },
+      });
+      for (const row of staleBindings) {
+        await db.workspace.delete({ where: { id: row.workspaceId } }).catch(() => undefined);
+      }
+      if (staleBindings.length > 0) {
+        console.log(
+          sanitizeDiagnostic(
+            `freed ${staleBindings.length} stale workspace(s) bound to ${accountId}`,
+          ),
+        );
+      }
+    } catch (error) {
+      // Account deleted server-side: its memory is unrecoverable, so a fresh
+      // provision is the only option — but say so loudly, it silently breaks
+      // warm comparability.
+      console.warn(
+        sanitizeDiagnostic(
+          `warm account reuse failed: ${String(error)}; provisioning fresh account`,
+        ),
+      );
+      accountId = `evol-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+      users = await provisionDisposableAccount(runtime, root, accountId);
+    }
+  } else {
+    accountId = `evol-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    users = await provisionDisposableAccount(runtime, root, accountId);
+  }
   await rememberEvalAccountKey(accountId, users.adminKey);
+  if (arm === "warm" && !frozenKnowledge) await Bun.write(warmReuseStatePath, accountId);
   const workspace = await provisionEvalWorkspace({
     db,
     arm,
@@ -130,27 +238,43 @@ async function provisionFamily(
     benchmark: family.benchmark || benchmark,
     ovAccountId: accountId,
   });
-  const dispatcher = createEvalDispatcher({ workspace, runtime, accountId, users });
-  const daemon = await startEvalDaemon({ workspace, env });
-  await startAgent(workspace, workspace.memoryAgentId, workspaceProfileToToolFence("openviking"));
-  await startAgent(workspace, workspace.taskAgentId);
-  return {
-    accountId,
-    workspace,
-    daemon,
-    dispatcher,
-    agentWorkspaceDir: join(
-      daemon.workspaceRoot,
-      workspace.workspaceId,
-      "agents",
-      workspace.taskAgentId,
-    ),
-  };
+  let daemon: EvalDaemon | undefined;
+  try {
+    const dispatcher = createEvalDispatcher({ workspace, runtime, accountId, users });
+    daemon = await startEvalDaemon({ workspace, env });
+    await startAgent(workspace, workspace.memoryAgentId, workspaceProfileToToolFence("openviking"));
+    await startAgent(workspace, workspace.taskAgentId);
+    return {
+      accountId,
+      workspace,
+      daemon,
+      dispatcher,
+      agentWorkspaceDir: join(
+        daemon.workspaceRoot,
+        workspace.workspaceId,
+        "agents",
+        workspace.taskAgentId,
+      ),
+    };
+  } catch (error) {
+    await daemon?.stop().catch(() => undefined);
+    await destroyEvalWorkspace(workspace);
+    if (arm === "cold" && !frozenKnowledge)
+      await deleteDisposableAccount(runtime, root, accountId).catch(() => undefined);
+    throw error;
+  }
 }
 
-async function releaseFamily(provisioned: FamilyWorkspace): Promise<void> {
+async function releaseFamily(arm: "warm" | "cold", provisioned: FamilyWorkspace): Promise<void> {
   await provisioned.daemon.stop().catch(() => undefined);
   await destroyEvalWorkspace(provisioned.workspace);
+  if (arm === "warm" || frozenKnowledge) {
+    // A prepared account is shared read-only across fresh test workspaces.
+    // The warm account carries drained memory; it must outlive this process so
+    // a crash-resume can rebind to it. Clean it up manually once the
+    // evaluation finishes.
+    return;
+  }
   await forgetEvalAccountKey(provisioned.accountId).catch(() => undefined);
   await deleteDisposableAccount(runtime, root, provisioned.accountId).catch((error) => {
     console.warn(sanitizeDiagnostic(`ov account cleanup failed: ${String(error)}`));
@@ -198,6 +322,7 @@ async function executeEpisode(
     reminder,
     episodeTimeoutMs,
     settleMs,
+    runtimeDiagnostics: provisioned.daemon.runtimeDiagnostics,
   });
   const mechanism = classifyMechanism(result);
   let sidecarVerification: AttemptRow["sidecar_verification"] | undefined;
@@ -220,11 +345,15 @@ async function executeEpisode(
         graded: Boolean(verdict.graded),
         error: verdict.error ?? null,
       };
-      console.log(sanitizeDiagnostic(
-        `${arm} ${episode.episodeId} sidecar reward=${sidecarVerification.reward} graded=${sidecarVerification.graded}`,
-      ));
+      console.log(
+        sanitizeDiagnostic(
+          `${arm} ${episode.episodeId} sidecar reward=${sidecarVerification.reward} graded=${sidecarVerification.graded}`,
+        ),
+      );
     } catch (error) {
-      console.warn(sanitizeDiagnostic(`sidecar verify failed for ${episode.episodeId}: ${String(error)}`));
+      console.warn(
+        sanitizeDiagnostic(`sidecar verify failed for ${episode.episodeId}: ${String(error)}`),
+      );
     }
   }
   const row = attemptRow({
@@ -238,15 +367,61 @@ async function executeEpisode(
     elapsedMs: result.elapsedMs,
     mechanism,
     error: result.timedOut ? "episode timeout" : null,
+    diagnostics: {
+      terminationReason: result.terminationReason,
+      runtimeErrorCount: result.runtimeErrorCount,
+      lastRuntimeErrorAt: result.lastRuntimeErrorAt,
+      lastProgressAt: result.lastProgressAt,
+    },
   });
+  row.knowledge = frozenKnowledge ?? undefined;
+  row.memory_request_count = result.memoryRequestCount;
+  row.memory_request_message_ids = result.memoryRequestMessageIds;
+  row.memory_offer_message_ids = result.offerMessageIds;
+  row.memory_dispositions = result.dispositions;
+  row.memory_hint_ids = result.memoryHintIds;
+  row.memory_reply_message_ids = result.memoryReplyMessageIds;
   row.task_message_count = result.taskMessageCount;
   row.memory_leak_count = result.memoryLeakMessageIds.length;
+  row.trajectory_path = join(env.resultDir, `${encodeURIComponent(row.run_id)}-conversation.json`);
+  const messages = await provisioned.workspace.db.message.findMany({
+    where: { conversationId: provisioned.workspace.channelId },
+    orderBy: { sequence: "asc" },
+    select: {
+      id: true,
+      sequence: true,
+      createdAt: true,
+      body: true,
+      sender: { select: { agentId: true, userId: true } },
+      mentions: { select: { kind: true, actorId: true } },
+    },
+  });
+  await Bun.write(
+    row.trajectory_path,
+    JSON.stringify(
+      {
+        episodeId: episode.episodeId,
+        workspaceId: provisioned.workspace.workspaceId,
+        channelId: provisioned.workspace.channelId,
+        messages,
+        hintIds: result.memoryHintIds,
+        offerMessageIds: result.offerMessageIds,
+        dispositions: result.dispositions,
+      },
+      null,
+      2,
+    ),
+  );
   if (sidecarVerification) row.sidecar_verification = sidecarVerification;
-  if (arm === "warm") {
+  if (arm === "warm" && !frozenKnowledge) {
     const drained = await drainEpisodeToMemory({
       workspace: provisioned.workspace,
       dispatcher: provisioned.dispatcher,
-      channelName: family.familyId.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 50) || "evol",
+      channelName:
+        family.familyId
+          .toLowerCase()
+          .replace(/[^a-z0-9-]+/g, "-")
+          .slice(0, 50) || "evol",
     });
     console.log(
       sanitizeDiagnostic(
@@ -270,7 +445,7 @@ try {
     for (const family of families) {
       const episodes = episodesForArm(family, arm);
       if (episodes.length === 0) continue;
-      if (arm === "warm") {
+      if (arm === "warm" && !frozenKnowledge) {
         const provisioned = await provisionFamily(arm, family);
         try {
           for (const episode of episodes) {
@@ -278,7 +453,7 @@ try {
             armRows.push(await executeEpisode(arm, family, episode, provisioned));
           }
         } finally {
-          await releaseFamily(provisioned);
+          await releaseFamily(arm, provisioned);
         }
       } else {
         for (const episode of episodes) {
@@ -287,14 +462,18 @@ try {
           try {
             armRows.push(await executeEpisode(arm, family, episode, provisioned));
           } finally {
-            await releaseFamily(provisioned);
+            await releaseFamily(arm, provisioned);
           }
         }
       }
     }
     summaries.push(summarizeArm(arm, armRows));
   }
-  const summaryPath = await writeSummary({ resultDir: env.resultDir, evaluationId: env.evaluationId, summaries });
+  const summaryPath = await writeSummary({
+    resultDir: env.resultDir,
+    evaluationId: env.evaluationId,
+    summaries,
+  });
   console.log(sanitizeDiagnostic(`wrote ${writer.path}`));
   console.log(sanitizeDiagnostic(`wrote ${summaryPath}`));
 } finally {

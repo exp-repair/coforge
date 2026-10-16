@@ -4,6 +4,8 @@ import type {
   AgentRecoveryMessage,
   MessageSenderKind,
 } from "@lrm/coforge-sdk/internal";
+import type { AgentConversationScope } from "@coforge/agent";
+import { isMemoryAgentRuntime } from "@coforge/agent";
 import { getLogger } from "@logtape/logtape";
 import {
   AGENT_MESSAGE_ACK_METHOD,
@@ -16,8 +18,10 @@ import {
 } from "@lrm/coforge-sdk/internal";
 import type { AgentHistoryConsumptionScope } from "@lrm/coforge-sdk/agent";
 import type { AgentProcessManager } from "#src/agent-runtime/agent-process-manager";
+import { CLI_CHANNEL_MESSAGE_EXAMPLE } from "#src/code-agent/agent-instructions";
 import { agentStartupCatchupInput } from "#src/agent-runtime/agent-startup";
 import { isTrackedMention } from "./mention-delivery-tracker";
+import { MemoryChannelUpdates, type MemoryChannelUpdateSchedule } from "./memory-channel-updates";
 import type {
   AgentConsumedSeqEntry,
   AgentConsumedSeqPort,
@@ -55,7 +59,8 @@ const PENDING_WINDOW_LIMIT = HELD_CONTEXT_LIMIT;
 /** Footer shared by live and recovery inbox notices. Names the targeted drain; does not claim
  * unread state, because a notice can race a check/read that already advanced the cursor. */
 const INBOX_DRAIN_HINT =
-  "Drain each listed target with `coforge message check --target <target>`, or inspect with `coforge message read --target <target>`. Either may return nothing, because a message can already have been read.";
+  "Drain each listed target with `coforge message check --target '<target>'`, or inspect with `coforge message read --target '<target>'`. Either may return nothing, because a message can already have been read.\n" +
+  CLI_CHANNEL_MESSAGE_EXAMPLE;
 
 /**
  * The text of one inbox notice: a headline counting what is delivered or held, one row per target,
@@ -66,11 +71,12 @@ export function inboxNoticeText(
   occasion: string | undefined,
   totalCount: number,
   rows: readonly string[],
+  drainHint = INBOX_DRAIN_HINT,
 ): string {
   return `[CoForge inbox notice${occasion ? ` (${occasion})` : ""}:
 Inbox update: ${totalCount} message${totalCount === 1 ? "" : "s"} delivered or held for you
 ${rows.join("\n")}
-${INBOX_DRAIN_HINT}]`;
+${drainHint}]`;
 }
 
 /** One unreviewed delivery plus the moment this daemon learned about it. Deliveries carry no
@@ -197,14 +203,19 @@ export class AgentMessageAttentionIndex {
    * it again. */
   readonly #hydrated = new Set<string>();
   readonly #workspaceId: string;
-  readonly #runtimes: Pick<AgentProcessManager, "session">;
+  readonly #runtimes: Pick<AgentProcessManager, "session"> &
+    Partial<Pick<AgentProcessManager, "runtime">>;
+  readonly #memoryUpdates: MemoryChannelUpdates;
   readonly #launchReminders = new Map<string, string>();
 
   constructor(
     workspaceId: string,
-    runtimes: Pick<AgentProcessManager, "session">,
+    runtimes: Pick<AgentProcessManager, "session"> & Partial<Pick<AgentProcessManager, "runtime">>,
     private readonly sendAck: (ack: AgentMessageDeliveryAck) => Promise<void>,
-    private readonly messageReceived: (agentId: string) => void = () => {},
+    private readonly messageReceived: (
+      agentId: string,
+      conversation?: AgentConversationScope,
+    ) => void = () => {},
     /**
      * The daemon-owned delivery queue (`agent-delivery-queue.ts`). `shouldHold` decides
      * whether this delivery must wait rather than reach `AgentSession.notify` now; `enqueue`
@@ -232,10 +243,30 @@ export class AgentMessageAttentionIndex {
        * exactly as volatile as it was: the cursor then only lives as long as this process. */
       consumedSeqs?: AgentConsumedSeqPort;
     } = { shouldHold: () => false, enqueue: () => {}, busy: () => {} },
+    updateOptions: { schedule?: MemoryChannelUpdateSchedule } = {},
   ) {
     this.#workspaceId = workspaceId;
     this.#runtimes = runtimes;
     this.#consumedSeqs = hold.consumedSeqs;
+    this.#memoryUpdates = new MemoryChannelUpdates(
+      async (messages) => {
+        const pending = messages
+          .filter(hasDeliveryScope)
+          .filter((message) => !this.#consumed(message));
+        const agentId = pending[0]?.agentId;
+        if (!agentId) return;
+        if (this.hold.shouldHold(agentId)) return false;
+        await this.flush(agentId, pending);
+      },
+      {
+        ...updateOptions,
+        onError: (error) =>
+          logger.warn("Memory channel update notice failed", {
+            event: "agent.memory_channel_updates.failed",
+            error_type: diagnosticErrorName(error),
+          }),
+      },
+    );
   }
 
   /** Text set at launch and appended once to the Agent's next notice. */
@@ -250,6 +281,11 @@ export class AgentMessageAttentionIndex {
     const generation = this.#generation(message.agentId);
     if (generation.seenDeliveryIds.has(message.deliveryId)) {
       if (!generation.notified.has(message.deliveryId)) {
+        if (this.#isOrdinaryMemoryUpdate(message)) {
+          this.acknowledgeCustody(message);
+          await this.#memoryUpdates.add(message);
+          return;
+        }
         if (this.hold.shouldHold(message.agentId)) {
           this.logDecision(message, "held");
           this.hold.enqueue(message.agentId, message);
@@ -272,6 +308,12 @@ export class AgentMessageAttentionIndex {
       return;
     }
     const current = this.#recordAttention(message);
+    if (this.#isOrdinaryMemoryUpdate(message)) {
+      this.logDecision(message, "held");
+      this.acknowledgeCustody(message);
+      await this.#memoryUpdates.add(message);
+      return;
+    }
     if (this.hold.shouldHold(message.agentId)) {
       this.logDecision(message, "held");
       this.hold.enqueue(message.agentId, message);
@@ -395,6 +437,10 @@ export class AgentMessageAttentionIndex {
     for (const message of held) {
       if (!hasDeliveryScope(message)) continue;
       settled.push(message);
+      if (this.#consumed(message)) {
+        this.logDecision(message, "consumed");
+        continue;
+      }
       if (generation.seenDeliveryIds.has(message.deliveryId)) {
         announced.push(message);
         continue;
@@ -410,7 +456,18 @@ export class AgentMessageAttentionIndex {
     // One notice for the whole coalesced batch, carrying the batch itself: the queue is per Agent,
     // so a batch legitimately spans channels, DMs and threads, and each target needs its own line.
     if (announced.length) {
-      await this.#notify(announced[announced.length - 1]!, undefined, announced);
+      if (this.#isMemory(agentId)) {
+        const groups = new Map<string, AgentMessageDelivery[]>();
+        for (const message of announced) {
+          const batch = groups.get(message.conversationId) ?? [];
+          batch.push(message);
+          groups.set(message.conversationId, batch);
+        }
+        for (const batch of groups.values()) {
+          await this.#notify(batch.at(-1)!, undefined, batch);
+          if (this.#generations.get(agentId) !== generation) return;
+        }
+      } else await this.#notify(announced[announced.length - 1]!, undefined, announced);
       if (this.#generations.get(agentId) !== generation) return;
     }
     // Every held delivery was acknowledged when the daemon took it; a redelivery of one after this
@@ -422,7 +479,39 @@ export class AgentMessageAttentionIndex {
     agentId: string,
     messages: readonly AgentRecoveryMessage[],
     unreadSummary: Readonly<Record<string, number>>,
+    unreadConversationIds: Readonly<Record<string, string>> = {},
+    conversation?: AgentConversationScope,
   ): Promise<void> {
+    if (this.#isMemory(agentId) && !conversation) {
+      const scopes = new Map<string, string>();
+      for (const message of messages) scopes.set(message.conversationId, message.target);
+      for (const [target, count] of Object.entries(unreadSummary)) {
+        if (count < 1) continue;
+        const id =
+          unreadConversationIds[target] ??
+          messages.find((message) => message.target === target)?.conversationId ??
+          this.#cursorConversation.get(agentId)?.get(target);
+        if (!id) throw new Error("Memory recovery requires a canonical conversation id");
+        scopes.set(id, target);
+      }
+      for (const [conversationId, target] of scopes) {
+        await this.recover(
+          agentId,
+          messages.filter((message) => message.conversationId === conversationId),
+          Object.fromEntries(
+            Object.entries(unreadSummary).filter(
+              ([name]) =>
+                (unreadConversationIds[name] ??
+                  messages.find((message) => message.target === name)?.conversationId ??
+                  this.#cursorConversation.get(agentId)?.get(name)) === conversationId,
+            ),
+          ),
+          unreadConversationIds,
+          { conversationId, target },
+        );
+      }
+      return;
+    }
     const generation = this.#generation(agentId);
     const session = this.#runtimes.session(agentId);
     if (!session?.notify) throw new Error("Agent session cannot receive a wakeup notice");
@@ -499,13 +588,17 @@ export class AgentMessageAttentionIndex {
     const notice = this.#withLaunchReminder(
       agentId,
       recoveredMessages.length
-        ? inboxNoticeText("restart recovery", totalCount, rows)
-        : agentStartupCatchupInput(totalCount, rows),
+        ? inboxNoticeText("restart recovery", totalCount, rows, this.#inboxDrainHint(agentId))
+        : agentStartupCatchupInput(
+            totalCount,
+            rows,
+            Boolean(this.#runtimes.runtime?.(agentId)?.config.toolProfile),
+          ),
     );
     // Same synchronous-busy rule as `#notify` — this is also a `session.notify` call.
     this.hold.busy(agentId);
     try {
-      await session.notify(notice);
+      await session.notify(notice, conversation ? { conversation } : undefined);
     } finally {
       if (this.#runtimes.session(agentId) === session) this.hold.noticeSettled?.(agentId);
     }
@@ -521,7 +614,20 @@ export class AgentMessageAttentionIndex {
       pendingByTarget.set(message.target, pending);
       this.#pendingSequences.set(agentId, pendingByTarget);
     }
-    if (recoveredMessages.length) this.messageReceived(agentId);
+    if (recoveredMessages.length) this.messageReceived(agentId, conversation);
+  }
+
+  #isMemory(agentId: string): boolean {
+    return isMemoryAgentRuntime(this.#runtimes.runtime?.(agentId)?.config);
+  }
+
+  #isOrdinaryMemoryUpdate(message: AgentMessageDelivery): boolean {
+    return (
+      this.#isMemory(message.agentId) &&
+      Boolean(message.target?.startsWith("#")) &&
+      !message.mentionsAgent &&
+      !isTrackedMention(message)
+    );
   }
 
   #withLaunchReminder(agentId: string, notice: string): string {
@@ -529,6 +635,12 @@ export class AgentMessageAttentionIndex {
     if (!reminder) return notice;
     this.#launchReminders.delete(agentId);
     return `${notice}\n\n${reminder}`;
+  }
+
+  #inboxDrainHint(agentId: string): string {
+    return this.#runtimes.runtime?.(agentId)?.config.toolProfile
+      ? "Read each listed target with message_read using the exact target and no range anchor. It returns channel messages after your server read cursor, including messages that did not mention you. Repeat while hasNewer is true. Do not use message_check for this update: it only drains eligible deliveries. Read first, then decide whether retrieval or a revised Offer is useful; otherwise stay silent. A notice is not a user request or proof that its messages remain unread."
+      : INBOX_DRAIN_HINT;
   }
 
   /**
@@ -630,26 +742,35 @@ export class AgentMessageAttentionIndex {
     // these messages are unread — a delivery notice can race a `check` or `read` that already
     // advanced that cursor. Only those commands answer what is left, and either may answer
     // "nothing".
-    const queued = this.hold.queued?.(message.agentId) ?? [];
+    const queued = (this.hold.queued?.(message.agentId) ?? []).filter(
+      (delivery) =>
+        !this.#isMemory(message.agentId) || delivery.conversationId === message.conversationId,
+    );
     const view = this.#localViewRows(announced, queued);
     const rows = this.#renderLocalViewRows(view.rows);
     const totalCount = countDistinctMessages([...announced, ...queued]);
     const notice = this.#withLaunchReminder(
       message.agentId,
-      inboxNoticeText(undefined, totalCount, rows),
+      inboxNoticeText(undefined, totalCount, rows, this.#inboxDrainHint(message.agentId)),
     );
     // The session names these back if the notice never reaches the model (`notice-undelivered`).
     const trackedIds = announced.filter(isTrackedMention).map((delivery) => delivery.deliveryId);
+    const conversation = this.#isMemory(message.agentId)
+      ? { conversationId: message.conversationId, target: message.target }
+      : undefined;
     const notification = Promise.resolve()
       .then(() =>
-        trackedIds.length
-          ? session.notify!(notice, { deliveryIds: trackedIds })
+        conversation || trackedIds.length
+          ? session.notify!(notice, {
+              ...(trackedIds.length ? { deliveryIds: trackedIds } : {}),
+              ...(conversation ? { conversation } : {}),
+            })
           : session.notify!(notice),
       )
       .then(() => {
         if (this.#generations.get(message.agentId) === generation) {
           generation.notified.add(message.deliveryId);
-          this.messageReceived(message.agentId);
+          this.messageReceived(message.agentId, conversation);
         }
         logger.info("Agent accepted inbox notice", {
           event: "agent.inbox_notice.accepted",
@@ -1202,6 +1323,7 @@ export class AgentMessageAttentionIndex {
   }
 
   clearAgent(agentId: string): void {
+    this.#memoryUpdates.clearAgent(agentId);
     this.#hydrated.delete(agentId);
     this.#generations.delete(agentId);
     this.#attention.delete(agentId);
@@ -1233,6 +1355,7 @@ export class AgentMessageAttentionIndex {
   }
 
   clear(agentId: string, target: string): void {
+    this.#memoryUpdates.clearTarget(agentId, target);
     this.#forgetConversation(agentId, target);
     this.#pendingSequences.get(agentId)?.delete(target);
     this.#pendingWindow.get(agentId)?.delete(target);

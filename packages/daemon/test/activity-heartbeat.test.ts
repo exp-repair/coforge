@@ -1233,3 +1233,30 @@ test("subagent progress shows each new phase once while the turn is busy, and no
     await runtime.stop();
   }
 });
+
+test("compaction interruptions and subagent progress retain their conversation origin", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  const conversation = { conversationId: "conversation-team", target: "#team" };
+  try {
+    emitEvent({ type: "compaction-started", conversation });
+    activities.length = 0;
+    emitEvent({ type: "compaction-interrupted", conversation });
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      detailKind: "system_message",
+      conversationId: "conversation-team",
+      conversationTarget: "#team",
+    });
+    emitEvent({ type: "progress", conversation });
+    activities.length = 0;
+    emitEvent({ type: "subagent-progress", phase: "started", conversation });
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      detailKind: "subagent_activity",
+      conversationId: "conversation-team",
+      conversationTarget: "#team",
+    });
+  } finally {
+    await runtime.stop();
+  }
+});

@@ -7,8 +7,11 @@ import {
   type CodeAgentProvider,
   type UsageSnapshot,
 } from "#src/code-agent/contract";
+import { isMemoryAgentRuntime } from "@coforge/agent";
 import { mkdirSync } from "node:fs";
 import { readOperatingSystem } from "#src/platform/operating-system";
+import { FileConversationSessionStore } from "#src/persistence/conversation-session-store";
+import { escapePathIdentity } from "#src/persistence/path-scope";
 import { ActivityTrajectory } from "#src/agent-runtime/activity-trajectory";
 import { CompactionTracker } from "#src/agent-runtime/compaction-tracker";
 import { subagentProgressDetail } from "#src/agent-runtime/subagent-progress-activity";
@@ -267,7 +270,7 @@ type AgentInputCompletion = {
 
 type AgentRecoveryContext = Pick<
   AgentStartIntent,
-  "wakeMessage" | "resumeMessages" | "unreadSummary"
+  "wakeMessage" | "resumeMessages" | "unreadSummary" | "unreadConversationIds"
 >;
 
 /** Whether a recovery context has anything concrete to deliver. `recoveryOf(intent)` always
@@ -297,7 +300,7 @@ type AgentInputQueue = {
 
 type ActivityLaunch = PublishedActivityLaunch & {
   startup?: AgentStartup;
-  trajectory?: ActivityTrajectory;
+  trajectory?: Pick<ActivityTrajectory, "flush" | "dispose">;
   /** When the provider last reported anything, and its open tool calls (`stalled-recovery.ts`). */
   progress?: ProviderProgress;
   // The most recent `error` event not yet resolved by a `completed` event, if any (cleared on
@@ -366,6 +369,7 @@ function runtimeConfigOf(intent: AgentStartIntent): AgentRuntimeConfig {
     reasoning: intent.reasoning,
     providerConfig: intent.providerConfig,
     toolProfile: intent.toolProfile,
+    ...(intent.memoryAgent ? { memoryAgent: true } : {}),
   };
 }
 
@@ -374,6 +378,7 @@ function recoveryOf(intent: AgentStartIntent): AgentRecoveryContext {
     wakeMessage: intent.wakeMessage,
     resumeMessages: intent.resumeMessages,
     unreadSummary: intent.unreadSummary,
+    unreadConversationIds: intent.unreadConversationIds,
   };
 }
 
@@ -551,7 +556,14 @@ export class DaemonRuntime {
     });
     this.#connection = connection;
     this.#createProvider = createProvider;
-    this.#agentProcessManager = new AgentProcessManager(createProvider);
+    this.#agentProcessManager = new AgentProcessManager(
+      createProvider,
+      undefined,
+      (agentId) =>
+        new FileConversationSessionStore(
+          `${stateDirectory}/conversation-sessions/${escapePathIdentity(connection.workspaceId)}/${escapePathIdentity(agentId)}.json`,
+        ),
+    );
     this.#credentials = credentials;
     this.#transportFactory = transportFactory;
     this.#agentProxy = agentProxy;
@@ -568,7 +580,10 @@ export class DaemonRuntime {
       told: (message) => this.#messageAttention.wasNotified(message),
       decided: (message, outcome) => this.#messageAttention.logDecision(message, outcome),
       announce: (message) => this.#messageAttention.announce(message),
-      busy: (agentId) => this.#deliveryQueue.isBusy(agentId),
+      busy: (agentId, conversationId) =>
+        (conversationId
+          ? this.#agentProcessManager.session(agentId)?.hasLiveTurnForConversation?.(conversationId)
+          : undefined) ?? this.#deliveryQueue.isBusy(agentId),
       blocked: (agentId) =>
         this.#deliveryQueue.explicitHold(agentId) ??
         (this.#deliveryQueue.shouldHold(agentId) ? "queued_until_idle" : undefined),
@@ -577,7 +592,7 @@ export class DaemonRuntime {
       connection.workspaceId,
       this.#agentProcessManager,
       (ack) => this.#transport.sendAgentDeliveryAck?.(ack) ?? Promise.resolve(),
-      (agentId) => {
+      (agentId, conversation) => {
         try {
           this.#activityPublisher.publishCurrent(
             agentId,
@@ -588,6 +603,12 @@ export class DaemonRuntime {
               "Message received",
               {
                 entries: [],
+                ...(conversation
+                  ? {
+                      conversationId: conversation.conversationId,
+                      conversationTarget: conversation.target,
+                    }
+                  : {}),
               },
             ),
           );
@@ -1951,7 +1972,12 @@ export class DaemonRuntime {
     const hasRecoveryContent = recoveryHasContent(context);
     try {
       if (hasRecoveryContent)
-        await this.#messageAttention.recover(agentId, messages, context.unreadSummary ?? {});
+        await this.#messageAttention.recover(
+          agentId,
+          messages,
+          context.unreadSummary ?? {},
+          context.unreadConversationIds ?? {},
+        );
     } catch (error) {
       logger.warn("Agent recovery notice was not accepted; canonical unread state remains", {
         event: "agent.recovery_notice.rejected",
@@ -2067,7 +2093,8 @@ export class DaemonRuntime {
     this.#interruptIfBusy(agentId, activityLaunch);
     this.#activityPublisher.forgetBusy(agentId);
     this.#disposeLaunchObservations(agentId);
-    this.#contextHandoffs.delete(agentId);
+    for (const key of this.#contextHandoffs.keys())
+      if (key === agentId || key.startsWith(`${agentId}:`)) this.#contextHandoffs.delete(key);
     this.#revokeLocalLaunch(agentId);
     try {
       await this.#releaseAgentRuntime(agentId);
@@ -2171,7 +2198,8 @@ export class DaemonRuntime {
     // #deliveryQueue.shouldHold on every delivery for this Agent from now on.
     this.#deliveryQueue.setProvider(agentId, config.provider);
     this.#lastContextUsage.delete(agentId);
-    this.#contextHandoffs.delete(agentId);
+    for (const key of this.#contextHandoffs.keys())
+      if (key === agentId || key.startsWith(`${agentId}:`)) this.#contextHandoffs.delete(key);
     // AgentControl's fresh retry after a kiro/pi AgentSessionRecoveryError: the invalidate was
     // already reported before this launch (see `invalidateSession` above); narrate the cold
     // start here, where the real launch's ActivityLaunch now exists. `invalidateReason` is
@@ -2315,11 +2343,12 @@ export class DaemonRuntime {
         parseAssignedSkillPacks(launchConfig.assignedSkillPacks).includes("weekly-report-collect")
       )
         this.#collectSkillAgents.add(agentId);
-      void this.#workspaceCleanupTips
-        .launchReminder(agentId, workspaceDirectory)
-        .then((reminder) => {
-          if (reminder && current()) this.#messageAttention.setLaunchReminder(agentId, reminder);
-        });
+      if (!isMemoryAgentRuntime(config))
+        void this.#workspaceCleanupTips
+          .launchReminder(agentId, workspaceDirectory)
+          .then((reminder) => {
+            if (reminder && current()) this.#messageAttention.setLaunchReminder(agentId, reminder);
+          });
       if (this.#stoppingAgents.has(agentId)) {
         await this.#agentProcessManager.stop(agentId);
         throw new Error(`Agent runtime is stopping: ${agentId}`);
@@ -2335,9 +2364,31 @@ export class DaemonRuntime {
         requestId,
       });
       launch.startup = new AgentStartup(() => this.#scheduleStartupFailure(agentId, launch));
-      const trajectory = new ActivityTrajectory((event) =>
-        this.#observeRuntimeEvent(agentId, launch, config, runtime, Boolean(control), event),
-      );
+      const trajectories = new Map<string, ActivityTrajectory>();
+      const trajectoryFor = (scope: AgentRuntimeEvent["conversation"]) => {
+        const key = scope?.conversationId ?? "";
+        let trajectory = trajectories.get(key);
+        if (!trajectory) {
+          trajectory = new ActivityTrajectory((event) =>
+            this.#observeRuntimeEvent(agentId, launch, config, runtime, Boolean(control), {
+              ...event,
+              ...(scope ? { conversation: scope } : {}),
+            }),
+          );
+          trajectories.set(key, trajectory);
+        }
+        return trajectory;
+      };
+      const trajectory = {
+        accept: (event: AgentRuntimeEvent) => trajectoryFor(event.conversation).accept(event),
+        flush: () => {
+          for (const item of trajectories.values()) item.flush();
+        },
+        dispose: () => {
+          for (const item of trajectories.values()) item.dispose();
+          trajectories.clear();
+        },
+      };
       launch.trajectory = trajectory;
       const progress = new ProviderProgress();
       launch.progress = progress;
@@ -2359,7 +2410,8 @@ export class DaemonRuntime {
         if (this.#currentActivityLaunches.get(agentId) !== launch) return;
         // No leaked watchdog timer, and a later launch for this Agent starts clean.
         this.#disposeLaunchObservations(agentId);
-        this.#contextHandoffs.delete(agentId);
+        for (const key of this.#contextHandoffs.keys())
+          if (key === agentId || key.startsWith(`${agentId}:`)) this.#contextHandoffs.delete(key);
         this.#collectSkillAgents.delete(agentId);
         this.#messageAttention.clearAgent(agentId);
         // An unexpected exit only clears busy — whatever a queue_until_idle provider
@@ -2583,6 +2635,16 @@ export class DaemonRuntime {
   ): void {
     // A late trajectory flush must not mutate the replacement launch's Agent state.
     if (this.#currentActivityLaunches.get(agentId) !== launch) return;
+    const publish = (id: string, source: PublishedActivityLaunch, activity: ActivityDraft) =>
+      this.#activityPublisher.publish(id, source, {
+        ...activity,
+        ...(event.conversation
+          ? {
+              conversationId: event.conversation.conversationId,
+              conversationTarget: event.conversation.target,
+            }
+          : {}),
+      });
     // Runtime work marks busy unless the provider knows it has no live turn.
     // "completed" supplies the turn outcome below; native-state reconciliation
     // repairs observation and delivery gating without inventing that outcome.
@@ -2594,7 +2656,7 @@ export class DaemonRuntime {
     )
       this.#deliveryQueue.busy(agentId);
     if (event.type === "session") {
-      if (controlled)
+      if (controlled && !event.conversation)
         void this.#agentSessions.update(agentId, launch.launchId, event.identity).catch(() => {});
       return;
     }
@@ -2610,10 +2672,13 @@ export class DaemonRuntime {
         event.usedTokens,
         event.windowTokens,
       );
-      let handoff = this.#contextHandoffs.get(agentId);
+      const handoffKey = event.conversation
+        ? `${agentId}:${event.conversation.conversationId}`
+        : agentId;
+      let handoff = this.#contextHandoffs.get(handoffKey);
       if (!handoff) {
         handoff = new ContextHandoffCoordinator(({ prompt, percent }) => {
-          this.#activityPublisher.publish(
+          publish(
             agentId,
             launch,
             this.#activity(
@@ -2625,15 +2690,17 @@ export class DaemonRuntime {
           );
           const session = this.#agentProcessManager.session(agentId);
           if (!session?.notify) return;
-          void session.notify(prompt).catch((error: unknown) => {
-            logger.warning("Context handoff request was not accepted", {
-              event: "agent.context_handoff.request_failed",
-              agent_id: agentId,
-              error_code: diagnosticErrorName(error),
+          void session
+            .notify(prompt, event.conversation ? { conversation: event.conversation } : undefined)
+            .catch((error: unknown) => {
+              logger.warning("Context handoff request was not accepted", {
+                event: "agent.context_handoff.request_failed",
+                agent_id: agentId,
+                error_code: diagnosticErrorName(error),
+              });
             });
-          });
         });
-        this.#contextHandoffs.set(agentId, handoff);
+        this.#contextHandoffs.set(handoffKey, handoff);
       }
       handoff.observe(event.usedTokens, event.windowTokens);
       return;
@@ -2656,6 +2723,7 @@ export class DaemonRuntime {
           event.type === "tool-start"
             ? "Compaction finished (inferred from a new tool call)."
             : "Compaction finished (inferred from resumed output).",
+          event.conversation,
         );
       const carriesEntries =
         activity.detailKind !== AGENT_ACTIVITY_DETAIL_KIND.RUNTIME_RECONNECTING &&
@@ -2667,7 +2735,7 @@ export class DaemonRuntime {
       const subagentScoped =
         activity.level !== "error" &&
         activity.entries?.some((entry) => entry.subagent !== undefined);
-      this.#activityPublisher.publish(agentId, launch, {
+      publish(agentId, launch, {
         ...this.#activity(
           agentId,
           subagentScoped ? AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY : activity.detailKind,
@@ -2689,7 +2757,7 @@ export class DaemonRuntime {
     }
     if (event.type === "tool-end") {
       // Liveness-only filler: renews the busy lease, never stored.
-      this.#activityPublisher.publish(
+      publish(
         agentId,
         launch,
         this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.TOOL_END, "info", "Tool finished"),
@@ -2698,7 +2766,7 @@ export class DaemonRuntime {
     }
     if (event.type === "compaction-started") {
       if (this.#compactionTracker.start(agentId) === "started")
-        this.#activityPublisher.publish(
+        publish(
           agentId,
           launch,
           this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.COMPACTING_CONTEXT, "info", ""),
@@ -2706,14 +2774,14 @@ export class DaemonRuntime {
       return;
     }
     if (event.type === "compaction-finished") {
-      this.#finishCompaction(agentId, launch, "");
+      this.#finishCompaction(agentId, launch, "", event.conversation);
       return;
     }
     if (event.type === "compaction-interrupted") {
       // The provider's signal does not say whether the compaction was aborted or failed (a
       // failure also arrives as its own error), so the row says only that it did not complete.
       if (this.#compactionTracker.interrupt(agentId) === "interrupted")
-        this.#activityPublisher.publish(
+        publish(
           agentId,
           launch,
           this.#activity(
@@ -2737,7 +2805,7 @@ export class DaemonRuntime {
         last.activity.detail === detail
       )
         return;
-      this.#activityPublisher.publish(
+      publish(
         agentId,
         launch,
         this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY, "info", detail),
@@ -2746,7 +2814,7 @@ export class DaemonRuntime {
     }
     if (event.type === "progress") {
       if (this.#activityPublisher.lastBusy(agentId)?.launch !== launch)
-        this.#activityPublisher.publish(
+        publish(
           agentId,
           launch,
           this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.RUNTIME_PROGRESS, "info", ""),
@@ -2770,7 +2838,7 @@ export class DaemonRuntime {
         built.runtimeError?.fingerprint ?? fingerprintRuntimeError(event.message),
       );
       const reported = fence ? buildRuntimeErrorFingerprintFenceActivity(built, fence) : built;
-      this.#activityPublisher.publish(
+      publish(
         agentId,
         launch,
         this.#activity(agentId, reported.detailKind, reported.level, reported.detail, {
@@ -2782,7 +2850,7 @@ export class DaemonRuntime {
     }
     if (event.type === "reconnecting") {
       const built = buildRuntimeReconnectingActivity(event);
-      this.#activityPublisher.publish(
+      publish(
         agentId,
         launch,
         this.#activity(agentId, built.detailKind, built.level, built.detail, {
@@ -2800,6 +2868,7 @@ export class DaemonRuntime {
       // that redelivery settles them, not this turn's end.
       this.#deliveryQueue.holdFallbackNotice(agentId, {
         text: event.text,
+        ...(event.conversation ? { conversation: event.conversation } : {}),
         ...(event.deliveryIds?.length ? { deliveryIds: event.deliveryIds } : {}),
       });
       if (event.deliveryIds?.length)
@@ -2820,10 +2889,16 @@ export class DaemonRuntime {
     // coalesced notice for the next turn — never blocking this turn-end Activity on it.
     this.#releaseTurnEndHolds(agentId);
     // Tracked mentions told during this turn end with it.
-    void this.#mentionDeliveries.settleTurnEnd(agentId);
+    if (!isMemoryAgentRuntime(config) || event.conversation)
+      void this.#mentionDeliveries.settleTurnEnd(agentId, event.conversation?.conversationId);
     // A turn ending means a still-open compaction is done; report that before the turn's own
     // idle/failed/interrupted Activity.
-    this.#finishCompaction(agentId, launch, "Compaction finished (inferred from turn end).");
+    this.#finishCompaction(
+      agentId,
+      launch,
+      "Compaction finished (inferred from turn end).",
+      event.conversation,
+    );
     // A turn outcome (of any status) resolves any error observed mid-turn; a crash wording only
     // applies to a process exit with no such outcome in between. A failed turn that already
     // showed its own runtime_error Activity this turn (`crashDetail` set by the `error` event
@@ -2840,7 +2915,7 @@ export class DaemonRuntime {
         })
         .catch(() => {});
     if (!alreadyExplained)
-      this.#activityPublisher.publish(
+      publish(
         agentId,
         launch,
         event.status === "failed"
@@ -2858,13 +2933,19 @@ export class DaemonRuntime {
   }
 
   /** Ends an open compaction once, before the Activity that established its completion. */
-  #finishCompaction(agentId: string, launch: ActivityLaunch, detail: string): void {
+  #finishCompaction(
+    agentId: string,
+    launch: ActivityLaunch,
+    detail: string,
+    conversation?: AgentRuntimeEvent["conversation"],
+  ): void {
     if (this.#compactionTracker.finish(agentId) !== "finished") return;
-    this.#activityPublisher.publish(
-      agentId,
-      launch,
-      this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.COMPACTION_FINISHED, "info", detail),
-    );
+    this.#activityPublisher.publish(agentId, launch, {
+      ...this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.COMPACTION_FINISHED, "info", detail),
+      ...(conversation
+        ? { conversationId: conversation.conversationId, conversationTarget: conversation.target }
+        : {}),
+    });
   }
 
   /**
@@ -3373,6 +3454,15 @@ export class DaemonRuntime {
     if (purge.workspaceId !== this.#connection.workspaceId)
       throw new Error("agent inbox purge targets another Workspace");
     const conversations = new Set(purge.conversationIds);
+    const session = this.#agentProcessManager.session(purge.agentId);
+    for (const conversationId of conversations)
+      void session?.purgeConversation?.(conversationId).catch((error) => {
+        logger.warning("Memory conversation cleanup failed", {
+          event: "agent.inbox.purge_cleanup_failed",
+          agent_id: purge.agentId,
+          error_code: diagnosticErrorName(error),
+        });
+      });
     let dropped = 0;
     const queue = this.#agentInputQueues.get(purge.agentId);
     if (queue)
@@ -3410,6 +3500,7 @@ export class DaemonRuntime {
     this.#stoppingAgents.add(agentId);
     this.#sessionReferences.delete(agentId);
     this.#closeAgentInputQueue(agentId, new Error(`Agent runtime is stopping: ${agentId}`));
+    this.#agentProcessManager.session(agentId)?.cancelPendingNotices?.();
     const activityLaunch = this.#currentActivityLaunches.get(agentId);
     activityLaunch?.startup?.dispose();
     if (activityLaunch) activityLaunch.stopping = true;
@@ -4079,15 +4170,16 @@ export class DaemonRuntime {
     const notices = this.#deliveryQueue.releaseFallbackNotices(agentId);
     if (!notices.length) return;
     const session = this.#agentProcessManager.session(agentId);
-    for (const { text, deliveryIds = [] } of notices) {
+    for (const { text, deliveryIds = [], conversation } of notices) {
       if (!session?.notify) {
         void this.#mentionDeliveries.settleRedelivery(agentId, deliveryIds, false);
         continue;
       }
       // The tracked mentions it carries are drained once it is accepted, so it names them again.
-      const redelivery = deliveryIds.length
-        ? session.notify(text, { deliveryIds })
-        : session.notify(text);
+      const redelivery =
+        deliveryIds.length || conversation
+          ? session.notify(text, { deliveryIds, ...(conversation ? { conversation } : {}) })
+          : session.notify(text);
       void redelivery.then(
         () => this.#mentionDeliveries.settleRedelivery(agentId, deliveryIds, true),
         (error: unknown) => {

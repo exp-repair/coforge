@@ -76,7 +76,7 @@ import {
 } from "#src/connection/weekly-report-memory";
 import { getLogger } from "@logtape/logtape";
 import {
-  admitOpenVikingOffer,
+  admitOpenVikingControl,
   admitOpenVikingRead,
   OpenVikingReadProxyError,
   type OpenVikingAgentProxyCommand,
@@ -210,6 +210,7 @@ export type AgentProxyRuntime = {
     request: WeeklyReportMemoryCommand,
     agentApiKey: string,
   ): Promise<WeeklyReportMemoryResult>;
+  agentMemoryDisposition?(context: string, request: unknown, agentApiKey: string): Promise<unknown>;
   agentOpenviking?(
     context: string,
     request: OpenVikingAgentProxyCommand,
@@ -609,6 +610,7 @@ function parseMessageRequest(
     operation: payload.operation as LocalAgentMessageRequest["operation"],
     target: typeof payload.target === "string" ? payload.target : undefined,
     content: typeof payload.content === "string" ? payload.content : undefined,
+    ...(typeof payload.message === "string" ? { message: payload.message } : {}),
     continueAnyway: payload.continueAnyway === true || undefined,
     sendDraft: payload.sendDraft === true || undefined,
     expectedDraftKey:
@@ -909,6 +911,15 @@ const ROUTE_TABLE: readonly ProxyRoute[] = [
     respond: (result) => Response.json(result, { headers: { "cache-control": "no-store" } }),
   }),
   defineRoute({
+    family: "agent-api/memory-disposition",
+    method: LOCAL_PROXY_ROUTES.memoryDisposition.method,
+    match: exactPath(LOCAL_PROXY_ROUTES.memoryDisposition.path),
+    body: "json-object",
+    handler: "agentMemoryDisposition",
+    parse: ({ fields, binding }) =>
+      binding.memoryFence ? Response.json({ ok: false, error: { code: "unauthorized" } }) : fields,
+  }),
+  defineRoute({
     family: "agent-api/openviking",
     method: LOCAL_PROXY_ROUTES.openviking.method,
     match: exactPath(LOCAL_PROXY_ROUTES.openviking.path),
@@ -916,8 +927,8 @@ const ROUTE_TABLE: readonly ProxyRoute[] = [
     handler: "agentOpenviking",
     parse: ({ fields, binding }) => {
       const admitted =
-        fields.op === "offer"
-          ? admitOpenVikingOffer({ body: fields, fence: binding.memoryFence })
+        fields.op === "offer" || fields.op === "diagnose"
+          ? admitOpenVikingControl({ body: fields, fence: binding.memoryFence })
           : admitOpenVikingRead({ body: fields, fence: binding.memoryFence });
       return admitted.ok
         ? admitted.command

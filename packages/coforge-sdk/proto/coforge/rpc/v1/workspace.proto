@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package coforge.rpc.v1;
 
+import "coforge/rpc/v1/memory_hint.proto";
+
 message WorkspaceListRequest {
   uint32 protocol_major = 1;
   string request_id = 2;
@@ -162,6 +164,8 @@ message AgentStartIntent {
   // profile. Field 21: 20 was taken by resume_prompt on main before this
   // field landed.
   optional string tool_profile = 21;
+  // Server-authored Workspace Memory identity; independent of the chosen tool profile.
+  optional bool memory_agent = 22;
   // Text the Agent's first turn opens with, in place of message recovery: the
   // guidance a user gives when resuming Agents they stopped.
   // Never carried together with wake_message, resume_messages or unread_summary.
@@ -196,11 +200,14 @@ message AgentRecoveryMessage {
   string body = 9;
   // True when the Agent is not in the channel and was notified of this one message.
   optional bool non_member_mention = 10;
+  MemoryHintDelivery memory_hint = 11;
 }
 
 message AgentUnreadSummaryEntry {
   string target = 1;
   uint32 count = 2;
+  // Canonical conversation for summary-only recovery; no message bodies needed.
+  optional string conversation_id = 3;
 }
 
 message AgentRuntimeProviderConfig {
@@ -269,6 +276,7 @@ message AgentMessageDelivery {
   // Present on a tracked @mention delivery: the daemon answers it with an ACK that echoes this
   // envelope once the mention is drained into that launch's session, or with a terminal error.
   MentionDeliveryEnvelope mention_delivery = 18;
+  MemoryHintDelivery memory_hint = 19;
 }
 
 // The recipient Agent's launch and native session a tracked @mention delivery was issued for.
@@ -366,6 +374,8 @@ message AgentActivity {
   // The freshness-decision lineage: `freshness_decision_fact:<sha256>` for the decision this
   // row narrates. Set on a freshness-hold row only; empty otherwise.
   string producer_fact_id = 20;
+  // Human-readable origin target, including the conversation kind.
+  optional string conversation_target = 21;
 }
 
 // Display-only trajectory. The oneof makes kind/payload mismatches impossible.

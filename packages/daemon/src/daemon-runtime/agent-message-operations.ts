@@ -23,6 +23,7 @@ import {
   type HeldFreshnessActivity,
 } from "./agent-inbox-freshness-activity";
 import type { AgentMessageAttentionIndex } from "./agent-message-attention-index";
+import { AGENT_MESSAGE_BODY_REQUIRED_MESSAGE, agentMessageBody } from "./agent-message-body";
 import { AgentPreflightError } from "./agent-preflight-error";
 import { settleAgentSend } from "./agent-send-settlement";
 
@@ -119,7 +120,7 @@ export class AgentMessageOperations {
     agentApiKey: string,
   ): Promise<AgentMessageResponse> {
     const { operation } = request;
-    if (operation === "check") return this.#check(agentId, request, agentApiKey);
+    if (operation === "check") return this.#check(agentId, request, agentApiKey, target);
     if (operation === "send" && target) return this.#send(agentId, request, target, agentApiKey);
     return this.#forward(agentId, request, operation, target, agentApiKey);
   }
@@ -133,9 +134,12 @@ export class AgentMessageOperations {
     agentId: string,
     request: LocalAgentMessageRequest,
     agentApiKey: string,
+    target = request.target,
   ): Promise<AgentMessageResponse> {
     const startedAt = performance.now();
-    const attention = this.#ports.attention.check(agentId);
+    const attention = this.#ports.attention
+      .check(agentId)
+      .filter((item) => !target || item.target === target);
     const messages: AgentMessageRecord[] = [];
     let hasMore = false;
     let roundCount = 0;
@@ -147,7 +151,7 @@ export class AgentMessageOperations {
           agentId,
           workspaceId: this.#ports.connection.workspaceId,
           operation: "check",
-          target: request.target || "",
+          target: target || "",
           limit: request.limit,
         },
         agentApiKey,
@@ -242,10 +246,10 @@ export class AgentMessageOperations {
     // the draft had reached) so the server can compute `continueAnywaySuggested`.
     const priorDraft = draft ?? (request.sendDraft ? undefined : await inbox.draft(target));
     const draftReholdCount = priorDraft?.reholdCount ?? 0;
-    const content = draft?.content ?? request.content;
+    const content = draft?.content ?? agentMessageBody(request.content, request.message);
     if (content === undefined)
       throw new AgentPreflightError(
-        "Agent message body is required",
+        AGENT_MESSAGE_BODY_REQUIRED_MESSAGE,
         "AGENT_MESSAGE_BODY_REQUIRED",
       );
     // The boundary a draft already accounted for travels with the next attempt — a

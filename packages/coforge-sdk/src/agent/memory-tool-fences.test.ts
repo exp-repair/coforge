@@ -20,11 +20,17 @@ test("keeps the Agent tool fence distinct from Workspace Memory Profile persiste
 test("exposes only ov_* tools on the openviking fence", () => {
   expect(toolsForMemoryFence(OPENVIKING_TOOL_PROFILE)).toEqual([
     OPENVIKING_TOOL_NAMES.find,
-    OPENVIKING_TOOL_NAMES.searchContext,
+    OPENVIKING_TOOL_NAMES.expand,
     OPENVIKING_TOOL_NAMES.read,
     OPENVIKING_TOOL_NAMES.offer,
+    OPENVIKING_TOOL_NAMES.diagnose,
   ]);
   expect(
     toolsForMemoryFence(OPENVIKING_TOOL_PROFILE).some((name) => name.startsWith("causal_")),
   ).toBe(false);
+});
+
+test("Memory Agent discovery exposes find and excludes search_context", () => {
+  expect(toolsForMemoryFence("openviking-memory")).toContain("ov_find");
+  expect(toolsForMemoryFence("openviking-memory")).not.toContain("ov_search_context");
 });

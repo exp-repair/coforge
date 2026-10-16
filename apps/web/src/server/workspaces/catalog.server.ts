@@ -1,5 +1,6 @@
 import type { PrismaClient } from "#src/generated/prisma/client";
 import { AppError } from "#src/lib/app-error";
+import { attachDefaultMemoryAgentToGeneral } from "#src/server/workspace-memory/default-memory-agent.server";
 import {
   isReservedWorkspaceSlug,
   isValidWorkspaceSlug,
@@ -133,6 +134,7 @@ export class PrismaWorkspaceCatalogStore implements WorkspaceCatalogStore {
 
   async createForUser(input: { slug: string; name: string; userId: string }) {
     const row = await createOwnedWorkspace(this.db, input, workspaceSelect);
+    await attachDefaultMemoryAgentToGeneral(this.db, row.id, input.userId);
     return workspaceRecord(row);
   }
 

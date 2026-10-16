@@ -662,10 +662,12 @@ export type AgentStartIntent = {
   launchId?: string;
   /** Fenced Agent runtime profile. Unknown values are rejected by the codec. */
   toolProfile?: MemoryAgentToolProfile;
+  memoryAgent?: boolean;
   providerConfig?: AgentRuntimeProviderConfig;
   wakeMessage?: AgentRecoveryMessage;
   resumeMessages?: AgentRecoveryMessage[];
   unreadSummary?: Readonly<Record<string, number>>;
+  unreadConversationIds?: Readonly<Record<string, string>>;
   /** Text the Agent's first turn opens with, in place of message recovery: the guidance a user
    * gives when resuming Agents they stopped. Never carried together with `wakeMessage`,
    * `resumeMessages` or `unreadSummary`. */
@@ -703,6 +705,7 @@ export type AgentInboxPurge = {
   reason: AgentInboxPurgeReason;
 };
 export type AgentRecoveryMessage = {
+  memoryHint?: import("#src/agent/memory-disposition").MemoryHintDelivery;
   messageId: string;
   deliveryId: string;
   conversationId: string;
@@ -716,6 +719,7 @@ export type AgentRecoveryMessage = {
   nonMemberMention?: boolean;
 };
 export type AgentMessageDelivery = {
+  memoryHint?: import("#src/agent/memory-disposition").MemoryHintDelivery;
   protocolMajor: number;
   requestId: string;
   messageId: string;
@@ -776,6 +780,7 @@ export type AgentActivity = {
   detail: string;
   messageId?: string;
   conversationId?: string;
+  conversationTarget?: string;
   observedAtMs: number;
   launchId: string;
   clientSeq: number;

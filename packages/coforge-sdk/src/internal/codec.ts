@@ -1,3 +1,4 @@
+import { memoryHintMessage, readMemoryHint } from "./memory-hint";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { isMemoryAgentToolProfile } from "../agent/memory-tool-fences";
 import { parseActivityEntries, type ActivityTrajectoryEntry } from "./activity-entries";
@@ -763,15 +764,21 @@ export function encodeAgentStartIntent(value: AgentStartIntent): Uint8Array {
         : undefined,
       messageType: AGENT_START_MESSAGE_TYPE,
       wakeMessage: value.wakeMessage
-        ? { ...value.wakeMessage, sequence: BigInt(value.wakeMessage.sequence) }
+        ? {
+            ...value.wakeMessage,
+            sequence: BigInt(value.wakeMessage.sequence),
+            memoryHint: memoryHintMessage(value.wakeMessage.memoryHint),
+          }
         : undefined,
       resumeMessages: (value.resumeMessages ?? []).map((message) => ({
         ...message,
         sequence: BigInt(message.sequence),
+        memoryHint: memoryHintMessage(message.memoryHint),
       })),
       unreadSummary: Object.entries(value.unreadSummary ?? {}).map(([target, count]) => ({
         target,
         count,
+        conversationId: value.unreadConversationIds?.[target],
       })),
     }),
   );
@@ -846,6 +853,7 @@ export function decodeAgentStartIntent(bytes: Uint8Array): AgentStartIntent {
     latestSenderHandle: message.latestSenderHandle,
     latestSenderDescription: message.latestSenderDescription,
     body: message.body,
+    ...(message.memoryHint ? { memoryHint: readMemoryHint(message.memoryHint) } : {}),
     ...(message.nonMemberMention ? { nonMemberMention: true } : {}),
   });
   return {
@@ -870,9 +878,19 @@ export function decodeAgentStartIntent(bytes: Uint8Array): AgentStartIntent {
     ...(v.controlEpoch !== undefined ? { controlEpoch: v.controlEpoch } : {}),
     ...(v.launchId ? { launchId: v.launchId } : {}),
     ...(v.toolProfile ? { toolProfile: v.toolProfile as AgentStartIntent["toolProfile"] } : {}),
+    ...(v.memoryAgent === true ? { memoryAgent: true } : {}),
     ...(v.resumePrompt !== undefined ? { resumePrompt: v.resumePrompt } : {}),
     ...(v.wakeMessage ? { wakeMessage: recoveryMessage(v.wakeMessage) } : {}),
     ...(v.resumeMessages.length ? { resumeMessages: v.resumeMessages.map(recoveryMessage) } : {}),
+    ...(v.unreadSummary.some((entry) => entry.conversationId)
+      ? {
+          unreadConversationIds: Object.fromEntries(
+            v.unreadSummary
+              .filter((entry) => entry.conversationId)
+              .map((entry) => [entry.target, entry.conversationId!]),
+          ),
+        }
+      : {}),
     ...(v.unreadSummary.length
       ? {
           unreadSummary: Object.fromEntries(
@@ -1002,6 +1020,8 @@ function parseAgentRuntimeProviderConfig(
 }
 
 export function encodeAgentMessageDelivery(value: AgentMessageDelivery): Uint8Array {
+  // Protobuf omits an empty string, and the daemon rejects a delivery with no request_id.
+  if (!value.requestId?.trim()) throw new Error("agent message delivery requires requestId");
   assertUint(value.sequence, Number.MAX_SAFE_INTEGER, "Agent message sequence");
   if (value.latestSenderKind !== undefined)
     assertValidMessageSender(
@@ -1030,6 +1050,7 @@ export function encodeAgentMessageDelivery(value: AgentMessageDelivery): Uint8Ar
       nonMemberMention: value.nonMemberMention,
       taskExecutionSessionId: value.taskExecutionSessionId ?? "",
       mentionDelivery: mentionDeliveryEnvelopeMessage(value.mentionDelivery),
+      memoryHint: memoryHintMessage(value.memoryHint),
     }),
   );
 }
@@ -1073,6 +1094,7 @@ export function decodeAgentMessageDelivery(bytes: Uint8Array): AgentMessageDeliv
       ? { taskExecutionSessionId: value.taskExecutionSessionId }
       : {}),
     ...(mentionDelivery ? { mentionDelivery } : {}),
+    ...(value.memoryHint ? { memoryHint: readMemoryHint(value.memoryHint) } : {}),
   };
 }
 export function encodeAgentMessageDeliveryAck(value: AgentMessageDeliveryAck): Uint8Array {
@@ -1286,6 +1308,7 @@ export function decodeAgentActivity(bytes: Uint8Array): AgentActivity {
     ...(entries.length ? { entries } : {}),
     ...(v.messageId ? { messageId: v.messageId } : {}),
     ...(v.conversationId ? { conversationId: v.conversationId } : {}),
+    ...(v.conversationTarget ? { conversationTarget: v.conversationTarget } : {}),
     ...(v.runtimeErrorClass
       ? {
           runtimeError: {

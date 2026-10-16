@@ -1,12 +1,17 @@
 import { expect, test } from "bun:test";
 import { OPENVIKING_CITATION_KIND, type OpenVikingCitation } from "./memory-citations";
 import {
+  type OpenVikingExpandCommand,
+  type OpenVikingFindResponse,
+  type OpenVikingRetrieval,
   MEMORY_OFFER_BUDGET_PER_TRIGGER,
   MEMORY_READ_BUDGET_PER_TRIGGER,
   OPENVIKING_AGENT_ERROR_CODES,
   OPENVIKING_AGENT_OPERATIONS,
   OPENVIKING_AGENT_PROTOCOL,
+  OPENVIKING_ARGUMENT_EXAMPLES,
   OPENVIKING_CANDIDATE_LIMIT_MAX,
+  OPENVIKING_OPERATION_ID_RULE,
   OPENVIKING_TOOL_NAMES,
   OPENVIKING_TOOL_PROFILE,
   decodeOpenVikingAgentCommand,
@@ -33,9 +38,19 @@ test("freezes the OpenViking agent protocol, fence, tools, and turn budget", () 
     find: "ov_find",
     searchContext: "ov_search_context",
     read: "ov_read",
+    expand: "ov_expand",
     offer: "memory_offer",
+    diagnose: "memory_diagnose",
   });
-  expect(OPENVIKING_AGENT_OPERATIONS).toEqual(["find", "search_context", "read", "offer"]);
+  expect(OPENVIKING_AGENT_OPERATIONS).toEqual([
+    "find",
+    "search_context",
+    "read",
+    "expand",
+    "offer",
+    "diagnose",
+  ]);
+
   expect(MEMORY_READ_BUDGET_PER_TRIGGER).toBe(3);
   expect(MEMORY_OFFER_BUDGET_PER_TRIGGER).toBe(1);
   expect(OPENVIKING_CANDIDATE_LIMIT_MAX).toBe(10);
@@ -168,6 +183,38 @@ test("an offer may omit the channel and recipient for the server to bind", () =>
     citationRefs: ["ov:wiki/deploy"],
     body: "the last skip-tests deploy rolled back",
   });
+});
+
+test("empty arguments name the missing fields, a copyable example, and the operationId rule", () => {
+  let message = "";
+  try {
+    decodeOpenVikingAgentCommand({ protocol: OPENVIKING_AGENT_PROTOCOL, op: "find" });
+  } catch (error) {
+    message = error instanceof Error ? error.message : "";
+  }
+  expect(message).toContain("missing operationId, query");
+  expect(message).toContain(OPENVIKING_ARGUMENT_EXAMPLES.find);
+  expect(message).toContain(OPENVIKING_OPERATION_ID_RULE);
+  expect(message).toContain("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$");
+});
+
+test("an offer missing citationRefs names that field and shows an example", () => {
+  let message = "";
+  try {
+    decodeOpenVikingAgentCommand({
+      protocol: OPENVIKING_AGENT_PROTOCOL,
+      op: "offer",
+      operationId: "offer-1",
+      body: "the last deploy rolled back",
+    });
+  } catch (error) {
+    message = error instanceof Error ? error.message : "";
+  }
+  expect(message).toContain("missing citationRefs");
+  expect(message).not.toContain("missing body");
+  expect(message).not.toContain("missing operationId");
+  expect(message).toContain(OPENVIKING_ARGUMENT_EXAMPLES.offer);
+  expect(message).toContain(OPENVIKING_OPERATION_ID_RULE);
 });
 
 test("rejects a malformed command before it can cross the proxy", () => {
@@ -305,4 +352,97 @@ test("keeps agent errors sanitized and enumerated", () => {
       error: { code: "internal-db", message: "password=secret" },
     }),
   ).toBe(false);
+});
+
+test("diagnosis commands bind to a real message UUID and reject false successful status", () => {
+  const command = {
+    protocol: OPENVIKING_AGENT_PROTOCOL,
+    op: "diagnose" as const,
+    operationId: "diagnose-1",
+    messageId: "00000000-0000-4000-8000-000000000001",
+  };
+  expect(decodeOpenVikingAgentCommand(command)).toEqual(command);
+  expect(() =>
+    decodeOpenVikingAgentCommand({ ...command, messageId: "------------------------------------" }),
+  ).toThrow();
+  expect(decodeOpenVikingAgentCommand({ ...command, tenantToken: "secret" })).not.toHaveProperty(
+    "tenantToken",
+  );
+  expect(() =>
+    decodeOpenVikingAgentResponse("diagnose", {
+      protocol: OPENVIKING_AGENT_PROTOCOL,
+      op: "diagnose",
+      operationId: "diagnose-1",
+      duplicate: false,
+      status: "running",
+      published: true,
+    }),
+  ).toThrow();
+});
+
+test("decodes a graph hop from the BM25 discovery chain", () => {
+  const command: OpenVikingExpandCommand = {
+    protocol: OPENVIKING_AGENT_PROTOCOL,
+    op: "expand",
+    operationId: "hop-1",
+    chainRef: "chain-1",
+    uri: "viking://resources/causal/fork.md",
+    relation: "anchor",
+    limit: 5,
+  };
+  expect(decodeOpenVikingAgentCommand(command)).toEqual(command);
+  expect(() =>
+    decodeOpenVikingAgentCommand({ ...command, relation: "arbitrary_private_read" }),
+  ).toThrow();
+});
+
+test("BM25 discovery preserves the chain and typed graph navigation", () => {
+  const retrieval: OpenVikingRetrieval = {
+    mode: "bm25",
+    chainRef: "chain-1",
+    step: 0,
+    remainingHops: 4,
+    exhausted: false,
+    nodes: [
+      {
+        uri: citation.uri,
+        kind: "fork_overlay",
+        status: "counterfactual",
+        relations: ["anchor", "branch_steps"],
+      },
+    ],
+  };
+  const response: OpenVikingFindResponse = {
+    protocol: OPENVIKING_AGENT_PROTOCOL,
+    op: "find",
+    operationId: "find-graph",
+    duplicate: false,
+    items: [citation],
+    retrieval,
+  };
+  expect(decodeOpenVikingAgentResponse("find", response)).toEqual(response);
+});
+
+// An Offer may cite the union of several successful, individually bounded reads.
+test("decodes published offers containing citations from three full reads", () => {
+  const citations = Array.from({ length: 30 }, (_, index) => ({
+    ...citation,
+    citationId: `ov:item-${index}`,
+  }));
+  const response = decodeOpenVikingAgentResponse("offer", {
+    protocol: OPENVIKING_AGENT_PROTOCOL,
+    op: "offer",
+    operationId: "offer-union",
+    duplicate: false,
+    published: true,
+    messageId: "message-union",
+    citations,
+  });
+  expect(response).toMatchObject({ published: true, citations });
+  expect(() =>
+    decodeOpenVikingAgentResponse("offer", {
+      ...response,
+      citations: [...citations, { ...citation, kind: "untrusted" }],
+    }),
+  ).toThrow("invalid memory citation kind");
 });
