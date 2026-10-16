@@ -1,5 +1,5 @@
 import { RefreshCw01 as RefreshCw } from "@untitledui/icons";
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { useHydrated } from "@tanstack/react-router";
 
 import {
@@ -141,7 +141,7 @@ export function RuntimeUsage({
       label={label}
       trigger={resolvedTrigger}
       triggerClassName={triggerClassName ?? DEFAULT_TRIGGER_CLASS_NAME}
-      className="text-sm"
+      className="max-h-[calc(100dvh-4rem)] text-sm"
       working={usage.scanning}
     >
       {content()}
@@ -169,7 +169,10 @@ function usageBadge(
   const rateLimited =
     result.snapshot?.health === "rate_limited" ||
     result.snapshot?.primary?.status === "limit_reached" ||
-    result.snapshot?.secondary?.status === "limit_reached";
+    result.snapshot?.secondary?.status === "limit_reached" ||
+    result.snapshot?.officialGroups?.some((group) =>
+      group.buckets.some((bucket) => bucket.status === "limit_reached"),
+    ) === true;
   return rateLimited
     ? { color: "warning", label: m.computer_usage_limit_reached() }
     : { color: "success", label: m.computer_usage_badge_ok() };
@@ -214,6 +217,8 @@ export function RuntimeUsagePopoverContent({
   footer?: ReactNode;
 }) {
   const hydrated = useHydrated();
+  const notesId = useId();
+  const [notesOpen, setNotesOpen] = useState(false);
   const snapshot = data?.result?.snapshot;
   const badge = data?.result ? usageBadge(data.result) : undefined;
   const reason =
@@ -240,6 +245,9 @@ export function RuntimeUsagePopoverContent({
         return window ? [{ key, window }] : [];
       })
     : [];
+  const hasUsageNotes = Boolean(
+    snapshot?.officialDescription || snapshot?.officialGroups?.some((group) => group.description),
+  );
 
   return (
     <div className="divide-y divide-secondary">
@@ -282,24 +290,27 @@ export function RuntimeUsagePopoverContent({
 
       {showUsage && (
         <section className="px-4 py-3">
-          {/* The account band leads with what the account is (its plan, then the signed-in
-              account) rather than a "Runtime account" heading over it; the heading only stands in
-              when the runtime names neither. The badge speaks only when something needs the
-              reader — reauth, an error, a limit — since "OK" repeats the health dot that opened
-              this popover. */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="truncate text-sm font-medium text-primary">
-                {plan || accountLabel || m.computer_usage_account()}
-              </h3>
-              {accountNote && <p className="truncate text-xs text-tertiary">{accountNote}</p>}
+          {/* The account band leads with the plan, then the signed-in account. A credits note
+              counts too: Codex can report credits with no plan and no email, and that note used
+              to show under the fallback heading. The empty "Runtime account" line is omitted
+              only when the runtime names nothing and nothing is wrong. The badge speaks only
+              when something needs the reader — reauth, an error, a limit — since "OK" repeats
+              the health dot that opened this popover. */}
+          {(plan || accountLabel || accountNote || (badge && badge.color !== "success")) && (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium text-primary">
+                  {plan || accountLabel || m.computer_usage_account()}
+                </h3>
+                {accountNote && <p className="truncate text-xs text-tertiary">{accountNote}</p>}
+              </div>
+              {badge && badge.color !== "success" && (
+                <Badge color={badge.color} size="sm" className="shrink-0">
+                  {badge.label}
+                </Badge>
+              )}
             </div>
-            {badge && badge.color !== "success" && (
-              <Badge color={badge.color} size="sm" className="shrink-0">
-                {badge.label}
-              </Badge>
-            )}
-          </div>
+          )}
           {reading ? (
             <div aria-label={m.computer_usage_reading()} className="mt-3 space-y-3">
               <Skeleton className="h-3 w-full" />
@@ -308,18 +319,85 @@ export function RuntimeUsagePopoverContent({
           ) : (
             <>
               {reason && <p className="mt-2 text-sm text-tertiary">{reason}</p>}
-              {windows.length > 0 && (
-                <div className="mt-3 space-y-3">
-                  {windows.map(({ key, window }) => (
-                    <UsageWindow
-                      key={key}
-                      label={usageWindowLabel(runtime.provider, key, window)}
-                      window={window}
-                      creditUsage={key === "primary" ? snapshot?.creditUsage : undefined}
-                      timeZone={timeZone}
-                    />
+              {snapshot?.officialGroups && snapshot.officialGroups.length > 0 ? (
+                // Default rows are the group name, window, remaining share, and reset. The
+                // provider's notes stay on the snapshot and open from this button: a tooltip
+                // inside the peek would close it (task #258). Per-bucket sentences are not
+                // painted; they repeat the reset already on the row.
+                <div className="mt-3 space-y-4">
+                  {snapshot.officialGroups.map((group, index) => (
+                    <div key={`${group.name ?? "group"}-${index}`} className="space-y-3">
+                      {group.name && (
+                        <h4 className="text-sm font-medium break-words text-primary">
+                          {group.name}
+                        </h4>
+                      )}
+                      {group.buckets.map((bucket, bucketIndex) => (
+                        <UsageWindow
+                          key={bucket.id ?? `${bucket.window ?? "bucket"}-${bucketIndex}`}
+                          label={bucket.name ?? bucket.window ?? m.computer_usage_available()}
+                          window={{
+                            // The official name says how much is left, so the meter is
+                            // `remainingFraction`, not the derived used share.
+                            ...officialMeter(bucket),
+                            ...(bucket.status ? { status: bucket.status } : {}),
+                            ...(bucket.resetsAt ? { resetsAt: bucket.resetsAt } : {}),
+                          }}
+                          timeZone={timeZone}
+                        />
+                      ))}
+                    </div>
                   ))}
+                  {hasUsageNotes && (
+                    <div>
+                      <Button
+                        size="sm"
+                        color="link-gray"
+                        aria-expanded={notesOpen}
+                        aria-controls={notesId}
+                        onPress={() => setNotesOpen((open) => !open)}
+                      >
+                        {notesOpen ? m.computer_usage_hide_notes() : m.computer_usage_notes()}
+                      </Button>
+                      {notesOpen && (
+                        <div id={notesId} className="mt-2 space-y-2">
+                          {snapshot.officialDescription && (
+                            <p className="text-xs break-words text-tertiary">
+                              {snapshot.officialDescription}
+                            </p>
+                          )}
+                          {snapshot.officialGroups.map((group, index) =>
+                            group.description ? (
+                              <p
+                                key={`${group.name ?? "note"}-${index}`}
+                                className="text-xs break-words text-tertiary"
+                              >
+                                {group.name && (
+                                  <span className="font-medium text-secondary">{group.name}. </span>
+                                )}
+                                {group.description}
+                              </p>
+                            ) : null,
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
+              ) : (
+                windows.length > 0 && (
+                  <div className="mt-3 space-y-3">
+                    {windows.map(({ key, window }) => (
+                      <UsageWindow
+                        key={key}
+                        label={usageWindowLabel(runtime.provider, key, window)}
+                        window={window}
+                        creditUsage={key === "primary" ? snapshot?.creditUsage : undefined}
+                        timeZone={timeZone}
+                      />
+                    ))}
+                  </div>
+                )
               )}
             </>
           )}
@@ -331,6 +409,18 @@ export function RuntimeUsagePopoverContent({
   );
 }
 
+/** Percent the meter draws for one official bucket. A remaining fraction wins, because the
+ * provider's bucket name is the remaining label (`Weekly Limit Remaining`). */
+function officialMeter(bucket: { remainingFraction?: number; usedPercent?: number }): {
+  usedPercent?: number;
+} {
+  if (bucket.remainingFraction === undefined) {
+    return bucket.usedPercent !== undefined ? { usedPercent: bucket.usedPercent } : {};
+  }
+  const remaining = Math.min(1, Math.max(0, bucket.remainingFraction));
+  return { usedPercent: Math.round(remaining * 10_000) / 100 };
+}
+
 function UsageWindow({
   label,
   window,
@@ -338,7 +428,11 @@ function UsageWindow({
   timeZone,
 }: {
   label: string;
-  window: NonNullable<NonNullable<UsageResultRecord["snapshot"]>["primary"]>;
+  window: {
+    usedPercent?: number;
+    status?: "ok" | "limit_reached" | "parse_unavailable";
+    resetsAt?: string;
+  };
   creditUsage?: NonNullable<UsageResultRecord["snapshot"]>["creditUsage"];
   timeZone: string | null;
 }) {

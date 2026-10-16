@@ -49,11 +49,38 @@ export type UsageWindow = Readonly<{
   /** ISO instant; omitted only for a `parse_unavailable` window with no readable reset. */
   resetsAt?: string;
 }>;
+/** One bucket as the provider returned it. `remainingFraction` is the official share left.
+ * `usedPercent`, `status`, and `windowDurationMinutes` are derived beside it and do not replace it. */
+export type UsageOfficialBucket = Readonly<{
+  id?: string;
+  name?: string;
+  description?: string;
+  /** Official window key, such as `5h` or `weekly`. */
+  window?: string;
+  /** Official remaining fraction, from 0 to 1. */
+  remainingFraction?: number;
+  usedPercent?: number;
+  status?: UsageWindowStatus;
+  windowDurationMinutes?: number;
+  resetsAt?: string;
+}>;
+/** One official quota group. Older Computers omit `officialGroups` and send only the two windows. */
+export type UsageOfficialGroup = Readonly<{
+  name?: string;
+  description?: string;
+  buckets: readonly UsageOfficialBucket[];
+}>;
 export type UsageSnapshot = Readonly<{
   provider: RuntimeProvider;
   planType?: string;
   primary?: UsageWindow;
   secondary?: UsageWindow;
+  /** Every official group the provider returned. Present beside `primary` and `secondary`,
+   * which stay so an older Web can still read the two-window summary. */
+  officialGroups?: readonly UsageOfficialGroup[];
+  /** The provider's own note above those groups, such as Antigravity's `command.data.description`.
+   * Omitted when the provider sent none. */
+  officialDescription?: string;
   credits?: Readonly<{ hasCredits: boolean; unlimited: boolean }>;
   /** Included credits consumed, included limit, and separately billed overage. */
   creditUsage?: Readonly<{ used: number; limit: number; overage: number }>;
