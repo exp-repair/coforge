@@ -17,6 +17,7 @@ import type {
   GitHubCredentialResponse,
   GitHubCommitTrailersRequest,
   GitHubCommitTrailersResponse,
+  AgentManualErrorCode,
   AgentManualGetRequest,
   AgentManualGetResponse,
   AgentManualSearchRequest,
@@ -29,6 +30,7 @@ import type {
   AgentProfileUpdateRequest,
   AgentProfileUpdateResponse,
   AgentProfileErrorCode,
+  AgentMentionActionErrorCode,
   AgentAppConfigErrorCode,
   AgentAppConfigGetRequest,
   AgentAppConfigResponse,
@@ -58,6 +60,8 @@ import type {
 } from "@lrm/coforge-sdk/internal";
 import { AGENT_SEND_REQUEST_TIMEOUT_MS } from "@lrm/coforge-sdk/internal";
 import { AgentTransportError } from "./agent-transport-error";
+import { AgentManualRequestError } from "./agent-manual-request-error";
+import { AgentMentionActionRequestError } from "./agent-mention-action-request-error";
 import { AgentUserInfoRequestError } from "./agent-user-info-request-error";
 import { AgentProfileRequestError } from "./agent-profile-request-error";
 import { AgentAppConfigRequestError } from "./agent-app-config-request-error";
@@ -71,9 +75,7 @@ import {
   fetchAgentResponse,
   getAgentEnvelopeJson,
   getAgentJson,
-  getAgentManualJson,
   isRecord,
-  mentionActionError,
   postAgentEnvelopeJson,
   readUpstreamErrorCode,
   sendAgentJson,
@@ -358,6 +360,22 @@ export interface AgentWeeklyReportMemoryHttpClient {
   ): Promise<import("./weekly-report-memory").WeeklyReportMemoryResult>;
 }
 
+function manualRequestError(errorCode: string, message: string, status: number): Error {
+  return new AgentManualRequestError(errorCode as AgentManualErrorCode, message, status);
+}
+
+function profileRequestError(errorCode: string, message: string, status: number): Error {
+  return new AgentProfileRequestError(errorCode as AgentProfileErrorCode, message, status);
+}
+
+function mentionActionError(errorCode: string, message: string, status: number): Error {
+  return new AgentMentionActionRequestError(
+    errorCode as AgentMentionActionErrorCode,
+    message,
+    status,
+  );
+}
+
 const appConfigError = (errorCode: string, message: string, status: number) =>
   new AgentAppConfigRequestError(errorCode as AgentAppConfigErrorCode, message, status);
 
@@ -485,17 +503,25 @@ export const createAgentMessageHttpClient = (
     return { ...data, idempotencyKey: request.idempotencyKey };
   },
   requestManualGet: ({ request, ...keys }) =>
-    getAgentManualJson<AgentManualGetResponse>(httpClient, {
-      ...keys,
-      what: "agent manual get",
-      query: { topic: request.topic, intent: request.intent, reason: request.reason },
-    }),
+    getAgentEnvelopeJson<AgentManualGetResponse>(
+      httpClient,
+      {
+        ...keys,
+        what: "agent manual get",
+        query: { topic: request.topic, intent: request.intent, reason: request.reason },
+      },
+      manualRequestError,
+    ),
   requestManualSearch: ({ request, ...keys }) =>
-    getAgentManualJson<AgentManualSearchResponse>(httpClient, {
-      ...keys,
-      what: "agent manual search",
-      query: { query: request.query, intent: request.intent, reason: request.reason },
-    }),
+    getAgentEnvelopeJson<AgentManualSearchResponse>(
+      httpClient,
+      {
+        ...keys,
+        what: "agent manual search",
+        query: { query: request.query, intent: request.intent, reason: request.reason },
+      },
+      manualRequestError,
+    ),
   requestUserInfo: ({ request: _request, ...keys }) =>
     getAgentEnvelopeJson<AgentUserInfoResponse>(
       httpClient,
@@ -507,15 +533,13 @@ export const createAgentMessageHttpClient = (
     getAgentEnvelopeJson<AgentProfileShowResponse>(
       httpClient,
       { ...keys, what: "agent profile show", query: { target: request.target } },
-      (errorCode, message, status) =>
-        new AgentProfileRequestError(errorCode as AgentProfileErrorCode, message, status),
+      profileRequestError,
     ),
   requestProfileUpdate: ({ request, ...keys }) =>
     postAgentEnvelopeJson<AgentProfileUpdateResponse>(
       httpClient,
       { ...keys, what: "agent profile update", body: request },
-      (errorCode, message, status) =>
-        new AgentProfileRequestError(errorCode as AgentProfileErrorCode, message, status),
+      profileRequestError,
     ),
   requestAppConfigGet: ({ request: _request, ...keys }) =>
     getAgentEnvelopeJson<AgentAppConfigResponse>(
