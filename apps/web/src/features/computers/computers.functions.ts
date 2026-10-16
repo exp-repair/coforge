@@ -21,6 +21,7 @@ import {
   scanUsageInputSchema,
   setRuntimeVisibilityInputSchema,
   updateComputerDisplayNameInputSchema,
+  formatCloudComputerInputSchema,
 } from "./computer.schemas";
 import { declareNoStore } from "#src/features/no-store-response.server";
 import {
@@ -493,6 +494,28 @@ export const updateComputerDisplayName = createServerFn({ method: "POST" })
     });
     if (result.count !== 1) throw new Error("Computer is not available");
     return { displayName: data.displayName };
+  });
+
+/** Queues a disk format for the owner's cloud computer. The typed name is checked again. */
+export const formatCloudComputer = createServerFn({ method: "POST" })
+  .middleware([workspaceUserMiddleware])
+  .validator(formatCloudComputerInputSchema)
+  .handler(async ({ context: { user, db, workspaceId }, data }) => {
+    try {
+      await productionCloudComputers(db).format({
+        userId: user.id,
+        workspaceId,
+        computerId: data.computerId,
+        confirmName: data.confirmName,
+        now: new Date(),
+      });
+    } catch (error) {
+      if (error instanceof HostJobError || error instanceof HostDirectoryError) {
+        throw new Error(error.message);
+      }
+      throw error;
+    }
+    return { formatted: true as const };
   });
 
 /** Permanently removes an owner's Computer record after all of its Agents are soft-deleted. */
