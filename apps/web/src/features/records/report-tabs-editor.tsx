@@ -479,14 +479,14 @@ export function ReportTabsEditor({
         </div>
       ) : trailingActive ? (
         (renderTrailingTab?.(activeTab) ?? null)
-      ) : editableTabs ? (
+      ) : editableTabs && activeTab ? (
         <LeaderFormatSectionsEditor
           key={`${activeTab}:${contentRevision}`}
           defaultValue={activeContent}
           onUpdate={updateMarkdown}
           onBlur={onBlur}
         />
-      ) : (
+      ) : editableTabs ? null : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <RecordsReadingColumn className="pt-5">
             <ReportSectionEditor

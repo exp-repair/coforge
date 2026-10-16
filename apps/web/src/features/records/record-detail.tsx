@@ -56,6 +56,7 @@ import {
   isValidTemplateName,
   isWeekSendDismissed,
   normalizeReportContent,
+  reportTabsEqual,
   withoutWeekSendDismissed,
   reportContentToMarkdown,
   withAssignmentUnread,
@@ -230,6 +231,12 @@ function ReportDetail({
   const sendAckTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [sendAck, setSendAck] = useState(false);
   const sent = status === "submitted" || status === "shared";
+  const receivedBaseline = useMemo(() => {
+    if (!memberAssignee) return null;
+    return normalizeReportContent(report.content).received?.tabs ?? null;
+  }, [memberAssignee, report.content]);
+  const assignmentUnchanged =
+    receivedBaseline != null && reportTabsEqual(content, { tabs: receivedBaseline });
   const catalog = recordsRoute.useLoaderData();
   const readingScroll = leaderReading && sent;
   const neighbors = readingScroll
@@ -354,7 +361,7 @@ function ReportDetail({
   }
 
   async function submitReport() {
-    if (submitInFlightRef.current) return;
+    if (submitInFlightRef.current || assignmentUnchanged) return;
     submitInFlightRef.current = true;
     clearScheduledPersist();
     try {
@@ -619,6 +626,7 @@ function ReportDetail({
                       color="primary"
                       className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
                       preventFocusOnPress
+                      isDisabled={assignmentUnchanged}
                       onPress={() => void submitReport()}
                     >
                       {sent ? m.records_report_resend() : m.records_report_send()}
@@ -637,14 +645,15 @@ function ReportDetail({
                   className={favorited ? "text-brand-secondary" : undefined}
                   onClick={() => void toggleFavorite()}
                 />
-                <ButtonUtility
-                  size="sm"
-                  color="tertiary"
-                  icon={Message}
-                  aria-label={m.records_side_chat()}
-                  aria-pressed={sideOpen}
-                  onClick={() => setSideOpen((open) => !open)}
-                />
+                {sideOpen ? null : (
+                  <ButtonUtility
+                    size="sm"
+                    color="tertiary"
+                    icon={Message}
+                    aria-label={m.records_side_chat()}
+                    onClick={() => setSideOpen(true)}
+                  />
+                )}
                 <Dropdown.Root>
                   <ButtonUtility
                     size="sm"
@@ -1086,16 +1095,6 @@ function TemplateReportDetail({
               <div className="ml-auto flex shrink-0 items-center gap-1">
                 {isOverview ? null : (
                   <>
-                    {hasUnsavedEdits ? (
-                      <Button
-                        size="sm"
-                        color="secondary"
-                        isDisabled={saving || sending}
-                        onPress={() => void saveFormatEdits()}
-                      >
-                        {m.records_report_save()}
-                      </Button>
-                    ) : null}
                     <Button
                       size="sm"
                       color="primary"
@@ -1111,16 +1110,27 @@ function TemplateReportDetail({
                     >
                       {m.records_report_send()}
                     </Button>
+                    {hasUnsavedEdits ? (
+                      <Button
+                        size="sm"
+                        color="secondary"
+                        isDisabled={saving || sending}
+                        onPress={() => void saveFormatEdits()}
+                      >
+                        {m.records_report_save()}
+                      </Button>
+                    ) : null}
                   </>
                 )}
-                <ButtonUtility
-                  size="sm"
-                  color="tertiary"
-                  icon={Message}
-                  aria-label={m.records_side_chat()}
-                  aria-pressed={sideOpen}
-                  onClick={() => setSideOpen((open) => !open)}
-                />
+                {sideOpen ? null : (
+                  <ButtonUtility
+                    size="sm"
+                    color="tertiary"
+                    icon={Message}
+                    aria-label={m.records_side_chat()}
+                    onClick={() => setSideOpen(true)}
+                  />
+                )}
                 {isOverview ? (
                   isOverviewLeader ? (
                     <Dropdown.Root>
@@ -1149,9 +1159,11 @@ function TemplateReportDetail({
                     />
                     <Dropdown.Popover placement="bottom end" className="w-44">
                       <Dropdown.Menu
-                        onAction={() =>
-                          void persist(clearReportContent(contentRef.current), "draft")
-                        }
+                        onAction={() => {
+                          const next = clearReportContent(contentRef.current);
+                          markLocalContent(next);
+                          void persist(next, "draft");
+                        }}
                       >
                         <Dropdown.Item id="clear" icon={Trash} label={m.records_report_clear()} />
                       </Dropdown.Menu>

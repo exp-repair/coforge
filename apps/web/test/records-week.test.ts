@@ -61,7 +61,7 @@ test("report body is split into named display pages", () => {
   expect(emptyReportContent()).toEqual({ tabs: { Summary: { markdown: "" } } });
   const content = normalizeReportContent({ markdown: "done item" });
   expect(content.tabs?.Summary?.markdown).toBe("done item");
-  expect(clearReportContent(content)).toEqual({ tabs: { Summary: { markdown: "" } } });
+  expect(clearReportContent(content)).toEqual({ tabs: {} });
 });
 
 test("template names accept the Foundation Models Weekly format name", () => {

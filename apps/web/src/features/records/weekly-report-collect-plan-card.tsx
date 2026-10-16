@@ -31,6 +31,7 @@ import {
   listWeeklyReportCollectorSlots,
   submitWeeklyReportCollectPlan,
 } from "./records.functions";
+import { collectPlanSubmitBlocked } from "./weekly-report-collect-plan";
 import { RECORDS_PRIMARY_BUTTON_CLASSNAME } from "./records-primary-button";
 
 /** Selected state uses the same neutral black fill as Records primary buttons. */
@@ -198,8 +199,10 @@ export function WeeklyReportCollectPlanCard(props: {
     }
   }
 
+  const submitBlocked = collectPlanSubmitBlocked(slots, selected);
+
   async function onSubmit() {
-    if (busy || props.disabled) return;
+    if (busy || props.disabled || submitBlocked) return;
     if (selected.some((id) => !slots.find((slot) => slot.computerId === id)?.ready)) {
       setError(m.records_collect_plan_not_ready());
       return;
@@ -459,11 +462,7 @@ export function WeeklyReportCollectPlanCard(props: {
           size="md"
           color="primary"
           className={`px-8 ${RECORDS_PRIMARY_BUTTON_CLASSNAME}`}
-          isDisabled={
-            busy ||
-            props.disabled ||
-            selected.some((id) => !slots.find((slot) => slot.computerId === id)?.ready)
-          }
+          isDisabled={busy || props.disabled || submitBlocked}
           isLoading={busy}
           onPress={() => void onSubmit()}
         >

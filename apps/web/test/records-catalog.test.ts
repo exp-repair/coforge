@@ -836,6 +836,47 @@ test("dismissWeeklyFormatSend stamps the current ISO week so a stale cycle canno
   });
 });
 
+test("saveReportContent rejects a member submit that still matches the received template", async () => {
+  let updated = false;
+  const db = {
+    workspaceMembership: {
+      findUnique: async () => ({ role: "member" }),
+    },
+    weeklyReport: {
+      findFirst: async () => ({
+        id: "assignment-1",
+        authorId: "member-a",
+        kind: "member",
+        status: "draft",
+        hiddenFromAuthor: false,
+        settingsId: null,
+        sourceTemplateId: "parent-1",
+        content: {
+          tabs: { Summary: { markdown: "## Work Summary\n" } },
+          received: { tabs: { Summary: { markdown: "## Work Summary\n" } } },
+        },
+        cycle: { year: 2026, week: 38 },
+        submissions: [],
+      }),
+      update: async () => {
+        updated = true;
+        return { id: "assignment-1", status: "submitted", updatedAt: new Date() };
+      },
+    },
+  } as unknown as PrismaClient;
+
+  await expect(
+    new RecordCatalog(db).saveReportContent({
+      workspaceId: "workspace-1",
+      userId: "member-a",
+      reportId: "assignment-1",
+      content: { tabs: { Summary: { markdown: "## Work Summary\n" } } },
+      status: "submitted",
+    }),
+  ).rejects.toThrow("weekly-report-unmodified");
+  expect(updated).toBe(false);
+});
+
 test("saveReportContent rejects when a Leader edits a submitted member assignment", async () => {
   let updated = false;
   const db = {

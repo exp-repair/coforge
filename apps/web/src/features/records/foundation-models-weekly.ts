@@ -1,6 +1,6 @@
 import type { TemplateOutlineSection } from "./template-outline-sections";
 
-/** The outline behind “Use Foundation Models Weekly format”. */
+/** The outline a new weekly template starts with. */
 export const FOUNDATION_MODELS_WEEKLY_SECTIONS: TemplateOutlineSection[] = [
   { title: "Summary", children: ["Work Summary", "Next Steps"] },
   { title: "Technique", children: ["Technique"] },

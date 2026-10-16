@@ -8,6 +8,7 @@ import {
   memberWeekTitle,
   normalizeReportContent,
   withAssignmentUnread,
+  withReceivedSnapshot,
   withoutWeekSendDismissed,
   isAutoSendCancelled,
 } from "#src/features/records/records-content";
@@ -145,7 +146,7 @@ export async function distributeWeeklyReport(
         kind: "member",
         title: memberReportTitle(humanLabel(member), year, week),
         status: "draft",
-        content: withAssignmentUnread(content, true) as Prisma.InputJsonValue,
+        content: withAssignmentUnread(withReceivedSnapshot(content), true) as Prisma.InputJsonValue,
       })),
       select: { id: true, authorId: true },
     });

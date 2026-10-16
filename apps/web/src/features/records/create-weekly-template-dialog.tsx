@@ -1,15 +1,14 @@
 import { humanLabel } from "#src/lib/human-label";
 import {
-  useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useState,
   type FormEvent,
-  type Key,
   type ReactNode,
 } from "react";
 import { XClose as X } from "@untitledui/icons";
-import { Heading } from "react-aria-components";
+import { Heading, type Key } from "react-aria-components";
 
 import { BadgeWithButton } from "#src/components/base/badges/badges";
 import { Button } from "#src/components/base/buttons/button";
@@ -34,6 +33,13 @@ const SEND_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 function emptySection(): TemplateOutlineSection {
   return { title: "", children: [] };
+}
+
+function foundationModelsSections(): TemplateOutlineSection[] {
+  return FOUNDATION_MODELS_WEEKLY_SECTIONS.map((section) => ({
+    ...section,
+    children: [...section.children],
+  }));
 }
 
 export type CreateWeeklyTemplateInput = {
@@ -63,9 +69,9 @@ export function CreateWeeklyTemplateDialog({
   initial?: WeeklyTemplateDraft | null;
 }) {
   const editing = Boolean(initial);
-  const [name, setName] = useState("");
-  const [sections, setSections] = useState<TemplateOutlineSection[]>([emptySection()]);
-  const [allMembers, setAllMembers] = useState(false);
+  const [name, setName] = useState(FOUNDATION_MODELS_WEEKLY_TEMPLATE_NAME);
+  const [sections, setSections] = useState<TemplateOutlineSection[]>(foundationModelsSections);
+  const [allMembers, setAllMembers] = useState(true);
   const [recipientIds, setRecipientIds] = useState<string[]>([]);
   const [recipientQuery, setRecipientQuery] = useState("");
   const [frequency] = useState<"weekly">("weekly");
@@ -90,9 +96,9 @@ export function CreateWeeklyTemplateDialog({
   }, [recipientQuery, members]);
 
   function reset() {
-    setName("");
-    setSections([emptySection()]);
-    setAllMembers(false);
+    setName(FOUNDATION_MODELS_WEEKLY_TEMPLATE_NAME);
+    setSections(foundationModelsSections());
+    setAllMembers(true);
     setRecipientIds([]);
     setRecipientQuery("");
     setSendTime("15:00");
@@ -100,22 +106,6 @@ export function CreateWeeklyTemplateDialog({
     setEnabled(true);
     setNameError(false);
     setSaving(false);
-  }
-
-  function applyFoundationModelsPreset() {
-    setName(FOUNDATION_MODELS_WEEKLY_TEMPLATE_NAME);
-    setSections(
-      FOUNDATION_MODELS_WEEKLY_SECTIONS.map((section) => ({
-        ...section,
-        children: [...section.children],
-      })),
-    );
-    setAllMembers(true);
-    setRecipientIds([]);
-    setSendWeekday(5);
-    setSendTime("15:00");
-    setEnabled(true);
-    setNameError(false);
   }
 
   function applyInitial(template: WeeklyTemplateDraft | null | undefined) {
@@ -138,7 +128,7 @@ export function CreateWeeklyTemplateDialog({
 
   const resetDraft = useEffectEvent(() => applyInitial(initial));
   const initialId = initial?.id;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (open) resetDraft();
   }, [open, initialId]);
 
@@ -196,23 +186,38 @@ export function CreateWeeklyTemplateDialog({
     );
   }
 
+  const selectedRecipientKeys = allMembers
+    ? new Set<Key>(["all", ...filteredMembers.map((member) => member.userId)])
+    : new Set<Key>(recipientIds);
+
   function toggleRecipient(userId: string | "all") {
     if (userId === "all") {
       setAllMembers((current) => !current);
       setRecipientIds([]);
       return;
     }
+    if (allMembers) {
+      setAllMembers(false);
+      setRecipientIds(members.map((member) => member.userId).filter((id) => id !== userId));
+      return;
+    }
+    const next = recipientIds.includes(userId)
+      ? recipientIds.filter((id) => id !== userId)
+      : [...recipientIds, userId];
+    if (members.length > 0 && members.every((member) => next.includes(member.userId))) {
+      setAllMembers(true);
+      setRecipientIds([]);
+      return;
+    }
     setAllMembers(false);
-    setRecipientIds((current) =>
-      current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId],
-    );
+    setRecipientIds(next);
   }
 
   function onRecipientSelectionChange(keys: "all" | Set<Key>) {
     if (keys === "all") return;
-    const previous = allMembers ? new Set<Key>(["all"]) : new Set<Key>(recipientIds);
     const changed =
-      [...keys].find((key) => !previous.has(key)) ?? [...previous].find((key) => !keys.has(key));
+      [...keys].find((key) => !selectedRecipientKeys.has(key)) ??
+      [...selectedRecipientKeys].find((key) => !keys.has(key));
     if (changed !== undefined) toggleRecipient(changed === "all" ? "all" : String(changed));
   }
 
@@ -290,16 +295,6 @@ export function CreateWeeklyTemplateDialog({
                   <p className="text-sm font-semibold text-primary">
                     {m.records_template_details()}
                   </p>
-                  {!editing ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      color="secondary"
-                      onPress={applyFoundationModelsPreset}
-                    >
-                      {m.records_template_use_foundation_preset()}
-                    </Button>
-                  ) : null}
 
                   <Input
                     label={m.records_template_name()}
@@ -423,7 +418,7 @@ export function CreateWeeklyTemplateDialog({
                           <Dropdown.Menu
                             aria-label={m.records_template_recipients_title()}
                             selectionMode="multiple"
-                            selectedKeys={allMembers ? new Set(["all"]) : new Set(recipientIds)}
+                            selectedKeys={selectedRecipientKeys}
                             onSelectionChange={onRecipientSelectionChange}
                             className="max-h-64 overflow-y-auto"
                           >
@@ -511,7 +506,7 @@ export function CreateWeeklyTemplateDialog({
                     className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
                     isDisabled={saving}
                   >
-                    {m.records_template_save()}
+                    {editing ? m.records_template_save() : m.records_template_create()}
                   </Button>
                 </div>
               </form>

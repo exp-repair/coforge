@@ -57,13 +57,7 @@ export function LeaderFormatSectionsEditor({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <RecordsReadingColumn className="space-y-3">
         {blocks.length === 0 ? (
-          <Button
-            type="button"
-            size="sm"
-            color="link-gray"
-            iconLeading={Plus}
-            onPress={() => addAfter(-1)}
-          >
+          <Button type="button" size="sm" color="link-gray" onPress={() => addAfter(-1)}>
             {m.records_template_add_heading_level_two()}
           </Button>
         ) : null}

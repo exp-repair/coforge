@@ -126,6 +126,11 @@ export type ReportContent = {
    */
   assistantDraft?: { tabs: Record<string, ReportTab> };
   /**
+   * Body the member received with the assignment. Working `tabs` must differ
+   * from this snapshot before the member can send.
+   */
+  received?: { tabs: Record<string, ReportTab> };
+  /**
    * The body before the latest assistant insert, and that insert. `showing`
    * is which one `tabs` currently displays. Author edits stay on the side
    * they were made until the author switches.
@@ -473,17 +478,13 @@ export function alignReportContentToTemplate(
   );
 }
 
-/** Clear every display page without removing the page structure. */
+/** Remove every heading: level-1 pages and the level-2 blocks stored in their markdown. */
 export function clearReportContent(content: ReportContent): ReportContent {
   const normalized = normalizeReportContent(content);
   return withBodyRestore(
     withAssistantDraft(
       withOptionalMeta(
-        {
-          tabs: Object.fromEntries(
-            Object.keys(normalized.tabs ?? {}).map((name) => [name, { markdown: "" }]),
-          ),
-        },
+        { tabs: {} },
         normalized.assignment,
         normalized.schedule,
         normalized.keyPointPrompts,
@@ -508,6 +509,7 @@ export function normalizeReportContent(value: unknown): ReportContent {
     delivered?: unknown;
     assistantDraft?: unknown;
     bodyRestore?: unknown;
+    received?: unknown;
   };
   const assignment = parseAssignmentMeta(record.assignment);
   const schedule = parseScheduleMeta(record.schedule);
@@ -516,15 +518,17 @@ export function normalizeReportContent(value: unknown): ReportContent {
   const delivered = parseDeliveredBody(record.delivered);
   const assistantDraft = parseDeliveredBody(record.assistantDraft);
   const bodyRestore = parseBodyRestore(record.bodyRestore);
+  const received = parseSnapshotBody(record.received);
 
   if (record.tabs && typeof record.tabs === "object") {
     const tabs = parseReportTabs(record.tabs);
-    const base = tabs ? { tabs } : emptyReportContent();
+    const base = tabs ? { tabs } : { tabs: {} };
     return finishReportContent(
       withOptionalMeta(base, assignment, schedule, keyPointPrompts, keyPointExtraction),
       delivered,
       assistantDraft,
       bodyRestore,
+      received,
     );
   }
 
@@ -540,6 +544,7 @@ export function normalizeReportContent(value: unknown): ReportContent {
       delivered,
       assistantDraft,
       bodyRestore,
+      received,
     );
   }
   return finishReportContent(
@@ -553,6 +558,7 @@ export function normalizeReportContent(value: unknown): ReportContent {
     delivered,
     assistantDraft,
     bodyRestore,
+    received,
   );
 }
 
@@ -561,11 +567,23 @@ function finishReportContent(
   delivered: { tabs: Record<string, ReportTab> } | undefined,
   assistantDraft: { tabs: Record<string, ReportTab> } | undefined,
   bodyRestore: ReportBodyRestore | undefined,
+  received: { tabs: Record<string, ReportTab> } | undefined,
 ): ReportContent {
-  return withBodyRestore(
-    withAssistantDraft(withDeliveredBody(content, delivered), assistantDraft),
-    bodyRestore,
+  return withReceivedBody(
+    withBodyRestore(
+      withAssistantDraft(withDeliveredBody(content, delivered), assistantDraft),
+      bodyRestore,
+    ),
+    received,
   );
+}
+
+function withReceivedBody(
+  content: ReportContent,
+  received: { tabs: Record<string, ReportTab> } | undefined,
+): ReportContent {
+  if (!received) return content;
+  return { ...content, received };
 }
 
 function parseSnapshotBody(value: unknown): { tabs: Record<string, ReportTab> } | undefined {
@@ -720,6 +738,22 @@ export function reportTabsEqual(left: ReportContent, right: ReportContent): bool
   const a = normalizeReportContent(left).tabs ?? {};
   const b = normalizeReportContent(right).tabs ?? {};
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Remember the body a member received, so later edits can be told apart from it. */
+export function withReceivedSnapshot(content: ReportContent): ReportContent {
+  const normalized = normalizeReportContent(content);
+  const tabs = Object.fromEntries(
+    Object.entries(normalized.tabs ?? {}).map(([name, tab]) => [name, { markdown: tab.markdown }]),
+  );
+  return { ...normalized, received: { tabs } };
+}
+
+/** True when the working body is still the one the member received. */
+export function memberReportMatchesReceived(content: ReportContent): boolean {
+  const normalized = normalizeReportContent(content);
+  if (!normalized.received) return false;
+  return reportTabsEqual(normalized, { tabs: normalized.received.tabs });
 }
 
 export function isAutoSendCancelled(content: ReportContent, year: number, week: number): boolean {
