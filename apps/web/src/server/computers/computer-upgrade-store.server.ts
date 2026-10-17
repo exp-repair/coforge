@@ -155,6 +155,10 @@ export class RedisComputerUpgradeStore {
       const failed = { requestId, status: "failed" as const, reason: "timeout" as const };
       if (await this.replace(scope, requestId, failed)) return failed;
     }
+    if (current.status === "accepted") {
+      const completed = await this.completeFromIdentity(scope, requestId, raw, current);
+      if (completed) return this.public(completed);
+    }
     return this.public(current);
   }
   async ready(scope: Scope, identity: Identity, recoveredIds: readonly string[]) {
@@ -194,6 +198,31 @@ export class RedisComputerUpgradeStore {
     const raw = await this.redis.get(this.identityKey(scope));
     if (!raw || !this.parseIdentity(raw)) return;
     await this.redis.send("EVAL", [STORE_NEWER_IDENTITY, "1", this.identityKey(scope), raw]);
+  }
+  private async completeFromIdentity(
+    scope: Scope,
+    requestId: string,
+    raw: string,
+    current: Stored,
+  ): Promise<Stored | undefined> {
+    if (current.status !== "accepted") return undefined;
+    const identity = await this.identity(scope);
+    if (
+      !identity ||
+      current.previousWorkerInstanceId === identity.workerInstanceId ||
+      current.expectedVersion !== identity.computerVersion ||
+      identity.computerVersion !== identity.daemonVersion
+    )
+      return undefined;
+    const record: Stored = {
+      requestId,
+      status: "completed",
+      expectedVersion: current.expectedVersion,
+      ...identity,
+      completedAt: new Date(this.now()).toISOString(),
+    };
+    if (await this.commitReady(scope, requestId, raw, identity, record)) return record;
+    return undefined;
   }
   private async storeNewerIdentity(scope: Scope, identity: Identity) {
     await this.redis.send("EVAL", [

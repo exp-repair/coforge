@@ -1,6 +1,11 @@
 import { HostDirectory, HostDirectoryError } from "./host-directory.server";
+import { parseHostImageReport, type CloudImageInventory } from "./cloud-image-inventory.server";
 
-export function createHostHttpHandler(dependencies: { directory: HostDirectory; now: () => Date }) {
+export function createHostHttpHandler(dependencies: {
+  directory: HostDirectory;
+  now: () => Date;
+  images?: Pick<CloudImageInventory, "replace">;
+}) {
   return {
     register: (request: Request) => registerHost(request, dependencies),
     heartbeat: (request: Request) => heartbeatHost(request, dependencies),
@@ -30,7 +35,11 @@ async function registerHost(
 
 async function heartbeatHost(
   request: Request,
-  dependencies: { directory: HostDirectory; now: () => Date },
+  dependencies: {
+    directory: HostDirectory;
+    now: () => Date;
+    images?: Pick<CloudImageInventory, "replace">;
+  },
 ): Promise<Response> {
   const token = bearerToken(request);
   if (!token) return invalidHostToken();
@@ -42,6 +51,8 @@ async function heartbeatHost(
       accepting: body.accepting,
       now: dependencies.now(),
     });
+    const snapshot = parseHostImageReport(body);
+    if (snapshot && dependencies.images) await dependencies.images.replace(snapshot);
     return Response.json(host);
   } catch (error) {
     return hostError(error);

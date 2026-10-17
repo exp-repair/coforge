@@ -31,9 +31,11 @@ gh workflow run release-staging.yml --repo lrm-lab/coforge --ref main
 ./scripts/build-swarm.sh
 ```
 
-脚本从 staging 发布源下载 `linux-x64` 的 `coforge-computer`，校验和通过后打标签 `coforge-computer:staging`。镜像入口是 `coforge-computer foreground`。`host` 创建服务时不覆盖命令，也不在启动时执行 `setup --workspace`。`PATH` 上有 `systemctl`（容器内的 shim）、`curl` 和 `gzip`。Pi 和联想 CA 打进镜像。构建机上如果有 `config/pi-agent/models.json`，它覆盖烘焙出的 DeepSeek 配置，用的是这台机器 `~/.pi/agent` 里已经能对话的那一份。这些文件含密钥，不进 git，也不要把镜像推到公开仓库。
+脚本从 staging 发布源下载当前 `latest` 的 `linux-x64` `coforge-computer`，校验和通过后打标签 `coforge-computer:staging`，并把该版本写进镜像 label。镜像入口是 `coforge-computer foreground`。`host` 创建服务时不覆盖命令，也不在启动时执行 `setup --workspace`。`PATH` 上有 `systemctl`（容器内的 shim）、`curl` 和 `gzip`。Pi 和联想 CA 打进镜像。构建机上如果有 `config/pi-agent/models.json`，它覆盖烘焙出的 DeepSeek 配置，用的是这台机器 `~/.pi/agent` 里已经能对话的那一份。这些文件含密钥，不进 git，也不要把镜像推到公开仓库。
 
 `host` 使用 `--no-resolve-image`。节点上没有 `coforge-computer:staging` 时不会去仓库拉。这次的 Swarm 只有管理节点 `ubuntu`，镜像就构建在这台机器上。
+
+已经在跑的云电脑不会自动换成新镜像。`host` 心跳上报节点镜像和每台容器的镜像 id，电脑页在两者不一致时提示更新。用户确认后，`host` 对现有服务做 `docker service update --image --force`，命名数据卷留下。管理节点上的 `~/.coforge-host/coforge-computer` 也要换成带 `update` 任务的那一版，心跳才会带上镜像信息。
 
 ## 启动 host
 

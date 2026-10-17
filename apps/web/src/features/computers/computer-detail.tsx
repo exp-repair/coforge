@@ -39,12 +39,14 @@ import { BackToComputers } from "./back-to-computers";
 import { DeleteConfirmDialog, formatWorkspaceSize } from "./confirm-delete-dialog";
 import { useUpgradingComputer } from "./computer-layout";
 import {
+  computerKind,
   computerLabel,
   computerVersionLabel,
   isComputerUpdateAvailable,
   operatingSystemLabel,
   type ComputerIdentity,
 } from "./computer-identity";
+import { cloudImageUpdateConsequences } from "./cloud-image-update";
 import {
   ComputerUpgradeFailureView,
   describeComputerUpgradeFailure,
@@ -96,6 +98,7 @@ export type ComputerDetailView = ComputerIdentity & {
   runtimeDetecting?: boolean;
   connectedAt: Date | string;
   computerVersion?: string | null;
+  imageUpdate?: { version: string } | null;
   platform?: string | null;
   osVersion?: string | null;
   creator?: {
@@ -212,6 +215,7 @@ export function ComputerDetail({
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [formatOpen, setFormatOpen] = useState(false);
+  const [imageUpdateOpen, setImageUpdateOpen] = useState(false);
   const [rescanning, setRescanning] = useState(false);
   const [rescanFailed, setRescanFailed] = useState(false);
   const rescan = async () => {
@@ -264,8 +268,13 @@ export function ComputerDetail({
   >({ state: "idle" });
   const upgrading = upgrade.state === "running" || upgradingComputerIds.has(computer.id);
   const canUpgrade = Boolean(onUpgrade) && computer.ownedByCurrentUser;
+  const cloudImageVersion = computer.imageUpdate?.version;
+  const offeredVersion = cloudImageVersion ?? latestComputerVersion;
   const upgradeAvailable =
-    canUpgrade && isComputerUpdateAvailable(computer.computerVersion, latestComputerVersion);
+    canUpgrade &&
+    (computerKind(computer.kind) === "cloud"
+      ? Boolean(computer.imageUpdate)
+      : isComputerUpdateAvailable(computer.computerVersion, latestComputerVersion));
   const canEditDisplayName = computer.ownedByCurrentUser && Boolean(onUpdateDisplayName);
   const runUpgrade = async () => {
     if (!onUpgrade) return;
@@ -348,12 +357,18 @@ export function ComputerDetail({
         isLoading={upgrading}
         showTextWhileLoading
         isDisabled={upgrading || !upgradeAvailable || !computer.online}
-        onPress={() => void runUpgrade()}
+        onPress={() => {
+          if (computerKind(computer.kind) === "cloud") {
+            setImageUpdateOpen(true);
+            return;
+          }
+          void runUpgrade();
+        }}
       >
         {upgrading
           ? m.computer_upgrade_in_progress()
-          : upgradeAvailable && latestComputerVersion
-            ? m.computer_upgrade_action({ version: shortReleaseVersion(latestComputerVersion) })
+          : upgradeAvailable && offeredVersion
+            ? m.computer_upgrade_action({ version: shortReleaseVersion(offeredVersion) })
             : m.computer_upgrade()}
       </Button>
     ) : undefined;
@@ -748,6 +763,15 @@ export function ComputerDetail({
           onConfirm={onFormatCloudComputer}
         />
       )}
+      <CloudImageUpdateDialog
+        open={imageUpdateOpen}
+        version={offeredVersion}
+        onOpenChange={setImageUpdateOpen}
+        onConfirm={async () => {
+          setImageUpdateOpen(false);
+          await runUpgrade();
+        }}
+      />
       {onDeleteComputer && (
         <DeleteConfirmDialog
           open={deleteOpen}
@@ -1295,6 +1319,97 @@ function TerminalCommand({ command }: { command: string }) {
         }}
       />
     </div>
+  );
+}
+
+function CloudImageUpdateDialog({
+  open,
+  version,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean;
+  version?: string | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [confirming, guard] = useSubmitGuard();
+  const lossCopy: Record<(typeof cloudImageUpdateConsequences.lost)[number], string> = {
+    in_flight_runs: m.computer_cloud_image_update_loss_in_flight_runs(),
+    volatile_memory: m.computer_cloud_image_update_loss_volatile_memory(),
+    brief_disconnect: m.computer_cloud_image_update_loss_brief_disconnect(),
+  };
+  const keepCopy: Record<(typeof cloudImageUpdateConsequences.kept)[number], string> = {
+    volume_files: m.computer_cloud_image_update_keep_volume_files(),
+    workspace_bindings: m.computer_cloud_image_update_keep_workspace_bindings(),
+    agents_after_reconnect: m.computer_cloud_image_update_keep_agents_after_reconnect(),
+  };
+
+  return (
+    <ModalOverlay isOpen={open} onOpenChange={onOpenChange}>
+      <Modal className="w-[calc(100vw-2rem)] max-w-lg">
+        <Dialog className="overflow-hidden text-left">
+          {({ close }) => (
+            <>
+              <div className="px-6 pt-6">
+                <Heading
+                  slot="title"
+                  className="text-xl font-semibold text-primary sm:text-display-xs"
+                >
+                  {m.computer_cloud_image_update_dialog_title({
+                    version: version ? shortReleaseVersion(version) : "",
+                  })}
+                </Heading>
+                <Text className="mt-2 text-sm text-tertiary">
+                  {m.computer_cloud_image_update_body()}
+                </Text>
+                <p className="mt-4 text-sm font-medium text-primary">
+                  {m.computer_cloud_image_update_lost_title()}
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-tertiary">
+                  {cloudImageUpdateConsequences.lost.map((item) => (
+                    <li key={item}>{lossCopy[item]}</li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-sm font-medium text-primary">
+                  {m.computer_cloud_image_update_kept_title()}
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-tertiary">
+                  {cloudImageUpdateConsequences.kept.map((item) => (
+                    <li key={item}>{keepCopy[item]}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4">
+                <Button
+                  type="button"
+                  size="sm"
+                  color="secondary"
+                  isDisabled={confirming}
+                  onPress={() => close()}
+                >
+                  {m.computer_cloud_image_update_cancel()}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  isDisabled={confirming}
+                  isLoading={confirming}
+                  showTextWhileLoading
+                  onPress={() => {
+                    void guard(async () => {
+                      await onConfirm();
+                    });
+                  }}
+                >
+                  {m.computer_cloud_image_update_confirm()}
+                </Button>
+              </div>
+            </>
+          )}
+        </Dialog>
+      </Modal>
+    </ModalOverlay>
   );
 }
 

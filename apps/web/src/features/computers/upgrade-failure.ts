@@ -273,6 +273,12 @@ export function describeUpgradeRequestError(error: unknown): UpgradeRequestError
       };
     if (error.code === "RELEASE_FEED_UNAVAILABLE")
       return { headline: m.computer_upgrade_feed_unavailable(), steps: [], errorId: error.errorId };
+    if (error.code === "CONFLICT")
+      return {
+        headline: m.computer_cloud_image_update_unavailable(),
+        steps: [],
+        errorId: error.errorId,
+      };
     return { headline: m.computer_upgrade_request_failed(), steps: [], errorId: error.errorId };
   }
   return {

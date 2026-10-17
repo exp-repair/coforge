@@ -59,6 +59,52 @@ export function dockerNodeStatusArgs(): string[] {
   return ["node", "ls", "--format", "{{.Status}}"];
 }
 
+export const COMPUTER_VERSION_LABEL = "org.coforge.computer.version";
+
+export function dockerServiceUpdateArgs(computerId: string, image: string): string[] {
+  return [
+    "service",
+    "update",
+    "--no-resolve-image",
+    "--image",
+    image,
+    "--force",
+    serviceName(computerId),
+  ];
+}
+
+export function dockerImageInspectArgs(image: string): string[] {
+  return [
+    "image",
+    "inspect",
+    "-f",
+    `{{.Id}} {{index .Config.Labels "${COMPUTER_VERSION_LABEL}"}}`,
+    image,
+  ];
+}
+
+export function dockerCloudContainerListArgs(): string[] {
+  return ["ps", "-q", "--filter", `label=${COMPUTER_ID_LABEL}`];
+}
+
+export function dockerCloudPlacementInspectArgs(containerIds: string[]): string[] {
+  return [
+    "inspect",
+    "-f",
+    `{{index .Config.Labels "${COMPUTER_ID_LABEL}"}} {{.Image}}`,
+    ...containerIds,
+  ];
+}
+
+export function dockerImageVersionArgs(image: string): string[] {
+  return ["run", "--rm", "--network", "none", "--entrypoint", "coforge-computer", image, "-V"];
+}
+
+export type HostImagePlacement = {
+  image: { id: string; version: string };
+  computers: Array<{ computerId: string; imageId: string }>;
+};
+
 export interface ContainerRuntime {
   findService(computerId: string): Promise<string | undefined>;
   createService(input: {
@@ -68,6 +114,9 @@ export interface ContainerRuntime {
   }): Promise<string>;
   removeService(computerId: string): Promise<void>;
   attachWorkspace(input: { computerId: string; env: Record<string, string> }): Promise<void>;
+  /** Replaces the running image. The named volume stays mounted. */
+  updateServiceImage(computerId: string, image: string): Promise<void>;
+  inspectPlacement(image: string): Promise<HostImagePlacement>;
 }
 
 export type DockerSpawn = (
@@ -106,7 +155,75 @@ export function createDockerContainers(spawn: DockerSpawn = spawnDocker): Contai
       if (!containerId) throw new Error("cloud computer task is not running");
       await run(spawn, dockerAttachExecArgs(containerId, input.env), "docker exec failed");
     },
+    async updateServiceImage(computerId, image) {
+      await run(spawn, dockerServiceUpdateArgs(computerId, image), "docker service update failed");
+    },
+    async inspectPlacement(image) {
+      const inspected = await run(
+        spawn,
+        dockerImageInspectArgs(image),
+        "docker image inspect failed",
+      );
+      const parsed = parseImageInspect(inspected.stdout);
+      if (!parsed) throw new Error("docker image inspect returned an empty image id");
+      const version = parsed.version || (await readImageVersion(spawn, image, parsed.id));
+      const list = await spawn(dockerCloudContainerListArgs());
+      if (list.exitCode !== 0) throw new Error(list.stderr || "docker ps failed");
+      const containerIds = ids(list.stdout);
+      if (containerIds.length === 0) return { image: { id: parsed.id, version }, computers: [] };
+      const details = await run(
+        spawn,
+        dockerCloudPlacementInspectArgs(containerIds),
+        "docker inspect failed",
+      );
+      return {
+        image: { id: parsed.id, version },
+        computers: parsePlacement(details.stdout),
+      };
+    },
   };
+}
+
+const imageVersions = new Map<string, string>();
+
+async function readImageVersion(spawn: DockerSpawn, image: string, imageId: string) {
+  const cached = imageVersions.get(imageId);
+  if (cached) return cached;
+  const result = await run(spawn, dockerImageVersionArgs(image), "computer version probe failed");
+  const version = result.stdout.trim();
+  if (!version) throw new Error("computer version probe returned no version");
+  imageVersions.set(imageId, version);
+  return version;
+}
+
+function parseImageInspect(stdout: string): { id: string; version: string } | undefined {
+  const line = stdout.trim();
+  if (!line) return undefined;
+  const space = line.indexOf(" ");
+  if (space < 0) return { id: line, version: "" };
+  return { id: line.slice(0, space), version: line.slice(space + 1).trim() };
+}
+
+function parsePlacement(stdout: string): Array<{ computerId: string; imageId: string }> {
+  const computers: Array<{ computerId: string; imageId: string }> = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const space = trimmed.indexOf(" ");
+    if (space < 1) continue;
+    const computerId = trimmed.slice(0, space);
+    const imageId = trimmed.slice(space + 1).trim();
+    if (!computerId || !imageId) continue;
+    computers.push({ computerId, imageId });
+  }
+  return computers;
+}
+
+function ids(stdout: string): string[] {
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 export async function swarmAccepting(spawn: DockerSpawn = spawnDocker): Promise<boolean> {

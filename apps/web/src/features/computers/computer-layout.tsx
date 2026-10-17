@@ -34,6 +34,7 @@ export type ComputerListItem = ComputerIdentity &
     id: string;
     online: boolean;
     computerVersion?: string | null;
+    imageUpdate?: { version: string } | null;
     ownedByCurrentUser: boolean;
     creator?: {
       username: string;
@@ -143,9 +144,10 @@ export function ComputerLayout({
                       computer={computer}
                       online={computer.online}
                       updateAvailableVersion={
-                        isComputerUpdateAvailable(computer.computerVersion, latestComputerVersion)
+                        computer.imageUpdate?.version ??
+                        (isComputerUpdateAvailable(computer.computerVersion, latestComputerVersion)
                           ? latestComputerVersion
-                          : undefined
+                          : undefined)
                       }
                       upgrading={upgradingComputerIds.has(computer.id)}
                     />
