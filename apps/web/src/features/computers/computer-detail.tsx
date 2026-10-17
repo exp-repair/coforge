@@ -1360,7 +1360,7 @@ function CloudImageUpdateDialog({
                     version: version ? shortReleaseVersion(version) : "",
                   })}
                 </Heading>
-                <Text className="mt-2 text-sm text-tertiary">
+                <Text className="mt-2 block text-sm text-tertiary">
                   {m.computer_cloud_image_update_body()}
                 </Text>
                 <p className="mt-4 text-sm font-medium text-primary">

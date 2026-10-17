@@ -179,7 +179,18 @@ test("polling a cloud image replace completes after the computer returns on the 
   const store = new RedisComputerUpgradeStore(memoryRedis());
   const scope = { workspaceId: "workspace-1", computerId: "computer-1" };
   await store.ready(scope, identity("old", "0.1.2-dev.attach", 1), []);
-  await store.begin(scope, "upgrade-1", "0.1.3-dev.2");
+  const { upgrade } = upgradeComputer({
+    upgrades: store,
+    online: true,
+    cloud: {
+      available: async () => ({ imageId: "sha256:new", version: "0.1.3-dev.2" }),
+      enqueue: async () => {},
+    },
+  });
+  await upgrade.execute(
+    { workspaceId: "workspace-1", userId: "user-a" },
+    { computerId: "computer-1", requestId: "upgrade-1", placement: "cloud" },
+  );
   await store.ready(scope, identity("new", "0.1.3-dev.2", 2), []);
   expect(await store.status(scope, "upgrade-1")).toMatchObject({
     status: "completed",

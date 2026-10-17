@@ -45,7 +45,9 @@ export class UpgradeComputer {
       if (!this.cloud || !principal.userId) throw new AppError("CONFLICT");
       const image = await this.cloud.available(scope.computerId);
       if (!image) throw new AppError("CONFLICT");
-      const registered = await this.upgrades.begin(scope, input.requestId, image.version);
+      const registered = await this.upgrades.begin(scope, input.requestId, image.version, {
+        completeOnIdentity: true,
+      });
       if (!registered.created) return registered.status;
       try {
         await this.cloud.enqueue({
