@@ -6,6 +6,16 @@ import { daemonControlChannel } from "#src/server/centrifugo/server-api.server";
 import type { ComputerStatusCache } from "#src/server/centrifugo/computer-status.server";
 import type { RedisComputerUpgradeStore } from "./computer-upgrade-store.server";
 
+export type CloudImageUpgrade = {
+  available(computerId: string): Promise<{ imageId: string; version: string } | undefined>;
+  enqueue(input: {
+    userId: string;
+    workspaceId: string;
+    computerId: string;
+    imageId: string;
+  }): Promise<void>;
+};
+
 export class UpgradeComputer {
   constructor(
     private readonly upgrades: Pick<
@@ -16,11 +26,12 @@ export class UpgradeComputer {
     /** Throws AppError("RELEASE_FEED_UNAVAILABLE") when the latest version cannot be resolved. */
     private readonly latestVersion: () => Promise<string>,
     private readonly publisher: Pick<CentrifugoServerApi, "publish">,
+    private readonly cloud?: CloudImageUpgrade,
   ) {}
 
   async execute(
-    principal: { workspaceId: string },
-    input: { computerId: string; requestId: string },
+    principal: { workspaceId: string; userId?: string },
+    input: { computerId: string; requestId: string; placement?: "local" | "cloud" },
   ) {
     const scope = { workspaceId: principal.workspaceId, computerId: input.computerId };
     // A retried requestId already has a record regardless of whether the Computer is currently
@@ -30,6 +41,27 @@ export class UpgradeComputer {
     if (existing) return existing;
     // Presence, not the upgrade identity snapshot, decides whether a *new* request can begin.
     if (!(await this.presence.get(scope))) throw new AppError("COMPUTER_OFFLINE");
+    if (input.placement === "cloud") {
+      if (!this.cloud || !principal.userId) throw new AppError("CONFLICT");
+      const image = await this.cloud.available(scope.computerId);
+      if (!image) throw new AppError("CONFLICT");
+      const registered = await this.upgrades.begin(scope, input.requestId, image.version, {
+        completeOnIdentity: true,
+      });
+      if (!registered.created) return registered.status;
+      try {
+        await this.cloud.enqueue({
+          userId: principal.userId,
+          workspaceId: scope.workspaceId,
+          computerId: scope.computerId,
+          imageId: image.imageId,
+        });
+        return registered.status;
+      } catch (error) {
+        await this.upgrades.publicationFailed(scope, input.requestId);
+        throw error;
+      }
+    }
     const expectedVersion = await this.latestVersion();
     const registered = await this.upgrades.begin(scope, input.requestId, expectedVersion);
     if (!registered.created) return registered.status;

@@ -91,7 +91,7 @@ class MemoryJobs implements ClusterJobs {
         (job) =>
           job.clusterId === clusterId &&
           job.reportedAt === null &&
-          (accepting || job.operation !== "create"),
+          (accepting || (job.operation !== "create" && job.operation !== "update")),
       )
       .sort(compareJobs)[0];
   }
@@ -380,6 +380,53 @@ describe("cloud computer quota", () => {
     });
     expect(fleet.computers[0]?.containerReady).toBe(true);
     expect(fleet.computers[0]?.id).toBe(created.computerId);
+  });
+
+  test("an image update is claimed without a daemon key and does not delete the computer", async () => {
+    const { hosts, fleet, jobs } = harness();
+    const created = await hosts.ensureDefault(request);
+    await hosts.report({
+      token: "host-token",
+      jobId: (await hosts.claim({ token: "host-token" }))!.jobId,
+      containerId: "service-1",
+      now,
+    });
+    const updated = await hosts.requestImageUpdate({
+      ...request,
+      computerId: created.computerId,
+      imageId: "sha256:new",
+    });
+    expect(updated.jobId).toBeTruthy();
+    expect(jobs.records.at(-1)?.daemonApiKey).toBeNull();
+    const claimed = await hosts.claim({ token: "host-token" });
+    expect(claimed).toMatchObject({
+      operation: "update",
+      computerId: created.computerId,
+      daemonApiKey: null,
+    });
+    await hosts.report({ token: "host-token", jobId: claimed!.jobId, now });
+    expect(fleet.computers[0]?.deletedAt).toBeNull();
+    expect(fleet.computers[0]?.containerReady).toBe(true);
+  });
+
+  test("an image update stays queued while the cluster is not accepting placements", async () => {
+    const { hosts, setAccepting } = harness();
+    const created = await hosts.ensureDefault(request);
+    await hosts.report({
+      token: "host-token",
+      jobId: (await hosts.claim({ token: "host-token" }))!.jobId,
+      containerId: "service-1",
+      now,
+    });
+    await hosts.requestImageUpdate({
+      ...request,
+      computerId: created.computerId,
+      imageId: "sha256:new",
+    });
+    setAccepting(false);
+    expect(await hosts.claim({ token: "host-token" })).toBeUndefined();
+    setAccepting(true);
+    expect((await hosts.claim({ token: "host-token" }))?.operation).toBe("update");
   });
 
   test("a create stays queued while the cluster is not accepting placements", async () => {

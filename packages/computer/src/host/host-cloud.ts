@@ -1,4 +1,10 @@
-export type HostJobOperation = "create" | "delete" | "attach";
+export type HostJobOperation = "create" | "delete" | "attach" | "update";
+
+export type HostHeartbeatReport = {
+  accepting: boolean;
+  image?: { id: string; version: string };
+  computers?: Array<{ computerId: string; imageId: string }>;
+};
 
 export type ClaimedContainerJob = {
   jobId: string;
@@ -29,8 +35,8 @@ export class HttpHostCloud {
     });
   }
 
-  async heartbeat(token: string, accepting: boolean): Promise<void> {
-    await this.post("/api/hosts/heartbeat", token, { accepting });
+  async heartbeat(token: string, report: HostHeartbeatReport): Promise<void> {
+    await this.post("/api/hosts/heartbeat", token, report);
   }
 
   async claim(token: string): Promise<ClaimedContainerJob | null> {
@@ -50,7 +56,7 @@ export class HttpHostCloud {
   private async post(
     path: string,
     token: string,
-    body?: Record<string, string | boolean>,
+    body?: Record<string, unknown>,
   ): Promise<unknown> {
     const response = await this.fetchImpl(`${this.origin}${path}`, {
       method: "POST",
@@ -71,7 +77,12 @@ function claimedJob(value: unknown): ClaimedContainerJob {
   if (!value || typeof value !== "object") throw new Error("invalid claimed job");
   const job = value as Record<string, unknown>;
   const operation = job.operation;
-  if (operation !== "create" && operation !== "delete" && operation !== "attach") {
+  if (
+    operation !== "create" &&
+    operation !== "delete" &&
+    operation !== "attach" &&
+    operation !== "update"
+  ) {
     throw new Error("invalid claimed job");
   }
   return {

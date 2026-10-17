@@ -1,9 +1,9 @@
 import { createDockerContainers, swarmAccepting, type ContainerRuntime } from "./docker-containers";
-import { HttpHostCloud, type ClaimedContainerJob } from "./host-cloud";
+import { HttpHostCloud, type ClaimedContainerJob, type HostHeartbeatReport } from "./host-cloud";
 
 export const HOST_POLL_INTERVAL_MS = 5_000;
 
-export type { ClaimedContainerJob };
+export type { ClaimedContainerJob, HostHeartbeatReport };
 
 export type HostProcessConfig = {
   serverUrl: string;
@@ -16,7 +16,7 @@ export type HostProcessConfig = {
 
 export interface HostCloud {
   register(input: { token: string; nodeKey: string; name: string }): Promise<void>;
-  heartbeat(token: string, accepting: boolean): Promise<void>;
+  heartbeat(token: string, report: HostHeartbeatReport): Promise<void>;
   claim(token: string): Promise<ClaimedContainerJob | null>;
   report(token: string, jobId: string, containerId?: string): Promise<void>;
 }
@@ -44,6 +44,11 @@ export async function acceptClaimedJob(
   if (job.operation === "delete") {
     await ports.containers.removeService(job.computerId);
     await ports.report();
+    return;
+  }
+  if (job.operation === "update") {
+    await ports.containers.updateServiceImage(job.computerId, config.image);
+    await ports.report(job.computerId);
     return;
   }
   const env = containerEnv(job, config.serverUrl);
@@ -80,7 +85,11 @@ export async function runHost(
   });
   while (!signal.aborted) {
     const accepting = await ports.canPlace();
-    await ports.cloud.heartbeat(config.token, accepting);
+    const placement = await ports.containers.inspectPlacement(config.image).catch(() => undefined);
+    await ports.cloud.heartbeat(
+      config.token,
+      placement ? { accepting, ...placement } : { accepting },
+    );
     const job = await ports.cloud.claim(config.token);
     if (job) {
       await acceptClaimedJob(job, config, {

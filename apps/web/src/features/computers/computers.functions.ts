@@ -7,6 +7,7 @@ import {
   type RuntimeProvider,
 } from "@lrm/coforge-sdk/internal";
 import { AppError } from "#src/lib/app-error";
+import { getCloudImageInventory } from "#src/server/hosts/cloud-image-inventory.server";
 import { productionCloudComputers } from "#src/server/hosts/host-production.server";
 import { HostDirectoryError } from "#src/server/hosts/host-directory.server";
 import { HostJobError } from "#src/server/hosts/host-jobs.server";
@@ -209,6 +210,14 @@ export const listComputers = createServerFn({ method: "GET" })
     const agentDisplayById = new Map(
       agentScopes.map((scope, index) => [scope.agentId, agentDisplays[index]] as const),
     );
+    const cloudIds = connections
+      .filter(({ computer }) => computer.kind === "cloud")
+      .map(({ computer }) => computer.id);
+    const imageUpdates = cloudIds.length
+      ? await getCloudImageInventory()
+          .availableMany(cloudIds)
+          .catch(() => new Map())
+      : new Map();
     return Promise.all(
       connections.map(async ({ computer, createdAt }, index) => {
         const computerRuntimes = runtimes.filter((runtime) => runtime.computerId === computer.id);
@@ -218,6 +227,7 @@ export const listComputers = createServerFn({ method: "GET" })
           displayName: computer.displayName,
           kind: computer.kind,
           cloudSlot: computer.cloudSlot,
+          imageUpdate: imageUpdates.get(computer.id) ?? null,
           computerVersion: computer.computerVersion,
           platform: computer.platform,
           osVersion: computer.osVersion,
@@ -331,7 +341,7 @@ export const upgradeComputer = createServerFn({ method: "POST" })
   .handler(async ({ context: { user, db, workspaceId }, data }) => {
     const computer = await db.computer.findFirst({
       where: { id: data.computerId },
-      select: { ownerId: true },
+      select: { ownerId: true, kind: true },
     });
     if (!computer || computer.ownerId !== user.id) throw new Error("Computer is not available");
     const scope = { workspaceId, computerId: data.computerId };
@@ -340,12 +350,22 @@ export const upgradeComputer = createServerFn({ method: "POST" })
       select: { id: true },
     });
     if (!connection) throw new Error("Computer is not available");
+    const placement = computer.kind === "cloud" ? "cloud" : "local";
     return new UpgradeComputer(
       getComputerUpgradeStore(),
       getComputerStatusCache(),
       fetchExpectedUpgradeVersion,
       createCentrifugoServerApi(),
-    ).execute({ workspaceId }, data);
+      {
+        available: (computerId) => getCloudImageInventory().available(computerId),
+        enqueue: async (input) => {
+          await productionCloudComputers(db).requestImageUpdate({
+            ...input,
+            now: new Date(),
+          });
+        },
+      },
+    ).execute({ workspaceId, userId: user.id }, { ...data, placement });
   });
 
 /** The release feed answers a version string that changes at most once per release, so a

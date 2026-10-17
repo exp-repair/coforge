@@ -1,0 +1,93 @@
+import { describe, expect, test } from "bun:test";
+
+import {
+  CloudImageInventory,
+  cloudImageUpdateFor,
+  parseHostImageReport,
+} from "#src/server/hosts/cloud-image-inventory.server";
+import {
+  cloudImageUpdateAvailable,
+  cloudImageUpdateConsequences,
+} from "#src/features/computers/cloud-image-update";
+
+describe("host image report", () => {
+  test("a heartbeat without an image leaves the inventory unchanged", () => {
+    expect(parseHostImageReport({ accepting: true })).toBeUndefined();
+  });
+
+  test("a well-formed image report names the node image and each running computer", () => {
+    expect(
+      parseHostImageReport({
+        accepting: true,
+        image: { id: "sha256:new", version: "0.1.3-dev.2" },
+        computers: [{ computerId: "computer-1", imageId: "sha256:old" }],
+      }),
+    ).toEqual({
+      image: { id: "sha256:new", version: "0.1.3-dev.2" },
+      computers: [{ computerId: "computer-1", imageId: "sha256:old" }],
+    });
+  });
+});
+
+describe("cloud image update availability", () => {
+  const snapshot = {
+    image: { id: "sha256:new", version: "0.1.3-dev.2" },
+    computers: [{ computerId: "computer-1", imageId: "sha256:old" }],
+  };
+
+  test("a running computer whose image id differs from the node image can be updated", () => {
+    expect(cloudImageUpdateFor(snapshot, "computer-1")).toEqual({
+      imageId: "sha256:new",
+      version: "0.1.3-dev.2",
+    });
+    expect(cloudImageUpdateAvailable("sha256:old", "sha256:new")).toBe(true);
+  });
+
+  test("a computer already on the node image is not offered an update", () => {
+    expect(
+      cloudImageUpdateFor(
+        {
+          image: { id: "sha256:new", version: "0.1.3-dev.2" },
+          computers: [{ computerId: "computer-1", imageId: "sha256:new" }],
+        },
+        "computer-1",
+      ),
+    ).toBeUndefined();
+    expect(cloudImageUpdateAvailable("sha256:new", "sha256:new")).toBe(false);
+  });
+
+  test("the replace keeps the volume and reconnects agents after a brief disconnect", () => {
+    expect(cloudImageUpdateConsequences.lost).toEqual([
+      "in_flight_runs",
+      "volatile_memory",
+      "brief_disconnect",
+    ]);
+    expect(cloudImageUpdateConsequences.kept).toEqual([
+      "volume_files",
+      "workspace_bindings",
+      "agents_after_reconnect",
+    ]);
+  });
+});
+
+describe("cloud image inventory", () => {
+  test("replace then available returns the newer node image for an outdated computer", async () => {
+    const values = new Map<string, string>();
+    const inventory = new CloudImageInventory({
+      get: async (key) => values.get(key) ?? null,
+      set: async (key, value) => {
+        values.set(key, value);
+        return "OK";
+      },
+    });
+    await inventory.replace({
+      image: { id: "sha256:new", version: "0.1.3-dev.2" },
+      computers: [{ computerId: "computer-1", imageId: "sha256:old" }],
+    });
+    expect(await inventory.available("computer-1")).toEqual({
+      imageId: "sha256:new",
+      version: "0.1.3-dev.2",
+    });
+    expect(await inventory.available("computer-2")).toBeUndefined();
+  });
+});

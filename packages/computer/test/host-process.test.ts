@@ -3,11 +3,16 @@ import { describe, expect, test } from "bun:test";
 import {
   createDockerContainers,
   dockerAttachExecArgs,
+  dockerCloudContainerListArgs,
+  dockerCloudPlacementInspectArgs,
+  dockerImageInspectArgs,
   dockerServiceCreateArgs,
   dockerServiceFindArgs,
   dockerServiceRemoveArgs,
+  dockerServiceUpdateArgs,
   dockerVolumeRemoveArgs,
   swarmAccepting,
+  type ContainerRuntime,
 } from "#src/host/docker-containers";
 import { HttpHostCloud } from "#src/host/host-cloud";
 import { acceptClaimedJob, runHost, type ClaimedContainerJob } from "#src/host/run-host";
@@ -33,12 +38,27 @@ const config = {
   pollIntervalMs: 5000,
 };
 
+function containers(overrides: Partial<ContainerRuntime> = {}): ContainerRuntime {
+  return {
+    findService: async () => undefined,
+    createService: async () => "service-1",
+    removeService: async () => undefined,
+    attachWorkspace: async () => undefined,
+    updateServiceImage: async () => undefined,
+    inspectPlacement: async () => ({
+      image: { id: "sha256:img", version: "1.0.0" },
+      computers: [],
+    }),
+    ...overrides,
+  };
+}
+
 describe("host process", () => {
   test("one create claim places one service and reports its id", async () => {
     const runs: string[] = [];
     const reports: Array<string | undefined> = [];
     await acceptClaimedJob(job, config, {
-      containers: {
+      containers: containers({
         findService: async () => undefined,
         createService: async (input) => {
           runs.push(input.computerId);
@@ -60,7 +80,10 @@ describe("host process", () => {
         attachWorkspace: async () => {
           throw new Error("unexpected attach");
         },
-      },
+        updateServiceImage: async () => {
+          throw new Error("unexpected update");
+        },
+      }),
       report: async (containerId) => {
         reports.push(containerId);
       },
@@ -73,16 +96,14 @@ describe("host process", () => {
     let runs = 0;
     const reports: Array<string | undefined> = [];
     await acceptClaimedJob(job, config, {
-      containers: {
+      containers: containers({
         findService: async (computerId) =>
           computerId === "computer-1" ? "service-existing" : undefined,
         createService: async () => {
           runs += 1;
           return "service-new";
         },
-        removeService: async () => undefined,
-        attachWorkspace: async () => undefined,
-      },
+      }),
       report: async (id) => {
         reports.push(id);
       },
@@ -94,28 +115,23 @@ describe("host process", () => {
   test("delete removes the service and attach writes the workspace into the running task", async () => {
     const calls: string[] = [];
     await acceptClaimedJob({ ...job, operation: "delete", daemonApiKey: null }, config, {
-      containers: {
-        findService: async () => undefined,
-        createService: async () => "service-1",
+      containers: containers({
         removeService: async (computerId) => {
           calls.push(`remove:${computerId}`);
         },
-        attachWorkspace: async () => undefined,
-      },
+      }),
       report: async (id) => {
         calls.push(`report:${id ?? ""}`);
       },
     });
     await acceptClaimedJob({ ...job, operation: "attach", jobId: "job-2" }, config, {
-      containers: {
+      containers: containers({
         findService: async () => "service-1",
-        createService: async () => "service-new",
-        removeService: async () => undefined,
         attachWorkspace: async (input) => {
           calls.push(`attach:${input.computerId}`);
           expect(input.env.COFORGE_WORKSPACE_ID).toBe("workspace-1");
         },
-      },
+      }),
       report: async (id) => {
         calls.push(`report:${id ?? ""}`);
       },
@@ -128,6 +144,24 @@ describe("host process", () => {
     ]);
   });
 
+  test("update replaces the service image and does not remove the volume", async () => {
+    const calls: string[] = [];
+    await acceptClaimedJob({ ...job, operation: "update", daemonApiKey: null }, config, {
+      containers: containers({
+        updateServiceImage: async (computerId, image) => {
+          calls.push(`update:${computerId}:${image}`);
+        },
+        removeService: async () => {
+          throw new Error("unexpected remove");
+        },
+      }),
+      report: async (id) => {
+        calls.push(`report:${id ?? ""}`);
+      },
+    });
+    expect(calls).toEqual(["update:computer-1:coforge-computer:local", "report:computer-1"]);
+  });
+
   test("a tick registers, heartbeats, claims, and stops when the signal aborts", async () => {
     const calls: string[] = [];
     const controller = new AbortController();
@@ -138,8 +172,8 @@ describe("host process", () => {
           register: async () => {
             calls.push("register");
           },
-          heartbeat: async (_token, accepting) => {
-            calls.push(`heartbeat:${accepting}`);
+          heartbeat: async (_token, report) => {
+            calls.push(`heartbeat:${report.accepting}`);
           },
           claim: async () => {
             calls.push("claim");
@@ -149,12 +183,7 @@ describe("host process", () => {
             calls.push("report");
           },
         },
-        containers: {
-          findService: async () => undefined,
-          createService: async () => "service-1",
-          removeService: async () => undefined,
-          attachWorkspace: async () => undefined,
-        },
+        containers: containers(),
         canPlace: async () => false,
         wait: async () => {
           calls.push("wait");
@@ -184,6 +213,11 @@ describe("host cloud HTTP", () => {
     };
     const cloud = new HttpHostCloud(fetchImpl, "https://server.example/");
     await cloud.register({ token: "chn_token", nodeKey: "machine-1", name: "lab-host" });
+    await cloud.heartbeat("chn_token", {
+      accepting: true,
+      image: { id: "sha256:new", version: "0.1.3-dev.2" },
+      computers: [{ computerId: "computer-1", imageId: "sha256:old" }],
+    });
     expect(await cloud.claim("chn_token")).toEqual(job);
     await cloud.report("chn_token", "job-1", "container-1");
     expect(requests).toEqual([
@@ -191,6 +225,15 @@ describe("host cloud HTTP", () => {
         url: "https://server.example/api/hosts/register",
         authorization: "Bearer chn_token",
         body: { nodeKey: "machine-1", name: "lab-host" },
+      },
+      {
+        url: "https://server.example/api/hosts/heartbeat",
+        authorization: "Bearer chn_token",
+        body: {
+          accepting: true,
+          image: { id: "sha256:new", version: "0.1.3-dev.2" },
+          computers: [{ computerId: "computer-1", imageId: "sha256:old" }],
+        },
       },
       {
         url: "https://server.example/api/hosts/jobs/claim",
@@ -241,6 +284,34 @@ describe("swarm service arguments", () => {
     ]);
     expect(dockerServiceRemoveArgs("computer-1")).toEqual(["service", "rm", "coforge-computer-1"]);
     expect(dockerVolumeRemoveArgs("computer-1")).toEqual(["volume", "rm", "coforge-computer-1"]);
+    expect(dockerServiceUpdateArgs("computer-1", "coforge-computer:staging")).toEqual([
+      "service",
+      "update",
+      "--no-resolve-image",
+      "--image",
+      "coforge-computer:staging",
+      "--force",
+      "coforge-computer-1",
+    ]);
+    expect(dockerImageInspectArgs("coforge-computer:staging")).toEqual([
+      "image",
+      "inspect",
+      "-f",
+      '{{.Id}} {{index .Config.Labels "org.coforge.computer.version"}}',
+      "coforge-computer:staging",
+    ]);
+    expect(dockerCloudContainerListArgs()).toEqual([
+      "ps",
+      "-q",
+      "--filter",
+      "label=coforge.computer_id",
+    ]);
+    expect(dockerCloudPlacementInspectArgs(["abc"])).toEqual([
+      "inspect",
+      "-f",
+      '{{index .Config.Labels "coforge.computer_id"}} {{.Image}}',
+      "abc",
+    ]);
     expect(dockerAttachExecArgs("task-1", { COFORGE_WORKSPACE_ID: "workspace-2" })).toEqual([
       "exec",
       "--env",
@@ -273,6 +344,40 @@ describe("swarm service arguments", () => {
         "__attach-workspace",
       ],
     ]);
+  });
+
+  test("updating a service image does not remove the disk volume", async () => {
+    const calls: string[][] = [];
+    const runtime = createDockerContainers(async (args) => {
+      calls.push(args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await runtime.updateServiceImage("computer-1", "coforge-computer:staging");
+    expect(calls).toEqual([dockerServiceUpdateArgs("computer-1", "coforge-computer:staging")]);
+    expect(calls.some((args) => args[0] === "volume")).toBe(false);
+  });
+
+  test("placement reports the node image and each running computer's image id", async () => {
+    const runtime = createDockerContainers(async (args) => {
+      if (args[0] === "image")
+        return {
+          exitCode: 0,
+          stdout: "sha256:new 0.1.3-dev.2\n",
+          stderr: "",
+        };
+      if (args[0] === "ps") return { exitCode: 0, stdout: "ctr-1\n", stderr: "" };
+      if (args[0] === "inspect")
+        return {
+          exitCode: 0,
+          stdout: "computer-1 sha256:old\n",
+          stderr: "",
+        };
+      return { exitCode: 1, stdout: "", stderr: `unexpected ${args.join(" ")}` };
+    });
+    expect(await runtime.inspectPlacement("coforge-computer:staging")).toEqual({
+      image: { id: "sha256:new", version: "0.1.3-dev.2" },
+      computers: [{ computerId: "computer-1", imageId: "sha256:old" }],
+    });
   });
 
   test("removing a service also removes its disk volume", async () => {

@@ -78,7 +78,9 @@ Agent 的工作目录在数据卷 `/root/.coforge/agent-workspaces` 上。换掉
 
 电脑页上的「此电脑未关联 Agent」表示这个工作区还没有把 Agent 指派到这台电脑。镜像里有 Pi 不会自动创建 Agent。
 
-领取顺序是删除、挂载、创建。Daemon 密钥只在领取 `create` 或 `attach` 时出现，回报后从任务行清掉。
+领取顺序是删除、挂载、更新镜像、创建。Daemon 密钥只在领取 `create` 或 `attach` 时出现，回报后从任务行清掉。`update` 用 `docker service update --image --force` 换成节点上的当前镜像，不删命名数据卷。
+
+重建电脑镜像时，构建脚本从该环境的 Computer 发布源下载当前 `latest` 的 `linux-x64` 二进制并打进镜像。镜像打好之后，`host` 心跳会带上节点镜像和每台在跑电脑的镜像 id；两者不一致时，电脑页提示更新。确认后才会领取 `update`。
 
 ## 核对
 

@@ -9,7 +9,7 @@ export class HostJobError extends Error {
 }
 
 export type CloudSlot = "default" | "extra";
-export type HostJobOperation = "create" | "delete" | "attach";
+export type HostJobOperation = "create" | "delete" | "attach" | "update";
 
 export type CloudComputer = {
   id: string;
@@ -99,7 +99,12 @@ export interface DaemonKeys {
   issue(input: { userId: string; workspaceId: string; computerId: string }): Promise<string>;
 }
 
-const OPERATION_ORDER: Record<HostJobOperation, number> = { delete: 0, attach: 1, create: 2 };
+const OPERATION_ORDER: Record<HostJobOperation, number> = {
+  delete: 0,
+  attach: 1,
+  update: 2,
+  create: 3,
+};
 
 export class HostJobs {
   constructor(
@@ -226,12 +231,46 @@ export class HostJobs {
     return view(computer, job.id);
   }
 
+  /** Replaces the running image while keeping the computer's named volume. */
+  async requestImageUpdate(input: {
+    userId: string;
+    workspaceId: string;
+    computerId: string;
+    imageId: string;
+    now: Date;
+  }): Promise<CloudComputerView> {
+    const workspace = await this.#workspace(input.workspaceId, input.userId);
+    const computer = (await this.deps.fleet.list(input.userId)).find(
+      (item) => item.id === input.computerId && item.deletedAt === null,
+    );
+    if (!computer) throw new HostJobError(404, "cloud computer not found");
+    if (!computer.containerReady) throw new HostJobError(409, "cloud computer is not ready");
+    const imageId = requireText(input.imageId, "invalid image id");
+    const key = `cloud-update:${computer.id}:${imageId}`;
+    const existing = await this.deps.jobs.findByIdempotency(input.userId, key);
+    if (existing) return view(computer, existing.id);
+    const clusterId = await this.deps.cluster.id();
+    const job = this.#job({
+      clusterId,
+      operation: "update",
+      workspace,
+      computer,
+      ownerId: input.userId,
+      idempotencyKey: key,
+      daemonApiKey: null,
+      now: input.now,
+    });
+    await this.deps.jobs.insert(job);
+    return view(computer, job.id);
+  }
+
   async claim(input: { token: string }): Promise<ClaimedHostJob | undefined> {
     const cluster = await this.deps.cluster.authenticate(input.token);
     if (!cluster) throw new HostJobError(401, "invalid host token");
     const job = await this.deps.jobs.next(cluster.id, cluster.accepting);
     if (!job) return undefined;
-    if (job.operation !== "delete" && !job.daemonApiKey) return undefined;
+    if (job.operation !== "delete" && job.operation !== "update" && !job.daemonApiKey)
+      return undefined;
     return {
       jobId: job.id,
       operation: job.operation,

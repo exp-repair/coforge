@@ -7,6 +7,7 @@ import {
   PrismaWorkspaceMembers,
 } from "#src/server/db/repositories/host-job.repositories.server";
 import { HostDirectory } from "./host-directory.server";
+import { getCloudImageInventory } from "./cloud-image-inventory.server";
 import { createHostHttpHandler } from "./host-http.server";
 import { createHostJobHttpHandler } from "./host-job-http.server";
 import { HostJobs } from "./host-jobs.server";
@@ -24,6 +25,7 @@ export function productionHostHttp() {
   return createHostHttpHandler({
     directory: productionHostDirectory(),
     now: () => new Date(),
+    images: getCloudImageInventory(),
   });
 }
 

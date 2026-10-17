@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { decodeComputerUpgradeIntent } from "@lrm/coforge-sdk/internal";
 
-import { UpgradeComputer } from "#src/server/computers/upgrade-computer.server";
+import {
+  UpgradeComputer,
+  type CloudImageUpgrade,
+} from "#src/server/computers/upgrade-computer.server";
 import { RedisComputerUpgradeStore } from "#src/server/computers/computer-upgrade-store.server";
 
 function memoryRedis() {
@@ -50,6 +53,7 @@ function upgradeComputer(overrides: {
   online?: boolean;
   latestVersion?: () => Promise<string>;
   publish?: (channel: string, data: Uint8Array) => Promise<void>;
+  cloud?: CloudImageUpgrade;
 }) {
   const publications: Array<{ channel: string; data: Uint8Array }> = [];
   const upgrade = new UpgradeComputer(
@@ -62,6 +66,7 @@ function upgradeComputer(overrides: {
         await overrides.publish?.(channel, data);
       },
     },
+    overrides.cloud,
   );
   return { upgrade, publications };
 }
@@ -137,6 +142,82 @@ test("a present Computer with no identity on record fails with COMPUTER_IDENTITY
       { computerId: "computer-1", requestId: "upgrade-1" },
     ),
   ).rejects.toMatchObject({ name: "AppError", code: "COMPUTER_IDENTITY_UNKNOWN" });
+  expect(publications).toEqual([]);
+});
+
+test("a cloud computer image replace is queued on the host and never published to the daemon", async () => {
+  const store = new RedisComputerUpgradeStore(memoryRedis());
+  const scope = { workspaceId: "workspace-1", computerId: "computer-1" };
+  await store.ready(scope, identity("old", "0.1.2-dev.attach", 1), []);
+  const queued: Array<{ computerId: string; imageId: string }> = [];
+  const { upgrade, publications } = upgradeComputer({
+    upgrades: store,
+    online: true,
+    cloud: {
+      available: async () => ({ imageId: "sha256:new", version: "0.1.3-dev.2" }),
+      enqueue: async (input) => {
+        queued.push({ computerId: input.computerId, imageId: input.imageId });
+      },
+    },
+  });
+
+  const status = await upgrade.execute(
+    { workspaceId: "workspace-1", userId: "user-a" },
+    { computerId: "computer-1", requestId: "upgrade-1", placement: "cloud" },
+  );
+
+  expect(status).toMatchObject({
+    requestId: "upgrade-1",
+    status: "accepted",
+    expectedVersion: "0.1.3-dev.2",
+  });
+  expect(queued).toEqual([{ computerId: "computer-1", imageId: "sha256:new" }]);
+  expect(publications).toEqual([]);
+});
+
+test("polling a cloud image replace completes after the computer returns on the expected version", async () => {
+  const store = new RedisComputerUpgradeStore(memoryRedis());
+  const scope = { workspaceId: "workspace-1", computerId: "computer-1" };
+  await store.ready(scope, identity("old", "0.1.2-dev.attach", 1), []);
+  const { upgrade } = upgradeComputer({
+    upgrades: store,
+    online: true,
+    cloud: {
+      available: async () => ({ imageId: "sha256:new", version: "0.1.3-dev.2" }),
+      enqueue: async () => {},
+    },
+  });
+  await upgrade.execute(
+    { workspaceId: "workspace-1", userId: "user-a" },
+    { computerId: "computer-1", requestId: "upgrade-1", placement: "cloud" },
+  );
+  await store.ready(scope, identity("new", "0.1.3-dev.2", 2), []);
+  expect(await store.status(scope, "upgrade-1")).toMatchObject({
+    status: "completed",
+    computerVersion: "0.1.3-dev.2",
+  });
+});
+
+test("a cloud computer without a newer node image is refused without publishing", async () => {
+  const store = new RedisComputerUpgradeStore(memoryRedis());
+  const scope = { workspaceId: "workspace-1", computerId: "computer-1" };
+  await store.ready(scope, identity("old", "0.1.3-dev.2", 1), []);
+  const { upgrade, publications } = upgradeComputer({
+    upgrades: store,
+    online: true,
+    cloud: {
+      available: async () => undefined,
+      enqueue: async () => {
+        throw new Error("unexpected enqueue");
+      },
+    },
+  });
+  await expect(
+    upgrade.execute(
+      { workspaceId: "workspace-1", userId: "user-a" },
+      { computerId: "computer-1", requestId: "upgrade-1", placement: "cloud" },
+    ),
+  ).rejects.toMatchObject({ name: "AppError", code: "CONFLICT" });
   expect(publications).toEqual([]);
 });
 

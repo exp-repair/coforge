@@ -21,7 +21,11 @@ type Identity = {
   daemonVersion: string;
   startedAt: number;
 };
-type Stored = ComputerUpgradeStatus & { previousWorkerInstanceId?: string };
+type Stored = ComputerUpgradeStatus & {
+  previousWorkerInstanceId?: string;
+  /** Cloud image replace: the daemon reconnects without recovering this request. */
+  completeOnIdentity?: true;
+};
 /** How long an upgrade request record survives - long enough to poll a Computer to completion. */
 const REQUEST_TTL = 10 * 60;
 const REPLACE = `if redis.call("GET", KEYS[1]) == ARGV[1] then redis.call("SET", KEYS[1], ARGV[2], "EX", ARGV[3]); return 1 end return 0`;
@@ -72,7 +76,12 @@ export class RedisComputerUpgradeStore {
   async identity(scope: Scope): Promise<Identity | undefined> {
     return this.parseIdentity(await this.redis.get(this.identityKey(scope)));
   }
-  async begin(scope: Scope, requestId: string, expectedVersion: string) {
+  async begin(
+    scope: Scope,
+    requestId: string,
+    expectedVersion: string,
+    options?: { completeOnIdentity?: boolean },
+  ) {
     const existingRaw = await this.redis.get(this.requestKey(scope, requestId));
     const existing = existingRaw ? this.parse(existingRaw) : undefined;
     if (existing) return { status: this.public(existing), created: false };
@@ -84,6 +93,7 @@ export class RedisComputerUpgradeStore {
       expectedVersion,
       expiresAt: new Date(this.now() + REQUEST_TTL * 1000).toISOString(),
       previousWorkerInstanceId: current.workerInstanceId,
+      ...(options?.completeOnIdentity ? { completeOnIdentity: true as const } : {}),
     };
     const result = await this.redis.set(
       this.requestKey(scope, requestId),
@@ -155,6 +165,10 @@ export class RedisComputerUpgradeStore {
       const failed = { requestId, status: "failed" as const, reason: "timeout" as const };
       if (await this.replace(scope, requestId, failed)) return failed;
     }
+    if (current.status === "accepted" && current.completeOnIdentity) {
+      const completed = await this.completeFromIdentity(scope, requestId, raw, current);
+      if (completed) return this.public(completed);
+    }
     return this.public(current);
   }
   async ready(scope: Scope, identity: Identity, recoveredIds: readonly string[]) {
@@ -194,6 +208,31 @@ export class RedisComputerUpgradeStore {
     const raw = await this.redis.get(this.identityKey(scope));
     if (!raw || !this.parseIdentity(raw)) return;
     await this.redis.send("EVAL", [STORE_NEWER_IDENTITY, "1", this.identityKey(scope), raw]);
+  }
+  private async completeFromIdentity(
+    scope: Scope,
+    requestId: string,
+    raw: string,
+    current: Stored,
+  ): Promise<Stored | undefined> {
+    if (current.status !== "accepted") return undefined;
+    const identity = await this.identity(scope);
+    if (
+      !identity ||
+      current.previousWorkerInstanceId === identity.workerInstanceId ||
+      current.expectedVersion !== identity.computerVersion ||
+      identity.computerVersion !== identity.daemonVersion
+    )
+      return undefined;
+    const record: Stored = {
+      requestId,
+      status: "completed",
+      expectedVersion: current.expectedVersion,
+      ...identity,
+      completedAt: new Date(this.now()).toISOString(),
+    };
+    if (await this.commitReady(scope, requestId, raw, identity, record)) return record;
+    return undefined;
   }
   private async storeNewerIdentity(scope: Scope, identity: Identity) {
     await this.redis.send("EVAL", [
@@ -250,7 +289,11 @@ export class RedisComputerUpgradeStore {
       ])) === 1
     );
   }
-  private public({ previousWorkerInstanceId: _private, ...value }: Stored) {
+  private public({
+    previousWorkerInstanceId: _previous,
+    completeOnIdentity: _completeOnIdentity,
+    ...value
+  }: Stored) {
     return value;
   }
   private parse(raw: string): Stored | undefined {
