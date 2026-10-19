@@ -9,41 +9,58 @@ const streamEvent = (event: unknown, parentToolUseId: string | null = null) => (
   event,
 });
 const delta = (value: Record<string, unknown>) => ({ type: "content_block_delta", delta: value });
+const progress = {
+  type: "progress",
+  source: "claude_stream_event",
+  occurredAt: timestamp,
+} as const;
 
 describe("claudeStreamEvents", () => {
-  test("renders text and thinking deltas", () => {
+  // Text and thinking reach Activity once per completed content block, from the `assistant`
+  // record (message-events.ts). A delta only shows the turn is live, so no text is shown twice.
+  test("reports a text or thinking delta as progress, without its text", () => {
     expect(claudeStreamEvents(streamEvent(delta({ type: "text_delta", text: "Hi" })))).toEqual([
-      { type: "text-delta", text: "Hi" },
+      progress,
     ]);
     expect(
       claudeStreamEvents(streamEvent(delta({ type: "thinking_delta", thinking: "Hmm" }))),
-    ).toEqual([{ type: "thinking-delta", text: "Hmm" }]);
+    ).toEqual([progress]);
   });
 
-  test("names the parent tool call of a subagent's deltas", () => {
+  test("opens a text or thinking run, with no text, when its content block starts", () => {
     expect(
-      claudeStreamEvents(streamEvent(delta({ type: "text_delta", text: "Hi" }), "toolu_1")),
-    ).toEqual([{ type: "text-delta", text: "Hi", subagent: { parentToolUseId: "toolu_1" } }]);
+      claudeStreamEvents(
+        streamEvent({ type: "content_block_start", content_block: { type: "text", text: "" } }),
+      ),
+    ).toEqual([{ type: "text-delta", text: "" }]);
+    expect(
+      claudeStreamEvents(
+        streamEvent({
+          type: "content_block_start",
+          content_block: { type: "thinking", thinking: "" },
+        }),
+      ),
+    ).toEqual([{ type: "thinking-delta", text: "" }]);
   });
 
   test("reports any other top-level stream event as progress", () => {
-    const progress = {
-      type: "progress",
-      source: "claude_stream_event",
-      occurredAt: timestamp,
-    } as const;
     expect(claudeStreamEvents(streamEvent({ type: "message_start" }))).toEqual([progress]);
     expect(claudeStreamEvents(streamEvent(delta({ type: "input_json_delta" })))).toEqual([
       progress,
     ]);
-    // A delta whose text is not a string renders nothing, so it too only shows the turn is live.
-    expect(claudeStreamEvents(streamEvent(delta({ type: "text_delta", text: 1 })))).toEqual([
-      progress,
-    ]);
+    expect(
+      claudeStreamEvents(
+        streamEvent({ type: "content_block_start", content_block: { type: "tool_use" } }),
+      ),
+    ).toEqual([progress]);
+    expect(claudeStreamEvents(streamEvent({ type: "content_block_stop" }))).toEqual([progress]);
   });
 
-  test("reports nothing for a subagent's non-text event or an event without a type", () => {
+  test("reports nothing for a subagent's stream event or an event without a type", () => {
     expect(claudeStreamEvents(streamEvent({ type: "message_start" }, "toolu_1"))).toEqual([]);
+    expect(
+      claudeStreamEvents(streamEvent(delta({ type: "text_delta", text: "Hi" }), "toolu_1")),
+    ).toEqual([]);
     expect(claudeStreamEvents(streamEvent({}))).toEqual([]);
     expect(claudeStreamEvents(streamEvent(undefined))).toEqual([]);
   });

@@ -2,18 +2,32 @@ import type { AgentRuntimeEvent } from "#src/code-agent/contract";
 import { asRecord, eventTime, textContent } from "#src/code-agent/json-record";
 
 /**
- * What one Claude Code `assistant` record says about tool calls: the id of every `tool_use` block
- * (the calls the turn now waits on) and a `tool-start` for each one that also names its tool. A
- * subagent's call carries its parent tool call. Which ids count as outstanding (top-level only)
+ * What one Claude Code `assistant` record reports, block by block in order: a completed `thinking`
+ * or `text` block's whole text (once; its partial deltas carry none, see `stream-events.ts`), and
+ * for tool calls the id of every `tool_use` block (the calls the turn now waits on) with a
+ * `tool-start` for each one that also names its tool. Empty and redacted blocks show nothing.
+ * A subagent's block carries its parent tool call. Which ids count as outstanding (top-level only)
  * stays with the session.
  */
-export function claudeToolUses(record: Readonly<Record<string, unknown>>): {
+export function claudeAssistantEvents(record: Readonly<Record<string, unknown>>): {
   ids: string[];
   events: AgentRuntimeEvent[];
 } {
   const ids: string[] = [];
   const events: AgentRuntimeEvent[] = [];
+  const subagent =
+    typeof record.parent_tool_use_id === "string"
+      ? { subagent: { parentToolUseId: record.parent_tool_use_id } }
+      : {};
   for (const block of messageContent(record)) {
+    if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking) {
+      events.push({ type: "thinking-delta", text: block.thinking, ...subagent });
+      continue;
+    }
+    if (block?.type === "text" && typeof block.text === "string" && block.text) {
+      events.push({ type: "text-delta", text: block.text, ...subagent });
+      continue;
+    }
     if (block?.type !== "tool_use" || typeof block.id !== "string") continue;
     ids.push(block.id);
     if (typeof block.name !== "string") continue;
@@ -23,9 +37,7 @@ export function claudeToolUses(record: Readonly<Record<string, unknown>>): {
       name: block.name,
       input: block.input,
       occurredAt: eventTime(record),
-      ...(typeof record.parent_tool_use_id === "string"
-        ? { subagent: { parentToolUseId: record.parent_tool_use_id } }
-        : {}),
+      ...subagent,
     });
   }
   return { ids, events };

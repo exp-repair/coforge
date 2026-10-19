@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { claudeToolResults, claudeToolUses } from "#src/code-agent/claude-code/tool-events";
+import {
+  claudeAssistantEvents,
+  claudeToolResults,
+} from "#src/code-agent/claude-code/message-events";
 
 const timestamp = "2026-10-11T10:00:00.000Z";
 const record = (type: string, content: unknown, parentToolUseId: string | null = null) => ({
@@ -9,11 +12,12 @@ const record = (type: string, content: unknown, parentToolUseId: string | null =
   message: { content },
 });
 
-describe("claudeToolUses", () => {
-  test("starts each named tool call and lists every tool_use id", () => {
+describe("claudeAssistantEvents", () => {
+  test("reports each completed block in order and lists every tool_use id", () => {
     expect(
-      claudeToolUses(
+      claudeAssistantEvents(
         record("assistant", [
+          { type: "thinking", thinking: "Planning", signature: "sig" },
           { type: "text", text: "Looking" },
           { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } },
           { type: "tool_use", id: "toolu_2" },
@@ -22,6 +26,8 @@ describe("claudeToolUses", () => {
     ).toEqual({
       ids: ["toolu_1", "toolu_2"],
       events: [
+        { type: "thinking-delta", text: "Planning" },
+        { type: "text-delta", text: "Looking" },
         {
           type: "tool-start",
           id: "toolu_1",
@@ -33,25 +39,46 @@ describe("claudeToolUses", () => {
     });
   });
 
-  test("names the parent tool call of a subagent's tool call", () => {
-    const { events } = claudeToolUses(
+  test("names the parent tool call of a subagent's blocks", () => {
+    const { events } = claudeAssistantEvents(
       record(
         "assistant",
-        [{ type: "tool_use", id: "toolu_2", name: "Read", input: {} }],
+        [
+          { type: "thinking", thinking: "Hmm" },
+          { type: "text", text: "Found it" },
+          { type: "tool_use", id: "toolu_2", name: "Read", input: {} },
+        ],
         "toolu_1",
       ),
     );
     expect(events).toEqual([
+      { type: "thinking-delta", text: "Hmm", subagent: { parentToolUseId: "toolu_1" } },
+      { type: "text-delta", text: "Found it", subagent: { parentToolUseId: "toolu_1" } },
       expect.objectContaining({ id: "toolu_2", subagent: { parentToolUseId: "toolu_1" } }),
     ]);
   });
 
+  test("skips an empty or non-text block", () => {
+    expect(
+      claudeAssistantEvents(
+        record("assistant", [
+          { type: "text", text: "" },
+          { type: "thinking", thinking: "", signature: "sig" },
+          { type: "redacted_thinking", data: "opaque" },
+          { type: "text", text: 1 },
+        ]),
+      ),
+    ).toEqual({ ids: [], events: [] });
+  });
+
   test("a record with no content array or no id reports nothing", () => {
-    expect(claudeToolUses({ type: "assistant", message: { content: "text" } })).toEqual({
+    expect(claudeAssistantEvents({ type: "assistant", message: { content: "text" } })).toEqual({
       ids: [],
       events: [],
     });
-    expect(claudeToolUses(record("assistant", [{ type: "tool_use", name: "Bash" }]))).toEqual({
+    expect(
+      claudeAssistantEvents(record("assistant", [{ type: "tool_use", name: "Bash" }])),
+    ).toEqual({
       ids: [],
       events: [],
     });

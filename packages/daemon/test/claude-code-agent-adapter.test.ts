@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ActivityTrajectory } from "#src/agent-runtime/activity-trajectory";
 import { ClaudeCodeProvider } from "#src/code-agent/claude-code/provider";
 import {
   AGENT_RUNTIME_EVENT_TYPE,
@@ -432,8 +433,16 @@ test("Claude Code maps stream-json turns behind the code-agent seam", async () =
 
     await session.sendMessage("finish");
     await waitForEvent(events, "completed");
+    // The partial delta only shows the turn is live; the text arrives once, from its block.
+    const progress = {
+      type: "progress" as const,
+      source: "claude_stream_event",
+      occurredAt: expect.any(String),
+    };
     expect(events.filter((event) => event.type !== "session")).toEqual([
+      progress,
       { type: "text-delta", text: "Claude response" },
+      progress,
       {
         type: "tool-start",
         id: "tool-1",
@@ -454,6 +463,88 @@ test("Claude Code maps stream-json turns behind the code-agent seam", async () =
     await session.dispose();
   } finally {
     await rm(agentWorkspaceDirectory, { recursive: true, force: true });
+  }
+});
+
+test("Claude Code shows each completed text and thinking block as one Activity row", async () => {
+  // Pauses longer than the trajectory's quiet window used to split a streamed block into rows.
+  const fixture = await controlledClaude();
+  const { session, emit } = fixture;
+  const activities: AgentRuntimeEvent[] = [];
+  const trajectory = new ActivityTrajectory((event) => {
+    if (event.type === "activity") activities.push(event);
+  });
+  session.subscribe((event) => {
+    if (event.type !== "text-delta" || event.text !== "fixture-input-observed")
+      trajectory.accept(event);
+  });
+  const pause = () => Bun.sleep(400);
+  const delta = (value: Record<string, unknown>) => ({
+    type: "stream_event",
+    event: { type: "content_block_delta", delta: value },
+  });
+  const stop = { type: "stream_event", event: { type: "content_block_stop" } };
+  try {
+    await session.sendMessage("wait");
+    await emit(
+      {
+        type: "stream_event",
+        event: { type: "content_block_start", content_block: { type: "thinking", thinking: "" } },
+      },
+      delta({ type: "thinking_delta", thinking: "Let me " }),
+    );
+    await pause();
+    await emit(
+      delta({ type: "thinking_delta", thinking: "think." }),
+      {
+        type: "assistant",
+        message: { content: [{ type: "thinking", thinking: "Let me think." }] },
+      },
+      stop,
+      {
+        type: "stream_event",
+        event: { type: "content_block_start", content_block: { type: "text", text: "" } },
+      },
+      delta({ type: "text_delta", text: "Hel" }),
+    );
+    await pause();
+    await emit(
+      delta({ type: "text_delta", text: "lo" }),
+      { type: "assistant", message: { content: [{ type: "text", text: "Hello" }] } },
+      stop,
+      { type: "result", subtype: "success" },
+    );
+    expect(
+      activities.map((event) =>
+        event.type === "activity" ? [event.activity.detailKind, event.activity.entries] : [],
+      ),
+    ).toEqual([
+      // Run-start markers still flip the status as soon as each block starts.
+      ["thinking_started", undefined],
+      ["thinking_started", [{ kind: "thinking", text: "Let me think." }]],
+      ["thinking_end", undefined],
+      ["model_response_started", undefined],
+      ["model_response_started", [{ kind: "text", text: "Hello" }]],
+    ]);
+  } finally {
+    trajectory.dispose();
+    await fixture.dispose();
+  }
+});
+
+test("Claude Code shows a completed text block that arrives without partial deltas", async () => {
+  const fixture = await controlledClaude();
+  const { session, emit } = fixture;
+  const texts: AgentRuntimeEvent[] = [];
+  session.subscribe((event) => {
+    if (event.type === "text-delta" && event.text !== "fixture-input-observed") texts.push(event);
+  });
+  try {
+    await session.sendMessage("wait");
+    await emit({ type: "assistant", message: { content: [{ type: "text", text: "Only block" }] } });
+    expect(texts).toEqual([{ type: "text-delta", text: "Only block" }]);
+  } finally {
+    await fixture.dispose();
   }
 });
 

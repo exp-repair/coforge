@@ -18,7 +18,9 @@ Activity），因此同一句发言可能拆成多条 Activity 帧；Web 在展�
 subagent 归属、彼此相邻且中间没有其他条目（包括被隐藏渲染的工具调用，例如
 `send_message`）的连续文本（或 thinking）帧合并为一行，按时间先后拼接原文，显示为一个
 段落而不是逐帧的碎片行；已持久化的历史同样在读取时按这条规则合并，不需要改动
-Daemon 或存储。
+Daemon 或存储。Claude Code 例外：与参考 Computer 一致，它的文本/thinking 以完整的
+content block 为单位（来自完整的 `assistant` 消息，每个 block 一次增量）进入这一分批，partial
+stream 增量只作为不带内容的 `progress` 续租；单个 block 超过 2000 个字符时与其他帧一样被截断。
 
 Activity timeline 是完整的按时间顺序工作记录，不是只读最新状态的
 展示层：除忙碌心跳（`is_heartbeat=true`）和 liveness probe 应答（带 `probe_id`）外，其余

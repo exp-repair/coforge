@@ -14,7 +14,7 @@ import { readClaudeCodeContextReport } from "./context-report";
 import type { AgentContextReport } from "@lrm/coforge-sdk/internal";
 import { createPromptFile } from "./prompt-file";
 import { claudeStreamEvents } from "./stream-events";
-import { claudeToolResults, claudeToolUses } from "./tool-events";
+import { claudeAssistantEvents, claudeToolResults } from "./message-events";
 import { claudeStaticCatalog, discoverExternalCodeAgents } from "#src/code-agent/runtime-inventory";
 import type { ProviderDiscoveryOptions } from "#src/code-agent/contract";
 import { asRecord, eventTime, nonEmptyString } from "#src/code-agent/json-record";
@@ -566,7 +566,7 @@ class ClaudeCodeAgentSession implements AgentSession {
       return;
     }
     if (record.type === "assistant") {
-      const { ids, events } = claudeToolUses(record);
+      const { ids, events } = claudeAssistantEvents(record);
       if (record.parent_tool_use_id == null) {
         if (this.#state === "idle") this.#state = "running";
         for (const id of ids) this.#outstandingTools.add(id);

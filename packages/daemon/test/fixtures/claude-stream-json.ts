@@ -179,13 +179,7 @@ function handle(record: Record<string, unknown>): void {
                 ...initialization,
                 session_id: Bun.env.COFORGE_REPORTED_SESSION,
               },
-              {
-                type: "stream_event",
-                event: {
-                  type: "content_block_delta",
-                  delta: { type: "text_delta", text: "wrong-session-output" },
-                },
-              },
+              ...textBlock("wrong-session-output"),
               { type: "result", subtype: "success" },
             ]
               .map((value) => JSON.stringify(value))
@@ -293,13 +287,7 @@ function handle(record: Record<string, unknown>): void {
       message.content !== "New message available. Run coforge message check."
     )
       return;
-    write({
-      type: "stream_event",
-      event: {
-        type: "content_block_delta",
-        delta: { type: "text_delta", text: "Claude response" },
-      },
-    });
+    for (const record of textBlock("Claude response")) write(record);
     write({
       type: "assistant",
       timestamp: "2026-01-02T03:04:05.000Z",
@@ -345,13 +333,22 @@ function inputObserved(): void {
       }
     })();
   }
-  write({
-    type: "stream_event",
-    event: {
-      type: "content_block_delta",
-      delta: { type: "text_delta", text: "fixture-input-observed" },
+  for (const record of textBlock("fixture-input-observed")) write(record);
+}
+
+/**
+ * One text content block as Claude Code streams it with `--include-partial-messages`: its partial
+ * delta, then the complete `assistant` message carrying the block, before `content_block_stop`.
+ */
+function textBlock(text: string): Record<string, unknown>[] {
+  return [
+    {
+      type: "stream_event",
+      event: { type: "content_block_delta", delta: { type: "text_delta", text } },
     },
-  });
+    { type: "assistant", message: { content: [{ type: "text", text }] } },
+    { type: "stream_event", event: { type: "content_block_stop" } },
+  ];
 }
 
 function write(value: unknown): void {
