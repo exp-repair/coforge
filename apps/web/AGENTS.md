@@ -28,9 +28,7 @@ These rules apply to `apps/web`, the TanStack Start Web/backend modular monolith
   Functions and function middleware live in `features/`, not `src/server/`.
 - Import through `#src/` (see the root `AGENTS.md`). Untitled UI's CLI writes
   `@/` imports; rewrite them to `#src/` when adding a component.
-- Route loaders may call Server Functions, but must not access a database,
-  filesystem, secret, or server-only SDK directly. Do not self-fetch a
-  relative `/api/...` URL from an SSR loader.
+- Route loaders may call Server Functions, but must not access a database, filesystem, secret, or server-only SDK directly. Do not self-fetch a relative `/api/...` URL from an SSR loader.
 - Validate Server Function inputs and enforce authorization on the server.
   Router `beforeLoad` guards improve navigation UX but are not a security
   boundary.
@@ -147,6 +145,7 @@ Each line names a directory under `src/` (unless noted) and its single responsib
 - `server/profiles/` — user avatars.
 - `server/projects/` — project settings, images, and repository file download.
 - `server/records/` — Workspace Records (see the last section).
+- `server/release-catalog/` — each app release's notes (en, zh-CN): the self-contained release catalog, its PostgreSQL store, and its REST contract (`/api/release-catalog/v1`), split-ready for its own service.
 - `server/reminders/` — cloud Agent Reminders.
 - `server/tasks/` — the message-backed TaskBoard, the shape a Task command must have, the Tasks page's overview reads, its Task view, history records, and notice wording.
 - `server/workspace-memory/` — memory profiles, grounded offers, explicit task-requested four-role diagnosis, target-only Hint receipts and source ACL checks.
@@ -185,6 +184,7 @@ it, so a deletion trips this as easily as an addition. Reproduce what CI sees be
 - Rules for `src/server/integrations/` → [`src/server/integrations/AGENTS.md`](src/server/integrations/AGENTS.md)
 - Rules for `src/server/notifications/` → [`src/server/notifications/AGENTS.md`](src/server/notifications/AGENTS.md)
 - Rules for `src/server/projects/` → [`src/server/projects/AGENTS.md`](src/server/projects/AGENTS.md)
+- Rules for `src/server/release-catalog/` → [`src/server/release-catalog/AGENTS.md`](src/server/release-catalog/AGENTS.md)
 - Rules for `src/server/reminders/` → [`src/server/reminders/AGENTS.md`](src/server/reminders/AGENTS.md)
 - Rules for `src/server/tasks/` → [`src/server/tasks/AGENTS.md`](src/server/tasks/AGENTS.md)
 - Rules for `src/server/workspaces/` → [`src/server/workspaces/AGENTS.md`](src/server/workspaces/AGENTS.md)

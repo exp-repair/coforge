@@ -769,7 +769,10 @@ export {
   compareReleaseVersions,
   isValidReleaseVersion,
   parseReleaseVersion,
+  COMPUTER_RELEASE_APP,
+  RELEASE_NOTES_MAX_LENGTH,
 } from "./release-version";
+export type { ReleaseNotes } from "./release-version";
 export type { ActivityTrajectoryEntry, ActivitySubagent } from "./activity-entries";
 export type AgentActivity = {
   protocolMajor: number;

@@ -50,7 +50,10 @@ built from both source packages, to the track's own feed (a staging build trusts
 `COFORGE_RELEASE_FEED_URL` than a production build compiles in, so the two
 tracks' `latest` pointers are never the same object):
 
-1. Run the complete local-track gates for the exact `main` commit.
+1. Run the complete local-track gates for the exact `main` commit and, beside
+   them, refuse the run unless it carries [release notes](release-notes.md) in
+   both English and Simplified Chinese, each within 16000 characters. Nothing
+   is built or published unless both pass.
 2. Build the unified Computer executable once for the complete Windows, Linux,
    and macOS platform matrix, with the approved Bun executable targets and the
    same release version injected into both Computer and Daemon roles.
@@ -80,7 +83,10 @@ tracks' `latest` pointers are never the same object):
    [Health verification](health-verification.md#local-computer-distribution)
    against the version it resolves.
 7. Record the version and its manifest checksums as healthy only after every
-   required check passes.
+   required check passes. Register the run's release notes for that version in
+   the staging release catalog and verify the read-back; a failure here leaves
+   the release live without notes, and is repaired with `release-notes.yml`,
+   never by republishing.
 8. On failure, leave the staging feed's `latest` pointing at the last healthy
    version - do not advance it - and record the candidate and its failure.
    For a verified first publication, leave `latest` unpublished; installers

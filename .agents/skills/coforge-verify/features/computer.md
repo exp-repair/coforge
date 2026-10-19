@@ -116,11 +116,24 @@ already has a local binding.
   a "Runtimes" section with "Rescan runtimes" (online only) and a per-runtime
   "Public" switch, and "Agents on this computer (N)" with Select → Start /
   Stop / Restart / Reset (`apps/web/src/features/computers/computer-detail.tsx`).
+  Under the Version row of an outdated Computer the owner sees "Upgrade" and
+  every member sees "What's new" when the release catalog has notes for that
+  version; it opens a dialog titled "What's new in v<version>" ("更新内容" /
+  "v<version> 更新内容" in zh-CN). A non-owner sees "v<version> available"
+  instead of "Upgrade" (`computer-upgrade-slot.tsx`, `computer-release-notes.tsx`).
+  Seed notes with `scripts/release/release-notes.ts --origin http://localhost:<port>`
+  and a token whose SHA-256 is the server's `COFORGE_RELEASE_CATALOG_PUBLISH_TOKEN_SHA256`.
 - **Success**: the tile's status dot is `role="img"` named "Online" or
   "Offline" (`computer-tile.tsx`, `status-dot.tsx`); there is no Online text
   badge. Restart toasts "Restart requested." then "Computer restarted." or
   "Restart did not complete before the deadline. Try again."
 - **Traps**: Usage appears only for runtimes that support it; Pi, CoForge,
   Cursor and OpenCode show no health dot. A successful upgrade only changes the
-  Version row and shows a toast.
+  Version row and shows a toast. No upgrade offer shows when the Web's read of
+  `<COFORGE_RELEASE_FEED_URL>/latest` fails: it has a 3 s timeout, and from a
+  network outside mainland China the CDN often takes longer (observed
+  2026-10-19), so reload until one read succeeds (it is cached 60 s). The HMR
+  dev server stops on an avatar `?inline` import; serve the compiled build with
+  `NODE_ENV=development ./scripts/start-web.sh` instead, which listens on
+  `localhost` (IPv6 `[::1]`), not `127.0.0.1`.
 - **Covered by**: no browser e2e found for this page.

@@ -68,7 +68,7 @@ test("deploy and release jobs restore nothing from the Actions cache", async () 
       }
     }
   }
-  expect(checked).toBe(16);
+  expect(checked).toBe(18);
 });
 
 test("the aggregate gate executes even after failure and rejects missing, skipped, or cancelled required jobs", () => {
@@ -131,11 +131,13 @@ test("CI holds nothing that can deploy or publish", async () => {
 });
 
 test("a push to main starts no deployment or publication", async () => {
-  // Only CI listens for a push; every deploy and release workflow is started by hand.
+  // Only CI listens for a push; every deploy and release workflow is started by hand, and the one
+  // that is also reusable (release-notes.yml) is otherwise called only by those.
   for (const file of new Bun.Glob("*.{yml,yaml}").scanSync(".github/workflows")) {
     if (file === "ci.yml") continue;
     const workflow = Bun.YAML.parse(await Bun.file(`.github/workflows/${file}`).text());
-    expect(Object.keys(workflow.on), file).toEqual(["workflow_dispatch"]);
+    const triggers = Object.keys(workflow.on).filter((trigger) => trigger !== "workflow_call");
+    expect(triggers, file).toEqual(["workflow_dispatch"]);
   }
 });
 
@@ -156,7 +158,8 @@ test("release callers select separate tracks and the Web image waits for the mai
   expect(deploy.jobs.image.if).toBe("needs.gates.outputs.deploy == 'true'");
   expect(deploy.jobs.image.needs).toBe("gates");
   expect(release.jobs.gates.with.track).toBe("local");
-  expect(release.jobs.publish.needs).toBe("gates");
+  // The release-notes check runs beside the gates; publishing waits for both.
+  expect(release.jobs.publish.needs).toEqual(["gates", "notes-check"]);
 });
 
 type Step = {

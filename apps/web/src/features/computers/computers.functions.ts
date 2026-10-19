@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import {
+  COMPUTER_RELEASE_APP,
   encodeDaemonRuntimeProviderModelRefreshRequest,
   isValidReleaseVersion,
   requireRuntimeProvider,
@@ -23,6 +24,7 @@ import {
   setRuntimeVisibilityInputSchema,
   updateComputerDisplayNameInputSchema,
   formatCloudComputerInputSchema,
+  computerReleaseNotesInputSchema,
 } from "./computer.schemas";
 import { declareNoStore } from "#src/features/no-store-response.server";
 import {
@@ -49,6 +51,7 @@ import { getComputerRestartStore } from "#src/server/computers/computer-restart-
 import { getComputerUpgradeStore } from "#src/server/computers/computer-upgrade-store.server";
 import { UpgradeComputer } from "#src/server/computers/upgrade-computer.server";
 import { resolveReleaseFeedUrl } from "#src/server/install/install-script.server";
+import { productionReleaseCatalog } from "#src/server/release-catalog/release-catalog-production.server";
 import {
   computerWorkspaceFilesQuery,
   findOwnedWorkspaceComputer,
@@ -418,6 +421,18 @@ export async function readLatestComputerVersion(
     return null;
   }
 }
+
+/** One Computer release's notes from the release catalog, or `null` when it has none. */
+export const getComputerReleaseNotes = createServerFn({ method: "GET" })
+  .middleware([workspaceUserMiddleware])
+  .validator(computerReleaseNotesInputSchema)
+  .handler(async ({ data }) => {
+    const release = await productionReleaseCatalog().getReleaseNotes(
+      COMPUTER_RELEASE_APP,
+      data.version,
+    );
+    return release ? { version: release.version, notes: release.notes } : null;
+  });
 
 export const getComputerRuntimeCatalog = createServerFn({ method: "GET" })
   .middleware([workspaceUserMiddleware])

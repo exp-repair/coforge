@@ -278,8 +278,8 @@ export function ComputerDetail({
     computer,
     currentVersion,
     latestComputerVersion,
-    canUpgrade: Boolean(onUpgrade) && computer.ownedByCurrentUser,
   });
+  const canUpgrade = Boolean(onUpgrade) && computer.ownedByCurrentUser;
   const upgradeOffer = upgradeSlot && "offer" in upgradeSlot ? upgradeSlot.offer : undefined;
   const canEditDisplayName = computer.ownedByCurrentUser && Boolean(onUpdateDisplayName);
   const runUpgrade = async () => {
@@ -476,6 +476,7 @@ export function ComputerDetail({
                   upgradeSlot && (
                     <ComputerUpgradeSlot
                       slot={upgradeSlot}
+                      canUpgrade={canUpgrade}
                       computerName={label}
                       cloud={isCloud}
                       online={computer.online}

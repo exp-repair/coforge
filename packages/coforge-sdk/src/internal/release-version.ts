@@ -42,3 +42,12 @@ export function compareReleaseVersions(left: string, right: string): number {
   }
   return 0;
 }
+
+/** A release's notes, Markdown, keyed by the locale they are written in. */
+export type ReleaseNotes = { en: string; "zh-CN": string };
+
+/** The release catalog's app for the Computer distribution. */
+export const COMPUTER_RELEASE_APP = "coforge-computer";
+
+/** The release catalog's per-language notes limit, counted after trimming, in UTF-16 code units. */
+export const RELEASE_NOTES_MAX_LENGTH = 16_000;

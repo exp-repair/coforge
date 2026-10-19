@@ -18,8 +18,11 @@
 云应用随 `main` 自动部署。带 `host` 的 Computer 要另外手动发布，并且必须从 `main` 触发，否则发布任务会被跳过：
 
 ```sh
-gh workflow run release-staging.yml --repo lrm-lab/coforge --ref main
+gh workflow run release-staging.yml --repo lrm-lab/coforge --ref main \
+  -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
 ```
+
+中英文 release notes 必填，写法见 [`docs/release/release-notes.md`](../../release/release-notes.md)。
 
 不填版本号时，发布当前开发线的下一个 `0.1.2-dev.N`，并把 `https://releases-staging.coforge.cn/latest` 指到它。这个二进制在编译时写死 `https://staging.coforge.cn`。合并进 `main` 之前发布的版本没有云电脑的 `host`。
 

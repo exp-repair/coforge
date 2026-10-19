@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RUNTIME_PROVIDER } from "@lrm/coforge-sdk/internal";
+import { isValidReleaseVersion, RUNTIME_PROVIDER } from "@lrm/coforge-sdk/internal";
 
 export type ComputerRestartStatus =
   | { requestId: string; status: "accepted"; expiresAt: string }
@@ -76,4 +76,7 @@ export const updateComputerDisplayNameInputSchema = z.object({
 export const formatCloudComputerInputSchema = z.object({
   computerId: z.string().min(1),
   confirmName: z.string().trim().min(1).max(200),
+});
+export const computerReleaseNotesInputSchema = z.object({
+  version: z.string().refine(isValidReleaseVersion),
 });

@@ -13,6 +13,16 @@ on:
           line's next dev build (DEV_LINE below): the smallest unused <line>-dev.<N>.
         required: false
         type: string
+      notes_en:
+        description: >-
+          Release notes in English (Markdown, at most 16000 characters), written for users; required
+          for a publication (docs/release/release-notes.md).
+        required: false
+        type: string
+      notes_zh_cn:
+        description: Release notes in Simplified Chinese (Markdown, at most 16000 characters); required for a publication.
+        required: false
+        type: string
 
       withdraw_version:
         description: "Withdraw this numbered dev version instead of publishing (requires both manifest hashes and restore_version)"
@@ -44,6 +54,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Release notes are required for every publication. Checked beside the gates, they fail the run
+  # before the publish job, which needs both. The inputs are not required in the schema because a
+  # withdrawal publishes nothing and needs none: its run skips the step and the job still succeeds.
+  notes-check:
+    name: Check release notes
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # The script needs Bun alone, not the whole toolchain.
+      - name: Install pinned Bun
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: "2026.9.2"
+          cache: false
+          install_args: bun
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The notes are caller-controlled Markdown: they reach the script only through env vars.
+      - name: Require both languages of release notes
+        if: inputs.withdraw_version == ''
+        env:
+          RELEASE_NOTES_EN: ${{ inputs.notes_en }}
+          RELEASE_NOTES_ZH_CN: ${{ inputs.notes_zh_cn }}
+        run: bun scripts/release/release-notes.ts --check
+
   gates:
     name: Validate
     if: github.ref == 'refs/heads/main'
@@ -56,9 +101,11 @@ jobs:
 
   publish:
     name: Build and publish Computer
-    needs: gates
+    needs: [gates, notes-check]
     runs-on: ubuntu-latest
     environment: staging
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
     # `id-token: write` lets this job mint the GitHub OIDC token it exchanges for the Alibaba
     # Cloud STS credential below; the validation job does not need it.
     permissions:
@@ -209,3 +256,21 @@ jobs:
             echo "- Verified: uploaded bytes, checksums, private storage access, and latest version selector"
             echo "- CDN delivery and complete install/upgrade/rollback acceptance are separate checks."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Registered once `latest` has moved, by the reusable notes workflow, which holds the catalog token
+  # but no OSS credential; `gh run rerun --failed` repeats only this job if the catalog was
+  # unreachable.
+  notes:
+    name: Register release notes
+    needs: publish
+    if: inputs.withdraw_version == ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-notes.yml
+    with:
+      environment: staging
+      version: ${{ needs.publish.outputs.version }}
+      notes_en: ${{ inputs.notes_en }}
+      notes_zh_cn: ${{ inputs.notes_zh_cn }}
+    secrets:
+      COFORGE_RELEASE_CATALOG_TOKEN_STAGING: ${{ secrets.COFORGE_RELEASE_CATALOG_TOKEN_STAGING }}

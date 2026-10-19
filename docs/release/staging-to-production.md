@@ -42,7 +42,9 @@ updating itself from staging. Promotion therefore rebuilds:
    omitting it retains the historical same-version comparison. The candidate
    verifier still checks staging's pointer and manifest, and rejects a manifest
    naming another source. Do not overwrite an existing immutable version to align
-   the channel labels, or use `without_staging` to bypass this comparison.
+   the channel labels, or use `without_staging` to bypass this comparison. The
+   Agent also reads that candidate's [release notes](release-notes.md) from the
+   staging catalog and passes the same English and Chinese text to production.
 2. A human approves or rejects that exact commit and production version. A filename,
    branch, channel name, or unspecified "latest build" approval is invalid.
 3. After approval, the Agent builds the approved commit against the production
@@ -58,9 +60,14 @@ updating itself from staging. Promotion therefore rebuilds:
 6. The Agent re-reads the production feed's `latest` through authenticated OSS
    access, verifies its exact bytes and unsigned-origin 403 guard, runs the
    production local-distribution checks, and records the result.
+7. The workflow registers the release notes for the production version in the
+   production release catalog and verifies the read-back. Notes are text, not
+   an artifact: they are checked before the approval gate, and changing them
+   later with `release-notes.yml` needs no new approval.
 
 `release-installer-production.yml` and `release-production.yml` implement
-steps 1 and 3-6 for the installer and the Computer; the `production` GitHub
+steps 1 and 3-6 for the installer and the Computer, and `release-production.yml`
+also step 7; the `production` GitHub
 Environment's required reviewer is step 2. The installer goes first, because
 `install.sh` reads `installer/latest` from the same feed. The runbook is
 [`operations/production/computer-release.md`](../operations/production/computer-release.md).

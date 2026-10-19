@@ -1,0 +1,115 @@
+name: Edit Computer release notes
+run-name: Edit Computer ${{ inputs.version }} release notes in ${{ inputs.environment }}
+
+# Registers one published version's release notes in one environment's release catalog and verifies
+# the read-back (docs/release/release-notes.md). The Computer publications call it once `latest` has
+# moved; dispatched by hand, it rewrites the notes of an already-published version. It is the one
+# place that maps an environment to its catalog origin and token. It changes notes text only, never
+# a release artifact or `latest`, so it holds neither an OSS credential nor the `production` GitHub
+# Environment's approval gate. Called, `github.ref` is the caller's, which publishes only from main.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Release catalog to write, staging or production
+        required: true
+        type: string
+      version:
+        description: Published version whose notes to register
+        required: true
+        type: string
+      notes_en:
+        description: Release notes in English (Markdown, at most 16000 characters)
+        required: true
+        type: string
+      notes_zh_cn:
+        description: Release notes in Simplified Chinese (Markdown, at most 16000 characters)
+        required: true
+        type: string
+    # A caller passes only the token of the catalog it names.
+    secrets:
+      COFORGE_RELEASE_CATALOG_TOKEN_STAGING:
+        required: false
+      COFORGE_RELEASE_CATALOG_TOKEN_PRODUCTION:
+        required: false
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Release catalog to write
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: Published version whose notes to replace, e.g. 0.1.3-dev.4 or 0.1.2
+        required: true
+        type: string
+      notes_en:
+        description: Release notes in English (Markdown, at most 16000 characters), written for users.
+        required: true
+        type: string
+      notes_zh_cn:
+        description: Release notes in Simplified Chinese (Markdown, at most 16000 characters).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-notes-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  notes:
+    name: Publish release notes
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # The script needs Bun alone, not the whole toolchain.
+      - name: Install pinned Bun
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: "2026.9.2"
+          cache: false
+          install_args: bun
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # One step per environment, each naming only its own secret: the inputs are caller-controlled
+      # text and reach the script only through env vars, which it validates before any request.
+      - name: Publish and verify release notes in the staging catalog
+        if: inputs.environment == 'staging'
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_NOTES_EN: ${{ inputs.notes_en }}
+          RELEASE_NOTES_ZH_CN: ${{ inputs.notes_zh_cn }}
+          COFORGE_RELEASE_CATALOG_TOKEN: ${{ secrets.COFORGE_RELEASE_CATALOG_TOKEN_STAGING }}
+        run: |
+          bun scripts/release/release-notes.ts \
+            --origin "https://staging.coforge.cn" \
+            --version "$INPUT_VERSION"
+          echo "- Release notes: registered for ${INPUT_VERSION} at https://staging.coforge.cn" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish and verify release notes in the production catalog
+        if: inputs.environment == 'production'
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_NOTES_EN: ${{ inputs.notes_en }}
+          RELEASE_NOTES_ZH_CN: ${{ inputs.notes_zh_cn }}
+          COFORGE_RELEASE_CATALOG_TOKEN: ${{ secrets.COFORGE_RELEASE_CATALOG_TOKEN_PRODUCTION }}
+        run: |
+          bun scripts/release/release-notes.ts \
+            --origin "https://coforge.cn" \
+            --version "$INPUT_VERSION"
+          echo "- Release notes: registered for ${INPUT_VERSION} at https://coforge.cn" >> "$GITHUB_STEP_SUMMARY"

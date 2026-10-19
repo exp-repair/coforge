@@ -58,6 +58,13 @@ previous release, restore `latest`, then delete the erroneous version's 14
 objects with authenticated absence checks. See [Rollback](rollback.md#withdraw-a-mistakenly-published-staging-version).
 This operation does not replace published versions or evict CDN caches.
 
+Release notes are implemented by `scripts/release/release-notes.ts`: both
+Computer publication workflows check the `notes_en`/`notes_zh_cn` inputs before
+building and register them in the environment's Web release catalog after
+`latest` moves by calling `release-notes.yml`, which also rewrites them later. The catalog's
+publish tokens are the repository secrets `COFORGE_RELEASE_CATALOG_TOKEN_STAGING`
+and `COFORGE_RELEASE_CATALOG_TOKEN_PRODUCTION`; see [Release notes](release-notes.md).
+
 Platform coverage and remaining acceptance gaps are explicit:
 
 - **Platform matrix**: `publish.ts --targets` defaults to all six targets:

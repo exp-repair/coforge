@@ -122,6 +122,7 @@ import { Route as ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdHtmlRouteImport
 import { Route as ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdPresentationRouteImport } from './routes/api/workspaces/$workspaceSlug/weekly-reports/$reportId/presentation'
 import { Route as WWorkspaceSlugProjectsProjectSlugTreeSplatRouteImport } from './routes/w.$workspaceSlug/projects.$projectSlug_.tree.$'
 import { Route as WWorkspaceSlugRecordsWeeksYearWeekRouteImport } from './routes/w.$workspaceSlug/records.weeks.$year.$week'
+import { Route as ApiReleaseCatalogV1AppsAppReleasesVersionRouteImport } from './routes/api/release-catalog/v1/apps/$app/releases/$version'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -749,6 +750,12 @@ const WWorkspaceSlugRecordsWeeksYearWeekRoute =
     path: '/weeks/$year/$week',
     getParentRoute: () => WWorkspaceSlugRecordsRoute,
   } as any)
+const ApiReleaseCatalogV1AppsAppReleasesVersionRoute =
+  ApiReleaseCatalogV1AppsAppReleasesVersionRouteImport.update({
+    id: '/api/release-catalog/v1/apps/$app/releases/$version',
+    path: '/api/release-catalog/v1/apps/$app/releases/$version',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -862,6 +869,7 @@ export interface FileRoutesByFullPath {
   '/api/workspaces/$workspaceSlug/weekly-reports/$reportId/presentation': typeof ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdPresentationRoute
   '/w/$workspaceSlug/projects/$projectSlug/tree/$': typeof WWorkspaceSlugProjectsProjectSlugTreeSplatRoute
   '/w/$workspaceSlug/records/weeks/$year/$week': typeof WWorkspaceSlugRecordsWeeksYearWeekRoute
+  '/api/release-catalog/v1/apps/$app/releases/$version': typeof ApiReleaseCatalogV1AppsAppReleasesVersionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -973,6 +981,7 @@ export interface FileRoutesByTo {
   '/api/workspaces/$workspaceSlug/weekly-reports/$reportId/presentation': typeof ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdPresentationRoute
   '/w/$workspaceSlug/projects/$projectSlug/tree/$': typeof WWorkspaceSlugProjectsProjectSlugTreeSplatRoute
   '/w/$workspaceSlug/records/weeks/$year/$week': typeof WWorkspaceSlugRecordsWeeksYearWeekRoute
+  '/api/release-catalog/v1/apps/$app/releases/$version': typeof ApiReleaseCatalogV1AppsAppReleasesVersionRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -1089,6 +1098,7 @@ export interface FileRoutesById {
   '/api/workspaces/$workspaceSlug/weekly-reports/$reportId/presentation': typeof ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdPresentationRoute
   '/w/$workspaceSlug/projects/$projectSlug_/tree/$': typeof WWorkspaceSlugProjectsProjectSlugTreeSplatRoute
   '/w/$workspaceSlug/records/weeks/$year/$week': typeof WWorkspaceSlugRecordsWeeksYearWeekRoute
+  '/api/release-catalog/v1/apps/$app/releases/$version': typeof ApiReleaseCatalogV1AppsAppReleasesVersionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -1204,6 +1214,7 @@ export interface FileRouteTypes {
     | '/api/workspaces/$workspaceSlug/weekly-reports/$reportId/presentation'
     | '/w/$workspaceSlug/projects/$projectSlug/tree/$'
     | '/w/$workspaceSlug/records/weeks/$year/$week'
+    | '/api/release-catalog/v1/apps/$app/releases/$version'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -1315,6 +1326,7 @@ export interface FileRouteTypes {
     | '/api/workspaces/$workspaceSlug/weekly-reports/$reportId/presentation'
     | '/w/$workspaceSlug/projects/$projectSlug/tree/$'
     | '/w/$workspaceSlug/records/weeks/$year/$week'
+    | '/api/release-catalog/v1/apps/$app/releases/$version'
   id:
     | '__root__'
     | '/'
@@ -1430,6 +1442,7 @@ export interface FileRouteTypes {
     | '/api/workspaces/$workspaceSlug/weekly-reports/$reportId/presentation'
     | '/w/$workspaceSlug/projects/$projectSlug_/tree/$'
     | '/w/$workspaceSlug/records/weeks/$year/$week'
+    | '/api/release-catalog/v1/apps/$app/releases/$version'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1511,6 +1524,7 @@ export interface RootRouteChildren {
   ApiWorkspacesWorkspaceIdUsersUserIdAvatarRoute: typeof ApiWorkspacesWorkspaceIdUsersUserIdAvatarRoute
   ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdHtmlRoute: typeof ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdHtmlRoute
   ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdPresentationRoute: typeof ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdPresentationRoute
+  ApiReleaseCatalogV1AppsAppReleasesVersionRoute: typeof ApiReleaseCatalogV1AppsAppReleasesVersionRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -2306,6 +2320,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WWorkspaceSlugRecordsWeeksYearWeekRouteImport
       parentRoute: typeof WWorkspaceSlugRecordsRoute
     }
+    '/api/release-catalog/v1/apps/$app/releases/$version': {
+      id: '/api/release-catalog/v1/apps/$app/releases/$version'
+      path: '/api/release-catalog/v1/apps/$app/releases/$version'
+      fullPath: '/api/release-catalog/v1/apps/$app/releases/$version'
+      preLoaderRoute: typeof ApiReleaseCatalogV1AppsAppReleasesVersionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -2567,6 +2588,8 @@ const rootRouteChildren: RootRouteChildren = {
     ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdHtmlRoute,
   ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdPresentationRoute:
     ApiWorkspacesWorkspaceSlugWeeklyReportsReportIdPresentationRoute,
+  ApiReleaseCatalogV1AppsAppReleasesVersionRoute:
+    ApiReleaseCatalogV1AppsAppReleasesVersionRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

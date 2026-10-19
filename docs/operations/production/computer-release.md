@@ -89,8 +89,14 @@ commit ([Staging to production](../../release/staging-to-production.md#local-com
 The `production` GitHub Environment's required reviewer approves the run, whose
 title names the exact version and commit.
 
-1. Publish a numbered development version to staging, and test it there:
-   `gh workflow run release-staging.yml --repo lrm-lab/coforge -f version=0.1.3-dev.1`.
+1. Publish a numbered development version to staging, with its
+   [release notes](../../release/release-notes.md), and test it there:
+
+   ```sh
+   gh workflow run release-staging.yml --repo lrm-lab/coforge -f version=0.1.3-dev.1 \
+     -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
+   ```
+
    Leave `version` empty to select the configured line's next unused development
    number. Staging rejects stable or unnumbered version inputs.
 2. Read the commit staging published it from:
@@ -106,12 +112,16 @@ title names the exact version and commit.
      -f commit=<installer commit> -f version=<installer version>
    ```
 
-4. Publish the Computer with the approved stable version and the separate
-   staging evidence version:
+4. Publish the Computer with the approved stable version, the separate
+   staging evidence version, and the staging candidate's release notes (read
+   from the staging catalog as
+   [Release notes](../../release/release-notes.md#production-reuses-the-staging-candidates-notes)
+   shows):
 
    ```sh
    gh workflow run release-production.yml --repo lrm-lab/coforge \
-     -f commit=<commit> -f version=0.1.2 -f staging_version=0.1.3-dev.1
+     -f commit=<commit> -f version=0.1.2 -f staging_version=0.1.3-dev.1 \
+     -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
    ```
 
 Each workflow first checks, without credentials, that the commit is on `main`

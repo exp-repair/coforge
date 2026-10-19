@@ -86,20 +86,18 @@ export function isPrereleaseVersion(version: string | null | undefined): boolean
 }
 
 /**
- * The release its owner is offered for a Computer, in full, or none: a cloud Computer's newer
- * image, or for a local one the latest release when it is newer than the running one. Only the
- * owner can upgrade, so nobody else is offered one (features/computers/AGENTS.md).
+ * The release a Computer could move to, in full, or none: a cloud Computer's newer image, or for a
+ * local one the latest release when it is newer than the running one. Every member is told; only
+ * the owner can act on it (features/computers/AGENTS.md).
  */
-export function offeredUpdateVersion(
+export function availableUpdateVersion(
   computer: {
     kind: string;
-    ownedByCurrentUser: boolean;
     computerVersion?: string | null;
     imageUpdate?: { version: string } | null;
   },
   latestComputerVersion: string | null | undefined,
 ): string | undefined {
-  if (!computer.ownedByCurrentUser) return undefined;
   if (computerKind(computer.kind) === "cloud") return computer.imageUpdate?.version;
   return isComputerUpdateAvailable(computer.computerVersion, latestComputerVersion)
     ? (latestComputerVersion ?? undefined)

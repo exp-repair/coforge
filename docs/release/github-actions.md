@@ -4,16 +4,23 @@
 | ------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------- |
 | **CI**                         | A pull request is opened or updated, or a commit reaches `main` | Plan checks → validate affected packages and scripts → CI passed |
 | **Deploy Web (staging)**       | Manually started from `main`        | Validate → build and push Docker image → deploy and verify Web                           |
-| **Publish Computer (staging)** | Manually started from `main`        | Validate → build all six platforms → upload and verify release → update staging `latest` |
+| **Publish Computer (staging)** | Manually started from `main` with release notes | Check the notes and validate → build all six platforms → upload and verify release → update staging `latest` → register the notes |
 | **Publish installer (staging)** | Manually started from `main`       | Validate → plan → build each target natively → package, upload, and verify, write the manifest, and update `installer/latest`; or with `pointer_only` move that pointer alone |
 | **Publish installer (production)** | Manually started from `main` with an approved commit and version | Verify staging published it → approval → plan → build that commit natively against the production feed → package, upload, and verify, and update `installer/latest`; or with `pointer_only` move that pointer alone |
-| **Publish Computer (production)** | Manually started from `main` with an approved commit and stable version | Verify the selected staging version's `latest` and manifest identify that commit → approval → build that commit against the production feed → upload and verify → update production `latest` |
+| **Publish Computer (production)** | Manually started from `main` with an approved commit, stable version, and release notes | Check the notes and verify the selected staging version's `latest` and manifest identify that commit → approval → build that commit against the production feed → upload and verify → update production `latest` → register the notes |
+| **Edit Computer release notes** | Manually started from `main` with an environment, a published version, and notes; also called by both Computer publications | Replace that version's notes in the environment's release catalog and verify the read-back |
 
 Every staging workflow is manual. A Web deployment validates, builds, and
 deploys the selected `main` commit whatever it changed. Computer publication's
 run title includes the version. Its build, upload, integrity checks, and
 selector update stay together in one publication transaction; expand that step
 to see each platform and object.
+
+Both Computer publications take the `notes_en` and `notes_zh_cn` inputs and
+fail before building when either is missing, blank, or longer than 16000
+characters; once `latest` has moved, a `notes` job calls `release-notes.yml`
+to register them in that environment's release catalog. Staging's inputs are optional in the schema
+only because a withdrawal needs none. See [Release notes](release-notes.md).
 
 `Validate` reuses CI. Package jobs run tests, static checks, and a build where
 applicable. The Web deployment omits the preliminary package build: Docker

@@ -22,7 +22,11 @@ These rules apply to `src/features/computers/`.
 - An upgrade's status is polled and settled only by `ComputerUpgradeWatcher`, mounted in the
   Workspace shell so it survives leaving the Computers page. The detail observes the same query
   without polling, and the list reads loader data (`computer-upgrade-status.ts`).
-- Only the owner, who can upgrade, is told an update is waiting: the list tile's badge and the
-  detail's upgrade slot. A running or failed upgrade shows to every member; Upgrade and Retry
-  stay the owner's. Versions always show in full (`0.1.4-dev.2`, never `dev.2`). A success has no
-  inline slot: the Version row changes, and the watcher's toast confirms it (§13).
+- Every member is told an update is waiting: the list tile's badge and the detail's upgrade slot,
+  which for a member who is not the owner is a plain "v{X} available" line, never a request to ask
+  the owner. A running or failed upgrade shows to every member; Upgrade and Retry stay the owner's.
+  Versions always show in full (`0.1.4-dev.2`, never `dev.2`). A success has no inline slot: the
+  Version row changes, and the watcher's toast confirms it (§13).
+- The slot's "What's new" opens the notes the release catalog (`server/release-catalog/`) holds for
+  the release on offer or being installed, in the UI's language with the other as fallback. No
+  notes, or a failed read, means no link and never an error; it never holds up Upgrade.

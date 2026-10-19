@@ -19,7 +19,8 @@ import { ProgressSteps } from "#src/components/ui/progress-steps";
 import { useSubmitGuard } from "#src/hooks/use-submit-guard";
 import { m } from "#src/paraglide/messages";
 import { cloudImageUpdateConsequences } from "./cloud-image-update";
-import { isPrereleaseVersion, offeredUpdateVersion } from "./computer-identity";
+import { ComputerReleaseNotesLink, useComputerRelease } from "./computer-release-notes";
+import { availableUpdateVersion, isPrereleaseVersion } from "./computer-identity";
 import type { ComputerUpgradeOutcome, UpgradeRequestErrorCopy } from "./upgrade-failure";
 
 /** An upgrade this panel asked for, with the release it asked for: in flight, held by the server,
@@ -31,7 +32,8 @@ export type ComputerUpgradeRequest =
   | ({ state: "refused"; version?: string } & UpgradeRequestErrorCopy);
 
 /** What the slot under the Version row shows (rules in features/computers/AGENTS.md). `offer` is
- * the release the owner can install from it; `version` the release an upgrade was to install. */
+ * the newer release, which an available slot installs and a failed one retries; `version` the
+ * release an upgrade was to install. */
 export type ComputerUpgradeSlotState =
   | { state: "available"; offer: string }
   | { state: "upgrading"; version?: string; delivered: boolean }
@@ -39,8 +41,9 @@ export type ComputerUpgradeSlotState =
 
 /**
  * The slot's one reading of an upgrade, this panel's own request and the Computer: running and
- * failed upgrades for everyone, a newer release for its owner, nothing otherwise. A stored failure
- * names no release; one this panel requested names the release it asked for.
+ * failed upgrades and a newer release for everyone, with Upgrade and Retry only for its owner,
+ * nothing otherwise. A stored failure names no release; one this panel requested names the release
+ * it asked for.
  */
 export function upgradeSlotState({
   upgrade,
@@ -48,27 +51,23 @@ export function upgradeSlotState({
   computer,
   currentVersion,
   latestComputerVersion,
-  canUpgrade,
 }: {
   upgrade: ComputerUpgradeOutcome | { state: "idle" };
   request: ComputerUpgradeRequest;
-  computer: Parameters<typeof offeredUpdateVersion>[0];
+  computer: Parameters<typeof availableUpdateVersion>[0];
   /** The version it runs, or the one an upgrade here just reached. */
   currentVersion: string | null | undefined;
   latestComputerVersion: string | null | undefined;
-  canUpgrade: boolean;
 }): ComputerUpgradeSlotState | null {
   // An upgrade that just succeeded used up a cloud Computer's image offer too.
-  const offer = canUpgrade
-    ? offeredUpdateVersion(
-        {
-          ...computer,
-          computerVersion: currentVersion,
-          imageUpdate: upgrade.state === "succeeded" ? null : computer.imageUpdate,
-        },
-        latestComputerVersion,
-      )
-    : undefined;
+  const offer = availableUpdateVersion(
+    {
+      ...computer,
+      computerVersion: currentVersion,
+      imageUpdate: upgrade.state === "succeeded" ? null : computer.imageUpdate,
+    },
+    latestComputerVersion,
+  );
   const requested = request.state === "idle" ? undefined : request.version;
   if (upgrade.state === "running")
     return {
@@ -86,24 +85,41 @@ export function upgradeSlotState({
   return offer ? { state: "available", offer } : null;
 }
 
-/** The bordered area under a Computer's Version row. `onUpgrade` opens the confirmation. */
+/** The release a slot is about: the one on offer, the one an upgrade is installing, or after a
+ * failure the one Retry would install (the release that failed when nothing newer is on offer). */
+function slotRelease(slot: ComputerUpgradeSlotState): string | undefined {
+  if (slot.state === "available") return slot.offer;
+  if (slot.state === "upgrading") return slot.version;
+  return slot.offer ?? slot.version;
+}
+
+/** The bordered area under a Computer's Version row, with that release's "What's new" when the
+ * catalog has notes for it. Upgrade and Retry show only when `canUpgrade` (the owner); `onUpgrade`
+ * opens the confirmation. */
 export function ComputerUpgradeSlot({
   slot,
+  canUpgrade,
   computerName,
   cloud,
   online,
   onUpgrade,
 }: {
   slot: ComputerUpgradeSlotState;
+  canUpgrade: boolean;
   computerName: string;
   cloud: boolean;
   online: boolean;
   onUpgrade: () => void;
 }) {
+  const release = useComputerRelease(slotRelease(slot));
+  const retry = canUpgrade && slot.state === "failed" && slot.offer !== undefined;
+  const whatsNew = release && <ComputerReleaseNotesLink release={release} />;
+
   if (slot.state === "upgrading")
     return (
       <Alert
         color="brand"
+        actions={whatsNew}
         className="mt-3"
         icon={
           <FeaturedIcon
@@ -188,22 +204,43 @@ export function ComputerUpgradeSlot({
           </>
         }
         actions={
-          slot.offer && (
-            <Button
-              type="button"
-              size="sm"
-              color="secondary"
-              iconLeading={RotateCw}
-              isDisabled={!online}
-              onPress={onUpgrade}
-            >
-              {m.computer_upgrade_retry()}
-            </Button>
+          (whatsNew || retry) && (
+            <>
+              {whatsNew}
+              {retry && (
+                <Button
+                  type="button"
+                  size="sm"
+                  color="secondary"
+                  iconLeading={RotateCw}
+                  isDisabled={!online}
+                  onPress={onUpgrade}
+                >
+                  {m.computer_upgrade_retry()}
+                </Button>
+              )}
+            </>
           )
         }
       />
     );
   }
+
+  // A member who cannot upgrade is told the release exists, and nothing they cannot act on.
+  if (!canUpgrade)
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-secondary">
+        <span className="min-w-0 wrap-anywhere">
+          {m.computer_upgrade_available_notice({ version: slot.offer })}
+        </span>
+        {isPrereleaseVersion(slot.offer) && (
+          <Badge type="pill-color" color="warning" size="sm">
+            {m.computer_upgrade_prerelease()}
+          </Badge>
+        )}
+        {whatsNew}
+      </div>
+    );
 
   return (
     <Alert
@@ -234,9 +271,12 @@ export function ComputerUpgradeSlot({
             : m.computer_upgrade_available_body({ name: computerName })
       }
       actions={
-        <Button type="button" size="sm" color="primary" isDisabled={!online} onPress={onUpgrade}>
-          {cloud ? m.computer_cloud_image_update_action() : m.computer_upgrade()}
-        </Button>
+        <>
+          {whatsNew}
+          <Button type="button" size="sm" color="primary" isDisabled={!online} onPress={onUpgrade}>
+            {cloud ? m.computer_cloud_image_update_action() : m.computer_upgrade()}
+          </Button>
+        </>
       }
     />
   );

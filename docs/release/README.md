@@ -62,6 +62,7 @@ Read this overview first, then the topic files the task needs.
 | [Feed hosting and installation entry points](local-feed-hosting.md) | Release and file CDN domains, per-deployment installer URLs, origin privacy, and cache policy              |
 | [Installer feed and release workflow](installer-feed.md)            | The `installer/` feed layout, its write-once versions, the installer's manual release workflow, `pointer_only`, and the product gate |
 | [Per-user installation](per-user-installation.md)                   | Installation paths, PATH shims, version store, launchers, selection modes, and environment-bound builds    |
+| [Release notes](release-notes.md)                                   | The required English and Chinese notes of every Computer publication, the release catalog, and editing them later |
 | [Reading GitHub Actions](github-actions.md)                         | The CI, Web deploy, and Computer publish workflows, check selection, and version naming                    |
 | [Main to staging](main-to-staging.md)                               | The operator-dispatched cloud deployment and local publication paths to staging                            |
 | [Staging to production](staging-to-production.md)                   | The two-party production promotion for each track                                                          |

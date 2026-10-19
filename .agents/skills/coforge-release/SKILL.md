@@ -18,6 +18,9 @@ follow [`AGENTS.md`](../../../AGENTS.md) for Issue, branch, review, and decision
 - **Publish test**: execute the documented cloud deployment or unified
   six-platform Computer development publication to staging. Computer and
   Daemon are built together under one version, not separately promoted peers.
+- **Edit release notes**: replace the notes of an already-published Computer
+  version with `release-notes.yml`. It changes notes text only and needs no
+  production approval.
 - **Install local**: install the selected Computer installation bundle through
   the reviewed per-user installer and version store.
 - **Prepare production**: assemble the exact-artifact approval packet, then
@@ -48,6 +51,15 @@ follow [`AGENTS.md`](../../../AGENTS.md) for Issue, branch, review, and decision
   [Main to staging](../../../docs/release/main-to-staging.md), including its
   [Health verification](../../../docs/release/health-verification.md) and audit record,
   only through the implemented interface.
+- **Release notes**: every Computer publication, staging or production, needs
+  notes in English and Simplified Chinese. Follow
+  [Release notes](../../../docs/release/release-notes.md): write Markdown for
+  users (what changed for them since the previous production version, not
+  commit subjects), at most 16000 characters each, save each language to a file,
+  and pass it as `-f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"`.
+  For production, reuse the staging candidate's notes read from the staging
+  catalog. If a run's `notes` job fails, rerun that job or use
+  `release-notes.yml`; never republish the version.
 - **Install local**: use one selection mode in
   [Per-user installation](../../../docs/release/per-user-installation.md), then apply the
   local [Health verification](../../../docs/release/health-verification.md#local-computer-distribution)

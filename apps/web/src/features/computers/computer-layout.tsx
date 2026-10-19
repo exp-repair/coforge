@@ -27,7 +27,7 @@ import { Tooltip, TooltipTrigger } from "#src/components/base/tooltip/tooltip";
 import { Button } from "#src/components/base/buttons/button";
 import { avatarInitial, avatarToneClassName } from "#src/lib/avatar-tone";
 import { humanLabel } from "#src/lib/human-label";
-import { computerVersionLabel, offeredUpdateVersion } from "./computer-identity";
+import { availableUpdateVersion, computerVersionLabel } from "./computer-identity";
 import type { ComputerUpgradeStatus } from "./computer.schemas";
 import { upgradeRunning } from "./computer-upgrade-status";
 
@@ -39,7 +39,6 @@ export type ComputerListItem = ComputerIdentity &
     imageUpdate?: { version: string } | null;
     /** This Computer's latest upgrade while the server keeps its record; `null` when none. */
     upgrade?: ComputerUpgradeStatus | null;
-    ownedByCurrentUser: boolean;
     creator?: {
       username: string;
       displayName: string | null;
@@ -117,7 +116,10 @@ export function ComputerLayout({
                     <ComputerTile
                       computer={computer}
                       online={computer.online}
-                      updateAvailableVersion={offeredUpdateVersion(computer, latestComputerVersion)}
+                      updateAvailableVersion={availableUpdateVersion(
+                        computer,
+                        latestComputerVersion,
+                      )}
                       upgrading={upgradeRunning(computer.upgrade)}
                     />
                     <span className="flex min-w-0 flex-1 flex-col gap-1">

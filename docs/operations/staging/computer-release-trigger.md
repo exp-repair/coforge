@@ -2,13 +2,20 @@
 
 云应用的 staging 部署（见 [README](README.md)）和本地 Computer/Daemon 发布都是手动的（见
 [`docs/release/local-distribution.md`](../../release/local-distribution.md)）：只挂
-`workflow_dispatch`，不挂 `on: push`。触发一次 staging 发布：
+`workflow_dispatch`，不挂 `on: push`。每次发布都必须带中英文 release notes（见
+[`docs/release/release-notes.md`](../../release/release-notes.md)），缺一种语言会在构建前失败。
+触发一次 staging 发布：
 
 ```sh
-gh workflow run release-staging.yml --repo lrm-lab/coforge
+gh workflow run release-staging.yml --repo lrm-lab/coforge \
+  -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
 # 或指定版本号；不填则发布当前版本线（workflow 的 DEV_LINE）下一个未用的 <line>-dev.<N>，从 1 开始
-gh workflow run release-staging.yml --repo lrm-lab/coforge -f version=0.2.0-rc.1
+gh workflow run release-staging.yml --repo lrm-lab/coforge -f version=0.1.3-dev.5 \
+  -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
 ```
+
+发布后要改 notes，用 `release-notes.yml`，不要重发版本。只有最后的 `notes` job 失败时，
+版本已经上线、只是没有 notes：`gh run rerun <run-id> --failed` 只重跑这个 job。
 
 **已发布的版本不可覆盖。** 发布前脚本会先探测 `<version>/manifest.json`，已存在就直接
 报错退出——CDN 对 `<version>/*` 缓存 365 天，重发同一个版本号会让不同边缘节点长期返回
