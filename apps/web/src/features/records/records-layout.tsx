@@ -255,11 +255,14 @@ export function RecordsLayout({
 
   return (
     <FormatEditHintContext value={setFormatEditing}>
-      <main className="flex h-full min-w-0 bg-primary">
+      <main
+        data-panel-cards
+        className="flex h-full min-w-0 flex-col bg-primary lg:flex-row lg:gap-2 lg:bg-transparent"
+      >
         <nav
           aria-label={m.records_list_label()}
           className={cn(
-            "min-w-0 flex-col overflow-hidden border-secondary bg-primary md:flex md:w-72 md:shrink-0 md:border-r xl:w-80",
+            "min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-primary lg:flex lg:w-72 lg:flex-none lg:rounded-xl",
             listHidden ? "hidden" : "flex w-full",
           )}
         >
@@ -378,9 +381,9 @@ export function RecordsLayout({
                                   enterSection("myReports");
                                   setShowMobileList(false);
                                 }}
-                                className={cn(unread && "bg-brand-primary_alt font-semibold")}
+                                className={cn(unread && "font-semibold")}
                               >
-                                <WeekBadge week={item.week} />
+                                <WeekBadge week={item.week} className="size-6" />
                                 <span className="min-w-0 flex-1 truncate">{item.title}</span>
                                 {sent ? (
                                   <span className="ml-auto shrink-0 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-tertiary">
@@ -471,7 +474,7 @@ export function RecordsLayout({
                                   }}
                                   className="min-w-0 flex-1 font-medium"
                                 >
-                                  <WeekBadge week={week.week} />
+                                  <WeekBadge week={week.week} className="size-6" />
                                   <span className="truncate">{week.title}</span>
                                 </RecordLink>
                               </div>
@@ -651,8 +654,8 @@ export function RecordsLayout({
 
         <section
           className={cn(
-            "min-w-0 flex-1 flex-col overflow-hidden bg-primary md:flex",
-            listHidden ? "flex" : "hidden md:flex",
+            "min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-primary lg:flex lg:rounded-xl",
+            listHidden ? "flex" : "hidden",
           )}
         >
           <BackToRecordsContext value={() => setShowMobileList(true)}>
@@ -733,11 +736,13 @@ function FormatChipSlot({
   );
 
   const chipClassName = cn(
-    "flex min-h-10 w-full items-center justify-center gap-2 rounded-full px-3 py-2 text-sm font-medium transition-colors",
-    sendArmed ? "bg-brand-primary text-brand-secondary" : "bg-secondary text-tertiary",
-    chip.interactive && !sendArmed && "hover:bg-secondary_hover",
+    "flex min-h-9 w-full items-center gap-2 rounded-xl border px-2 py-2 text-sm font-medium transition-colors",
+    sendArmed
+      ? "border-transparent bg-brand-primary text-brand-secondary"
+      : "border-transparent text-secondary",
+    chip.interactive && !sendArmed && "hover:bg-primary_hover",
     !chip.interactive && "cursor-not-allowed opacity-60",
-    selected && sendArmed && "ring-1 ring-brand",
+    selected && "border-chat-selected-border bg-chat-selected-bg text-brand-secondary",
   );
 
   if (!chip.interactive || !chip.id) {
@@ -817,7 +822,7 @@ function CollapsibleSection({
               className={cn("size-4 transition-transform", open && "rotate-180")}
             />
           }
-          className="min-w-0 flex-1 justify-start px-1 text-left text-sm text-primary"
+          className="min-w-0 flex-1 justify-start px-2 text-left text-sm font-medium text-primary uppercase"
         >
           <span className="truncate">{title}</span>
           {marker ? (
@@ -854,8 +859,10 @@ function RecordLink({
       resetScroll={false}
       onClick={onSelect}
       className={cn(
-        "flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-primary transition-colors hover:bg-primary_hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand",
-        selected && "bg-primary_hover font-medium",
+        "flex min-w-0 items-center gap-2 rounded-xl border p-2 text-sm transition duration-100 ease-linear focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand",
+        selected
+          ? "border-chat-selected-border bg-chat-selected-bg font-medium text-brand-secondary"
+          : "border-transparent text-secondary hover:bg-primary_hover",
         className,
       )}
     >
@@ -864,11 +871,14 @@ function RecordLink({
   );
 }
 
-export function WeekBadge({ week }: { week: number }) {
+export function WeekBadge({ week, className }: { week: number; className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary-solid text-xs font-semibold text-white"
+      className={cn(
+        "flex size-8 shrink-0 items-center justify-center rounded-full bg-primary-solid text-xs font-semibold text-white",
+        className,
+      )}
     >
       {week}
     </span>
@@ -883,7 +893,7 @@ export function BackToRecords() {
       size="sm"
       color="tertiary"
       icon={ChevronLeft}
-      className="md:hidden"
+      className="lg:hidden"
       aria-label={m.controls_back()}
       onClick={back}
     />
@@ -909,8 +919,12 @@ export function RecordsKeyPointReturnBack({ returnTo }: { returnTo: string }) {
 
 export function EmptyRecord() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-      <p className="text-md font-semibold text-primary">{m.records_empty_title()}</p>
+    <div className="grid h-full place-content-center justify-items-center px-6 text-center">
+      <div className="mb-5 flex size-12 items-center justify-center rounded-xl border border-secondary bg-primary shadow-xs">
+        <FileText aria-hidden="true" className="size-6 text-tertiary" />
+      </div>
+      <p className="text-lg font-semibold text-primary">{m.records_empty_title()}</p>
+      <p className="mt-2 max-w-sm text-sm text-tertiary">{m.records_empty_description()}</p>
     </div>
   );
 }
