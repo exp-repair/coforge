@@ -51,12 +51,20 @@ settle; terminal disposal begins process cleanup immediately.
 
 ## Instructions and recovery
 
-Fresh sessions append standing CoForge instructions through `session/new._meta.rules`.
-The ACP launcher does not consume headless `--rules` as session instructions.
-Native resume retains its saved system prompt and rules: Grok deliberately does
-not append fresh `_meta.rules` during `session/load`. Updated standing instructions
-therefore take effect in a new session. We do not replace Grok's full native system
-prompt or turn instructions into a user message.
+The standing CoForge instructions replace Grok's system prompt verbatim: both
+`session/new` and `session/load` send them as `_meta.systemPromptOverride`. A fresh
+session starts with them; a load swaps the saved system head for them, both for a
+session still resident in the process (per the reviewed source) and for a cold load
+from disk (also verified natively on 1.0.62), so updated instructions take effect
+when a session resumes. Grok ignores a blank override, and
+CoForge then sends none, leaving the native or saved prompt in place. `_meta.rules`
+is not used: Grok appends it to its native prompt on `session/new` only.
+Known trade-off: Grok's native system text is not included. On 1.0.62 that is its
+identity and its `dangerous_actions`, `work_policy`, `background_tasks`,
+`scratch_files`, `communication`, `formatting`, `user_guide` and
+`browser_verification` guidance. Tool definitions are still advertised, and project
+`AGENTS.md` and the skills list still arrive as context messages outside the system
+prompt (observed on 1.0.62).
 
 `session/load` resumes the saved ID without forking and suppresses historical
 replay from live Activity. Model and reasoning selections are reapplied. Resuming
@@ -92,8 +100,10 @@ compaction and cancellation; `acp-lifecycle.json` covers live interjection, a re
 background command's autonomous follow-up, and history after process restart;
 `restore-missing.json` records that resuming a never-created session ID starts a
 fresh session, reported with the requested ID as `replaced`, and that a turn on it
-completes. Every test fails if prerequisites or required observations
-are absent.
+completes; `system-prompt-override.json` records that a fresh session's model request
+carries exactly the instructions as its system message, and that a restarted process
+resuming the session with changed instructions sends the new ones. Every test fails
+if prerequisites or required observations are absent.
 
 Protocol fixtures exercise the public `GrokProvider`/`AgentSession` seam, including
 correlated completion, background liveness, pre-ready completion, streamed
@@ -133,7 +143,11 @@ in the extracted tree. Behaviours aligned with it:
   `GrokEventNormalizer` prompt finish).
 - Turn end: the `turn_completed` session notification finishes its prompt's turn
   (core `GrokEventNormalizer`).
+- Instructions: the standing prompt is `systemPromptOverride`, sent with `yoloMode`
+  on both new and load (core `GrokDriver`).
 
-The xAI extension names and rules-on-load restriction are implementation-specific,
+The xAI extension names and the override's handling on new and load
+(`system_prompt` module, `enqueue_replace_system_prompt_override` and the
+`session_setup.rs` load path in `agent/mvp_agent/`) are implementation-specific,
 verified against that source and the official binary rather than assumed ACP
 standard features.

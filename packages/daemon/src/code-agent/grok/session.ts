@@ -144,6 +144,14 @@ class GrokSession implements AgentSession {
       agent.request("authenticate", { methodId: method.id, _meta: { headless: true } }),
     );
     const params = { cwd: this.options.agentWorkspaceDirectory, mcpServers: [] };
+    // The instructions replace Grok's native system prompt on new and on load, so a resumed
+    // session runs the current ones. Grok ignores a blank override, so none is sent.
+    const meta = {
+      yoloMode: true,
+      ...(this.options.instructions.trim()
+        ? { systemPromptOverride: this.options.instructions }
+        : {}),
+    };
     let resuming = !!this.options.sessionId && this.options.sessionMode !== "create";
     let replaced: string | undefined;
     const create = () =>
@@ -151,8 +159,7 @@ class GrokSession implements AgentSession {
         agent.request("session/new", {
           ...params,
           _meta: {
-            rules: this.options.instructions,
-            yoloMode: true,
+            ...meta,
             ...(!replaced && this.options.sessionId ? { sessionId: this.options.sessionId } : {}),
           },
         }),
@@ -164,7 +171,7 @@ class GrokSession implements AgentSession {
           agent.request("session/load", {
             ...params,
             sessionId: this.options.sessionId!,
-            _meta: { yoloMode: true },
+            _meta: meta,
           }),
         );
       } catch (error) {

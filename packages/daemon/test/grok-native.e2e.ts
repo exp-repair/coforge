@@ -542,3 +542,142 @@ test("native ACP replaces a resumed session Grok reports as missing", async () =
     }
   }
 }, 120_000);
+
+test("native Grok replaces its system prompt with the instructions on new and on a restarted load", async () => {
+  const root = await mkdtemp(join(tmpdir(), "coforge-grok-override-native-"));
+  const cwd = join(root, "workspace");
+  const home = join(root, "grok");
+  const freshInstructions = "CoForge fixture instructions, first launch: answer briefly.";
+  const resumedInstructions =
+    "CoForge fixture instructions, updated before resume: answer briefly.";
+  const markers = { fresh: "OVERRIDE_FRESH_MARKER", resumed: "OVERRIDE_RESUMED_MARKER" };
+  // The opening of Grok 1.0.62's own system prompt, which the override removes.
+  const nativePrompt = "You are Grok released by xAI";
+  let phase: keyof typeof markers = "fresh";
+  const requests: {
+    phase: string;
+    system: string | undefined;
+    tools: number;
+    last: string;
+    messages: string;
+  }[] = [];
+  const text = (content: unknown) =>
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.map((part) => (part as { text?: string })?.text ?? "").join("")
+        : JSON.stringify(content);
+  let version: string | undefined;
+  let sessionId: string | undefined;
+  let session: AgentSession | undefined;
+  let outcome = "failed";
+  const server = serveFixtureModel((body) => {
+    const system = body.messages?.find((m) => m.role === "system" || m.role === "developer");
+    requests.push({
+      phase,
+      system: system ? text(system.content) : undefined,
+      tools: body.tools?.length ?? 0,
+      last: text(body.messages?.at(-1)?.content),
+      messages: JSON.stringify(body.messages),
+    });
+    return { message: { role: "assistant", content: "Fixture reply." }, finishReason: "stop" };
+  });
+  /** The foreground model request of `phase`'s turn: it carries that phase's prompt marker and is
+   * not a title, compaction or memory helper. */
+  const foreground = (of: keyof typeof markers) =>
+    requests.find(
+      (r) =>
+        r.phase === of &&
+        r.messages.includes(markers[of]) &&
+        !r.last.includes("Generate a session title") &&
+        !r.last.startsWith("<user_message>") &&
+        !r.last.startsWith("Your task is to produce a faithful"),
+    );
+  try {
+    await mkdir(cwd);
+    await mkdir(home);
+    await writeFixtureConfig(home, server.port!, 1_000_000);
+    version = await readGrokVersion([command!]);
+    const provider = new GrokProvider({ command: [command!] });
+    const options = {
+      agentWorkspaceDirectory: cwd,
+      runtime: { provider: "grok" as const, model: "coforge-fixture", reasoning: "" },
+      environment: isolatedEnvironment(home),
+    };
+    const runTurn = async (prompt: string) => {
+      const done = Promise.withResolvers<string>();
+      const off = session!.subscribe((event) => {
+        if (event.type === "completed") done.resolve(event.status);
+      });
+      try {
+        await session!.notify!(prompt);
+        return await withDeadline(
+          done.promise,
+          30_000,
+          () => new Error("Native Grok turn timed out"),
+        );
+      } finally {
+        off();
+      }
+    };
+    session = await provider.createAgentSession({ ...options, instructions: freshInstructions });
+    expect(await runTurn(markers.fresh)).toBe("completed");
+    sessionId = (await session.readSessionIdentity!())?.sessionId;
+    expect(sessionId).toBeString();
+    // (a) A fresh session's model sees CoForge's instructions as its whole system prompt.
+    expect(foreground("fresh")?.system).toBe(freshInstructions);
+    expect(foreground("fresh")?.system).not.toContain(nativePrompt);
+    await session.dispose();
+    // (b) A new process cold-loads the saved session from disk with changed instructions.
+    phase = "resumed";
+    session = await provider.createAgentSession({
+      ...options,
+      instructions: resumedInstructions,
+      sessionId,
+    });
+    expect((await session.readSessionIdentity!())?.sessionId).toBe(sessionId);
+    expect(await runTurn(markers.resumed)).toBe("completed");
+    const resumed = foreground("resumed");
+    expect(resumed?.messages).toContain(markers.fresh);
+    expect(resumed?.system).toBe(resumedInstructions);
+    outcome = "passed";
+  } finally {
+    try {
+      await session?.dispose();
+    } finally {
+      await server.stop(true);
+      const excerpt = (value: string | undefined) =>
+        value === undefined ? undefined : value.length > 240 ? `${value.slice(0, 240)}…` : value;
+      await Bun.write(
+        new URL("../../../.amp/e2e/grok-native/system-prompt-override.json", import.meta.url),
+        JSON.stringify(
+          {
+            outcome,
+            version,
+            sessionId,
+            instructions: { fresh: freshInstructions, resumed: resumedInstructions },
+            foreground: Object.fromEntries(
+              (["fresh", "resumed"] as const).map((of) => {
+                const system = foreground(of)?.system;
+                return [
+                  of,
+                  { system: excerpt(system), nativePrompt: system?.includes(nativePrompt) },
+                ];
+              }),
+            ),
+            requests: requests.map((r) => ({
+              phase: r.phase,
+              tools: r.tools,
+              systemLength: r.system?.length,
+              system: excerpt(r.system),
+              last: excerpt(r.last),
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+}, 120_000);

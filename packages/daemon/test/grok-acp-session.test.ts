@@ -84,7 +84,9 @@ test(
       expect(records[0].argv).toContain("--no-leader");
       expect(records[0].argv).toContain("--no-auto-update");
       expect(records[0].argv).toContain("--trust");
-      expect(records[2].params._meta.rules).toBe("Standing Grok instructions.");
+      // The standing instructions replace Grok's native system prompt; `rules` would append them.
+      expect(records[2].params._meta.systemPromptOverride).toBe("Standing Grok instructions.");
+      expect(records[2].params._meta).not.toHaveProperty("rules");
       expect(records[2].params._meta.yoloMode).toBe(true);
       expect(records[0].argv).not.toContain("--no-background");
       expect(events.filter((e) => e.type === "completed")).toHaveLength(2);
@@ -140,10 +142,11 @@ test(
 );
 
 test(
-  "Grok resumes its native session and reapplies model selection without replaying Activity",
+  "Grok resumes its native session with current instructions and model selection, without replaying Activity",
   async () => {
     const { log, session, close } = await openFixtureSession({
       sessionId: "0195d5a0-4b2e-7c11-9a53-3f2f6b1d7e10",
+      instructions: "Updated standing instructions.",
       runtime: { provider: "grok", model: "grok-selected", reasoning: "high" },
     });
     try {
@@ -159,7 +162,10 @@ test(
         "session/load",
         "session/set_model",
       ]);
-      expect(records[2].params._meta).toEqual({ yoloMode: true });
+      expect(records[2].params._meta).toEqual({
+        yoloMode: true,
+        systemPromptOverride: "Updated standing instructions.",
+      });
       expect(records.at(-1).params).toMatchObject({
         modelId: "grok-selected",
         _meta: { reasoningEffort: "high" },
@@ -169,6 +175,25 @@ test(
     }
   },
   BUDGET,
+);
+
+test(
+  "blank Grok instructions leave the native system prompt in place on new and load",
+  async () => {
+    for (const sessionId of [undefined, "0195d5a0-4b2e-7c11-9a53-3f2f6b1d7e10"]) {
+      const { log, close } = await openFixtureSession({ instructions: "  ", sessionId });
+      try {
+        const opened = (await readRpcLog(log)).find(
+          (r) => r.method === (sessionId ? "session/load" : "session/new"),
+        );
+        // Grok ignores a blank override, so neither key is sent.
+        expect(opened.params._meta).toEqual({ yoloMode: true });
+      } finally {
+        await close();
+      }
+    }
+  },
+  2 * BUDGET,
 );
 
 test(

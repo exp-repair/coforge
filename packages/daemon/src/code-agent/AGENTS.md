@@ -73,8 +73,8 @@ Rules for the provider seam and adapters in `src/code-agent/`. They extend
   one Tasks-manual pointer; ordinary messages do not.
 - Every Provider injects them through the provider's native system or developer
   instruction mechanism: Codex app-server `developerInstructions`, the Claude
-  Code system-prompt-file option, and the CoForge Agent resource-loader
-  system-prompt override.
+  Code system-prompt-file option, the CoForge Agent resource-loader
+  system-prompt override, and Grok ACP `_meta.systemPromptOverride`.
 - Do not copy the text into a provider. Do not write `AGENTS.md` or `CLAUDE.md`
   into the user's Agent workspace for a provider that supports native
   injection.
@@ -149,9 +149,9 @@ Behavior, compatibility and native verification: [`docs/agents/grok-acp.md`](../
 
 - One owned `grok agent --no-leader --always-approve stdio` ACP process per session, with
   `_meta.yoloMode` on new and load; a permission request still asked gets `allow_once` only for the
-  live session, else `cancelled`. Inject standing instructions with `session/new._meta.rules` and
-  keep native background tasks enabled. Native resume retains the saved system prompt and its
-  rules; ACP does not append new rules on load. Resume requires advertised `loadSession`.
+  live session, else `cancelled`. Standing instructions replace Grok's system prompt as
+  `_meta.systemPromptOverride` on new and load (not `rules`, which Grok ignores on load), so a
+  resume runs the current ones. Keep native background tasks enabled. Resume requires `loadSession`.
 - Only a `session/load` failing with `-32603` and `data.code === "FS_NOT_FOUND"` is replaced with a
   fresh session (`onSessionId(new, replaced)`); any other failure keeps the identity and fails launch.
 - `--trust` covers only the Agent workspace: project skills and instructions load only from trusted
