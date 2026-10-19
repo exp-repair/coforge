@@ -55,22 +55,14 @@ test("a busy turn with no provider event for 15 minutes, no open tool call and a
   expect(shouldRecoverStalledRuntime({ ...stalled, resumable: false })).toBe(false);
 });
 
-test("provider progress counts every provider event and tracks open tool calls by id", () => {
+// Open tool calls are the launch's `ToolCallLedger` (tool-call-ledger.test.ts).
+test("provider progress counts every provider event", () => {
   setSystemTime(START);
   const progress = new ProviderProgress();
   setSystemTime(minutes(10));
   expect(progress.silentForMs()).toBe(10 * 60_000);
-  progress.observe({ type: "tool-start", id: "tool-1", name: "bash" });
-  progress.observe({ type: "tool-start", id: "tool-2", name: "bash" });
+  progress.observe();
   expect(progress.silentForMs()).toBe(0);
-  expect(progress.hasOpenToolCall).toBe(true);
-  progress.observe({ type: "tool-end", id: "tool-1", isError: false });
-  expect(progress.hasOpenToolCall).toBe(true);
-  progress.observe({ type: "tool-end", id: "tool-2", isError: false });
-  expect(progress.hasOpenToolCall).toBe(false);
-  progress.observe({ type: "tool-start", id: "tool-3", name: "bash" });
-  progress.observe({ type: "completed", status: "interrupted" });
-  expect(progress.hasOpenToolCall).toBe(false);
 });
 
 /** One managed Agent whose sessions can be driven, stopped and counted. */

@@ -128,7 +128,11 @@ export class AgentActivityPublisher<L extends PublishedActivityLaunch> {
           this.#scheduleHeartbeat(agentId, launch);
         return;
       }
-      if (!activity.isHeartbeat) this.#lastBusy.set(agentId, { launch, activity, at: Date.now() });
+      if (!activity.isHeartbeat) {
+        // A heartbeat re-sends this frame; a tool outcome is reported only once.
+        const { toolOutcome: _reported, ...busy } = activity;
+        this.#lastBusy.set(agentId, { launch, activity: busy, at: Date.now() });
+      }
       this.#scheduleHeartbeat(agentId, launch);
     }
   }

@@ -1,5 +1,11 @@
 import type { AgentRuntimeEvent } from "#src/code-agent/contract";
-import { asRecord, eventTime, nonEmptyString, type JsonRecord } from "#src/code-agent/json-record";
+import {
+  asRecord,
+  eventTime,
+  integerField,
+  nonEmptyString,
+  type JsonRecord,
+} from "#src/code-agent/json-record";
 
 /**
  * Maps one Codex app-server thread's turn, item and delta notifications to normalized runtime
@@ -115,7 +121,20 @@ export class CodexItemEvents {
     if (item.type === "contextCompaction") return [{ type: "compaction-finished", occurredAt }];
     if (item.type === "exitedReviewMode") return [{ type: "review-finished", occurredAt }];
     const tool = ONE_CALL_TOOLS.get(item.type);
-    if (tool) return id ? [{ type: "tool-end", id, isError: tool.failed(item) }] : [];
+    if (tool) {
+      if (!id) return [];
+      // A command's `exitCode`, and a command's or MCP call's `durationMs` (v2 `ThreadItem`);
+      // `null` until the call finishes or when it never ran.
+      return [
+        {
+          type: "tool-end",
+          id,
+          isError: tool.failed(item),
+          exitCode: integerField(item.exitCode),
+          durationMs: integerField(item.durationMs),
+        },
+      ];
+    }
     if (item.type === "fileChange") {
       const itemId = id ?? "file-change";
       const count = this.#fileChangeCounts.get(itemId) ?? fileChanges(item).length;

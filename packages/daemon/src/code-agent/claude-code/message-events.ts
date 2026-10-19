@@ -84,9 +84,23 @@ export function claudeToolResults(record: Readonly<Record<string, unknown>>): {
     ids.push(block.tool_use_id);
     const text = textContent(block.content);
     if (text) events.push({ type: "tool-output", id: block.tool_use_id, text });
-    events.push({ type: "tool-end", id: block.tool_use_id, isError: block.is_error === true });
+    const isError = block.is_error === true;
+    events.push({
+      type: "tool-end",
+      id: block.tool_use_id,
+      isError,
+      exitCode: isError ? bashExitCode(text) : undefined,
+    });
   }
   return { ids, events };
+}
+
+/** Claude Code's Bash tool reports a non-zero exit as an error result whose text starts
+ * `Exit code N`. That is a text convention, not a structured field; the reference client 1.0.50
+ * reads it the same way (`claudeToolResultOutcome`). */
+function bashExitCode(text: string): number | undefined {
+  const match = /^Exit code (\d+)\b/.exec(text);
+  return match ? Number(match[1]) : undefined;
 }
 
 /** Claude Code's own wording for a failed API request (https://code.claude.com/docs/en/errors). */

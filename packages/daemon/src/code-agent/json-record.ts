@@ -7,6 +7,11 @@ export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
+/** `value` when it is an integer; a provider's `null` or any other value is `undefined`. */
+export function integerField(value: unknown): number | undefined {
+  return Number.isInteger(value) ? (value as number) : undefined;
+}
+
 /** Joins the `text` blocks of a provider content array; a bare string is returned as is. */
 export function textContent(value: unknown): string {
   if (typeof value === "string") return value;

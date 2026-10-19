@@ -48,7 +48,7 @@ Daemon、服务端存储和前端展示使用同一契约，每条 activity 固�
 
 | detailKind | 上报条件 | 展示 |
 | --- | --- | --- |
-| `tool_end` | Claude 的 `tool_result`、Codex 的 `item/completed`（命令、文件修改的每个文件、MCP 工具、网页搜索、协作工具）、Kiro 的 `tool_call_update` 终态、Pi 的 `tool_execution_end`；detail 固定为 “Tool finished” | 可见，写入历史，Activity timeline 展示为一行状态行（主标题 Working，副标题“Tool finished”），也出现在 Agent 卡片的 Recent activity |
+| `tool_end` | Claude 的 `tool_result`、Codex 的 `item/completed`（命令、文件修改的每个文件、MCP 工具、网页搜索、协作工具）、Kiro 的 `tool_call_update` 终态、Pi 的 `tool_execution_end`；detail 固定为 “Tool finished”。帧上带 `toolOutcome`（与参考客户端 1.0.50 一致，每个工具都报，包括 Web 隐藏的 `send_message`）：`callId` 即对应 `tool_start` entry 的 `callId`（provider 的 tool call id）；`ok` 表示调用是否跑完：已知 `exitCode` 时一律为 true（无论退出码是否为 0，与参考客户端一致），否则为 provider 未报告失败；`durationMs` 优先取 provider 自测时长（Pi 的 `durationMs`、Codex `commandExecution`/`mcpToolCall` 的 `durationMs`），否则由 Daemon 用单调时钟（`performance.now()`）从同一 launch 观察到的 tool-start 计时，没观察到 start 时不带；`exitCode` 来自 Codex `commandExecution.exitCode`、Grok `Bash` 的 `rawOutput.exit_code`、Pi shell 工具结果的 `structuredContent.exit_code`，以及 Claude Code 出错的 `tool_result` 文本开头的 `Exit code N`（Bash 工具的文本约定，参考客户端同样这样读）。没有结束事件的调用（turn 被打断、进程崩溃）不报 outcome；turn 结束（`completed`）时 Daemon 忘掉该 launch 的所有调用，之后才到的结束不带 `durationMs`。老 Daemon 不带 `toolOutcome`/`callId`，老 Web 解码时忽略这两个字段 | 可见，写入历史（`callId` 随 `entries` 写入；`toolOutcome` 目前只随实时帧下发，不写入历史），Activity timeline 展示为一行状态行（主标题 Working，副标题“Tool finished”），也出现在 Agent 卡片的 Recent activity |
 | `thinking_end` | 由 Daemon 从归一化事件流中统一推导（`ActivityTrajectory`）：一次 thinking 运行开始后，下一个 text-delta、tool-start、tool-end、压缩信号（`compaction-started`/`-finished`/`-interrupted`）、review 信号（`review-started`/`-finished`）、turn 结束或 error 到来时上报一次，之后新的 thinking 运行会重新宣告 `thinking_started`；对每个 provider 都成立，不依赖各 provider 的专属信号；detail 固定为 “Thinking finished” | 同 `tool_end`，副标题“Thinking finished” |
 | `compacting_context` | Claude 的 `system/status=compacting`（原先误报为 `runtime_progress`）；Kiro 的 ACP `compaction_update`（`status=in_progress`）；Pi/CoForge 的 SDK `compaction_start` 事件；Codex 的 `contextCompaction` item 的 `item/started`。自 2026-09-18 起，provider 只上报归一化的 `compaction-started`/`compaction-finished`/`compaction-interrupted`/`progress` 信号（`packages/agent/src/contract.ts`），由 Daemon core（`packages/daemon/src/agent-runtime/phase-tracker.ts`）统一去重（同一次压缩只报一次“开始”）并决定是否上报 Activity；detail 固定为 “Compacting context” | 可见，写入历史，文案“Compacting context…” |
 | `compaction_finished` | 上述 provider 各自的结束信号（Claude 的 `compact_boundary`；Kiro 的 `compaction_update` 转为 `completed`；Pi/CoForge 的 `compaction_end`，未被中止时；Codex 的 `contextCompaction` item 的 `item/completed`）。Daemon core 还会在压缩仍处于打开状态时，从恢复输出（文本/thinking）、新工具调用或 turn 结束推断出压缩已结束，并在这些信号自身的 Activity 之前上报；detail 为 “Context compaction finished”，推断时为 “Context compaction finished (inferred from resumed output / resumed tool use / turn end)”（与参考客户端一致） | 同 `tool_end`，副标题为 daemon 上报的 detail（为空时回退为“Compaction finished”） |
@@ -126,5 +126,11 @@ event: agent:activity
 activity: running_command
 level: info
 message: Running command…
-entries: [{ kind: "tool_start", toolName: "bash", toolInput: "bun test packages/daemon/test/daemon-runtime.test.ts" }]
+entries: [{ kind: "tool_start", toolName: "bash", toolInput: "bun test packages/daemon/test/daemon-runtime.test.ts", callId: "call_1" }]
+
+event: agent:activity
+activity: tool_end
+level: info
+message: Tool finished
+toolOutcome: { callId: "call_1", ok: true, durationMs: 1500, exitCode: 1 }
 ```

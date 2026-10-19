@@ -1,5 +1,5 @@
 import type { AgentRuntimeEvent, createSession } from "@coforge/agent";
-import { textContent } from "#src/code-agent/json-record";
+import { asRecord, integerField, textContent } from "#src/code-agent/json-record";
 
 type PiSession = Awaited<ReturnType<typeof createSession>>["session"];
 /** One event the Pi SDK session reports to its subscribers. */
@@ -48,7 +48,16 @@ export function piSessionEvents(event: PiSessionEvent): AgentRuntimeEvent[] {
       return text ? [{ type: "tool-output", id: event.toolCallId, text }] : [];
     }
     case "tool_execution_end":
-      return [{ type: "tool-end", id: event.toolCallId, isError: event.isError }];
+      return [
+        {
+          type: "tool-end",
+          id: event.toolCallId,
+          isError: event.isError,
+          // A shell tool's exit code is in its structured result (pi-coding-agent 1.3.0 `bash`).
+          exitCode: integerField(asRecord(asRecord(event.result)?.structuredContent)?.exit_code),
+          durationMs: event.durationMs,
+        },
+      ];
     default:
       return [];
   }

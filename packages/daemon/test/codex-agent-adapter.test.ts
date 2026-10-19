@@ -123,7 +123,7 @@ test("Codex loads skills before running app-server behind the code-agent seam", 
         occurredAt: "2026-01-02T03:04:05.000Z",
       },
       { type: "tool-output", id: "item-1", text: "tests passed" },
-      { type: "tool-end", id: "item-1", isError: false },
+      { type: "tool-end", id: "item-1", isError: false, exitCode: 0 },
       { type: "completed", status: "completed" },
     ]);
 

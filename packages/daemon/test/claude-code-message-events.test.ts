@@ -189,6 +189,58 @@ describe("claudeToolResults", () => {
     });
   });
 
+  // Claude Code's Bash tool reports a non-zero exit as an error result whose text starts
+  // "Exit code N"; the reference client 1.0.50 (`claudeToolResultOutcome`) reads it the same way.
+  test("reads an error result's leading `Exit code N` as the call's exit code", () => {
+    expect(
+      claudeToolResults(
+        record("user", [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_1",
+            content: "Exit code 2\nmake: *** Error",
+            is_error: true,
+          },
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_2",
+            content: [{ type: "text", text: "Exit code 127" }],
+            is_error: true,
+          },
+        ]),
+      ).events.filter((event) => event.type === "tool-end"),
+    ).toEqual([
+      { type: "tool-end", id: "toolu_1", isError: true, exitCode: 2 },
+      { type: "tool-end", id: "toolu_2", isError: true, exitCode: 127 },
+    ]);
+  });
+
+  test("reads no exit code from a successful result or other error text", () => {
+    expect(
+      claudeToolResults(
+        record("user", [
+          { type: "tool_result", tool_use_id: "toolu_1", content: "Exit code 2" },
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_2",
+            content: "File not found. Exit code 2",
+            is_error: true,
+          },
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_3",
+            content: "Exit code 12abc",
+            is_error: true,
+          },
+        ]),
+      ).events.filter((event) => event.type === "tool-end"),
+    ).toEqual([
+      { type: "tool-end", id: "toolu_1", isError: false },
+      { type: "tool-end", id: "toolu_2", isError: true },
+      { type: "tool-end", id: "toolu_3", isError: true },
+    ]);
+  });
+
   test("skips a result with no tool_use_id", () => {
     expect(claudeToolResults(record("user", [{ type: "tool_result", content: "x" }]))).toEqual({
       ids: [],

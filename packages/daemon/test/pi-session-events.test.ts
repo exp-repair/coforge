@@ -65,6 +65,19 @@ describe("piSessionEvents", () => {
     expect(events({ type: "tool_execution_end", toolCallId: "t1", isError: true })).toEqual([
       { type: "tool-end", id: "t1", isError: true },
     ]);
+    // The SDK's own monotonic measurement of `execute()`.
+    expect(
+      events({ type: "tool_execution_end", toolCallId: "t1", isError: false, durationMs: 12 }),
+    ).toEqual([{ type: "tool-end", id: "t1", isError: false, durationMs: 12 }]);
+    // A shell tool's exit code is in its structured result (pi-coding-agent 1.3.0 `bash`).
+    expect(
+      events({
+        type: "tool_execution_end",
+        toolCallId: "t1",
+        isError: true,
+        result: { content: [], structuredContent: { output: "", exit_code: 2 } },
+      }),
+    ).toEqual([{ type: "tool-end", id: "t1", isError: true, exitCode: 2 }]);
   });
 
   test("events that drive the run's outcome report nothing here", () => {

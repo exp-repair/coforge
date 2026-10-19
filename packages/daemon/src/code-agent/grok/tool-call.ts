@@ -1,4 +1,4 @@
-import { asRecord } from "#src/code-agent/json-record";
+import { asRecord, integerField } from "#src/code-agent/json-record";
 
 /**
  * How grok 1.0.41's `tool_call` / `tool_call_update` frames read, from captured streams. The user
@@ -46,4 +46,10 @@ export function grokToolFailed(status: unknown, rawOutput: unknown): boolean {
   return (
     (typeof output.exit_code === "number" && output.exit_code !== 0) || output.timed_out === true
   );
+}
+
+/** A finished shell call's exit code, from its `rawOutput`; no other tool reports one. */
+export function grokToolExitCode(rawOutput: unknown): number | undefined {
+  const output = asRecord(rawOutput);
+  return output?.type === "Bash" ? integerField(output.exit_code) : undefined;
 }

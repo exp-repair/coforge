@@ -8,7 +8,13 @@ export const ACTIVITY_SUBAGENT_TYPE_MAX = 40;
 export type ActivitySubagent = { parentToolUseId: string; subagentType?: string };
 export type ActivityTrajectoryEntry = (
   | { kind: "text" | "thinking"; text: string }
-  | { kind: "tool_start"; toolName: string; toolInput?: string }
+  | {
+      kind: "tool_start";
+      toolName: string;
+      toolInput?: string;
+      /** The provider's tool call id; the call's `ActivityToolOutcome` names it. */
+      callId?: string;
+    }
   | { kind: "system"; title: string; text: string }
 ) & { subagent?: ActivitySubagent };
 
@@ -39,12 +45,14 @@ export function parseActivityEntries(value: unknown): ActivityTrajectoryEntry[] 
       validLine(item.toolName, 128) &&
       item.text === undefined &&
       item.title === undefined &&
-      (item.toolInput === undefined || validToolInput(item.toolInput))
+      (item.toolInput === undefined || validToolInput(item.toolInput)) &&
+      (item.callId === undefined || isActivityCallId(item.callId))
     )
       return {
         kind: "tool_start",
         toolName: item.toolName,
         ...(item.toolInput !== undefined ? { toolInput: item.toolInput as string } : {}),
+        ...(item.callId !== undefined ? { callId: item.callId as string } : {}),
         ...scope,
       };
     if (
@@ -53,6 +61,7 @@ export function parseActivityEntries(value: unknown): ActivityTrajectoryEntry[] 
       codePointLength(item.text) <= 2000 &&
       item.toolName === undefined &&
       item.toolInput === undefined &&
+      item.callId === undefined &&
       item.title === undefined
     )
       return { kind: item.kind, text: item.text, ...scope };
@@ -62,11 +71,17 @@ export function parseActivityEntries(value: unknown): ActivityTrajectoryEntry[] 
       typeof item.text === "string" &&
       codePointLength(item.text) <= 2000 &&
       item.toolName === undefined &&
-      item.toolInput === undefined
+      item.toolInput === undefined &&
+      item.callId === undefined
     )
       return { kind: "system", title: item.title, text: item.text, ...scope };
     throw new Error("invalid activity entry payload");
   });
+}
+
+/** Whether `value` can be carried as a tool call id (`callId`) on the wire. */
+export function isActivityCallId(value: unknown): value is string {
+  return validLine(value, 128);
 }
 
 /** A non-empty single-line string of at most `maxCodePoints` code points. */

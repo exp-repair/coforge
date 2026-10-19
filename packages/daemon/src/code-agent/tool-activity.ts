@@ -1,5 +1,6 @@
 import {
   AGENT_ACTIVITY_DETAIL_KIND,
+  isActivityCallId,
   TOOL_ALIASES,
   toolActivityLabel,
   truncateCodePoints,
@@ -29,13 +30,19 @@ const SUMMARY_KIND: Readonly<Record<string, "file_path" | "pattern" | "url" | "q
   web_search: "query",
 };
 
-/** A normalized tool-start becomes an allowlisted Activity with its reported child lineage. */
+/** A normalized tool-start becomes an allowlisted Activity with its reported child lineage and
+ * the provider's call id, which the call's end names in its outcome. */
 export function toolStartActivity(event: Extract<AgentRuntimeEvent, { type: "tool-start" }>) {
   const activity = toolActivity(event.name, event.input, event.occurredAt);
   const { subagent } = event;
+  const callId = isActivityCallId(event.id) ? event.id : undefined;
   return {
     ...activity,
-    entries: activity.entries.map((entry) => ({ ...entry, ...(subagent ? { subagent } : {}) })),
+    entries: activity.entries.map((entry) => ({
+      ...entry,
+      ...(callId ? { callId } : {}),
+      ...(subagent ? { subagent } : {}),
+    })),
   };
 }
 

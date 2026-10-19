@@ -12,6 +12,9 @@ Rules for Agent lifecycle, control, Session state, and Activity in
   boundary flushing, bounded retention, and assembled-text redaction. Adapters
   supply only official display events and explicit lineage, never raw
   reasoning.
+- `tool-call-ledger.ts` is a launch's one record of open tool calls (stalled
+  recovery reads it too) and builds each `tool_end`'s `toolOutcome`; the field
+  rules are in `docs/observability/agent-status-and-activity.md` (`tool_end`).
 
 ## Start and stop
 

@@ -23,6 +23,7 @@ import {
   type PhaseActivity,
   type RuntimePhase,
 } from "#src/agent-runtime/runtime-phases";
+import { ToolCallLedger } from "#src/agent-runtime/tool-call-ledger";
 import { subagentProgressDetail } from "#src/agent-runtime/subagent-progress-activity";
 import {
   buildRuntimeErrorActivity,
@@ -284,8 +285,10 @@ type AgentInputQueue = {
 type ActivityLaunch = PublishedActivityLaunch & {
   startup?: AgentStartup;
   trajectory?: Pick<ActivityTrajectory, "flush" | "dispose">;
-  /** When the provider last reported anything, and its open tool calls (`stalled-recovery.ts`). */
+  /** When the provider last reported anything (`stalled-recovery.ts`). */
   progress?: ProviderProgress;
+  /** The launch's open tool calls, and the outcome each one's end reports. */
+  toolCalls?: ToolCallLedger;
   // The most recent `error` event not yet resolved by a `completed` event, if any (cleared on
   // `completed`). Read by the process-exit handler to decide `runtime_crashed` vs `idle` wording
   // — `AgentSession.onExit` itself carries no exit code/signal, so this is the only fact the
@@ -2226,8 +2229,11 @@ export class DaemonRuntime {
       launch.trajectory = trajectory;
       const progress = new ProviderProgress();
       launch.progress = progress;
+      const toolCalls = new ToolCallLedger();
+      launch.toolCalls = toolCalls;
       const unsubscribe = runtime.session.subscribe((event) => {
-        progress.observe(event);
+        progress.observe();
+        toolCalls.observe(event);
         const startupFailed = current() && launch.startup?.observe(event);
         const turnActivity =
           event.type === "activity"
@@ -2573,11 +2579,19 @@ export class DaemonRuntime {
       return;
     }
     if (event.type === "tool-end") {
-      // Liveness-only filler: renews the busy lease, never stored.
+      // Every call's end reports its outcome, a call the Web hides (send_message) included, as
+      // in the reference client: hiding a row is a display decision.
+      const toolOutcome = launch.toolCalls?.finish(event);
       publish(
         agentId,
         launch,
-        this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.TOOL_END, "info", "Tool finished"),
+        this.#activity(
+          agentId,
+          AGENT_ACTIVITY_DETAIL_KIND.TOOL_END,
+          "info",
+          "Tool finished",
+          toolOutcome ? { toolOutcome } : {},
+        ),
       );
       return;
     }
@@ -3120,7 +3134,7 @@ export class DaemonRuntime {
         this.#activityPublisher.lastBusy(agentId)?.launch === launch &&
         session.hasLiveTurn !== false,
       silentForMs: progress.silentForMs(),
-      hasOpenToolCall: progress.hasOpenToolCall,
+      hasOpenToolCall: launch.toolCalls?.hasOpenToolCall ?? false,
       resumable: this.#runningMentionIdentity(agentId) !== undefined,
     });
     return stalled ? { launch, session, restart, silentForMs: progress.silentForMs() } : undefined;

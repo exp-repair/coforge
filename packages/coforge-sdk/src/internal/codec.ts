@@ -2,6 +2,7 @@ import { memoryHintMessage, readMemoryHint } from "./memory-hint";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { isMemoryAgentToolProfile } from "../agent/memory-tool-fences";
 import { parseActivityEntries, type ActivityTrajectoryEntry } from "./activity-entries";
+import { isActivityToolOutcome } from "./activity-tool-outcome";
 import { assertValidMessageSender, isValidMessageSender } from "./message-sender";
 import {
   ComputerRegisterRequestSchema,
@@ -69,6 +70,7 @@ import type {
   AgentMessageRequest,
 } from "./index";
 import {
+  AGENT_ACTIVITY_DETAIL_KIND,
   AGENT_START_MESSAGE_TYPE,
   AGENT_STOP_MESSAGE_TYPE,
   AGENT_ACTIVITY_PROBE_MESSAGE_TYPE,
@@ -1216,7 +1218,17 @@ export function encodeAgentActivity(value: AgentActivity): Uint8Array {
         parentToolUseId: entry.subagent?.parentToolUseId ?? "",
         subagentType: entry.subagent?.subagentType ?? "",
         toolInput: entry.kind === "tool_start" ? (entry.toolInput ?? "") : "",
+        callId: entry.kind === "tool_start" ? (entry.callId ?? "") : "",
       })),
+      toolOutcome: value.toolOutcome && {
+        callId: value.toolOutcome.callId,
+        ok: value.toolOutcome.ok,
+        durationMs:
+          value.toolOutcome.durationMs === undefined
+            ? undefined
+            : BigInt(value.toolOutcome.durationMs),
+        exitCode: value.toolOutcome.exitCode,
+      },
     }),
   );
 }
@@ -1283,6 +1295,7 @@ export function decodeAgentActivity(bytes: Uint8Array): AgentActivity {
         kind: "tool_start",
         toolName: entry.content.value,
         ...(entry.toolInput ? { toolInput: entry.toolInput } : {}),
+        ...(entry.callId ? { callId: entry.callId } : {}),
         ...scope,
       };
     if (entry.content.case === "system")
@@ -1312,6 +1325,18 @@ export function decodeAgentActivity(bytes: Uint8Array): AgentActivity {
     ...(v.probeId ? { probeId: v.probeId } : {}),
     ...(v.producerFactId ? { producerFactId: v.producerFactId } : {}),
     ...(entries.length ? { entries } : {}),
+    ...(v.toolOutcome
+      ? {
+          toolOutcome: {
+            callId: v.toolOutcome.callId,
+            ok: v.toolOutcome.ok,
+            ...(v.toolOutcome.durationMs !== undefined
+              ? { durationMs: safeUint64(v.toolOutcome.durationMs, "tool outcome duration") }
+              : {}),
+            ...(v.toolOutcome.exitCode !== undefined ? { exitCode: v.toolOutcome.exitCode } : {}),
+          },
+        }
+      : {}),
     ...(v.messageId ? { messageId: v.messageId } : {}),
     ...(v.conversationId ? { conversationId: v.conversationId } : {}),
     ...(v.conversationTarget ? { conversationTarget: v.conversationTarget } : {}),
@@ -1400,7 +1425,10 @@ function validateAgentActivity(value: AgentActivity): void {
     (value.activityKind !== undefined &&
       !["online", "working", "thinking", "error", "offline"].includes(value.activityKind)) ||
     !Number.isSafeInteger(value.observedAtMs) ||
-    value.observedAtMs < 1
+    value.observedAtMs < 1 ||
+    (value.toolOutcome !== undefined &&
+      (value.detailKind !== AGENT_ACTIVITY_DETAIL_KIND.TOOL_END ||
+        !isActivityToolOutcome(value.toolOutcome)))
   )
     throw new Error("invalid agent activity");
 }

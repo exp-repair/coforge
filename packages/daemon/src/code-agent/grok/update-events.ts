@@ -1,6 +1,12 @@
 import type { AgentRuntimeEvent } from "@coforge/agent";
 import { asRecord, nonEmptyString } from "#src/code-agent/json-record";
-import { grokToolEnded, grokToolFailed, grokToolInput, grokToolOutputText } from "./tool-call";
+import {
+  grokToolEnded,
+  grokToolExitCode,
+  grokToolFailed,
+  grokToolInput,
+  grokToolOutputText,
+} from "./tool-call";
 
 /** Display state belongs to a native turn, including turns started by background work. */
 export class GrokTurnEvents {
@@ -40,7 +46,12 @@ export class GrokTurnEvents {
         const text = grokToolOutputText(update.content);
         return [
           ...(text ? [{ type: "tool-output" as const, id, text }] : []),
-          { type: "tool-end", id, isError: grokToolFailed(update.status, update.rawOutput) },
+          {
+            type: "tool-end",
+            id,
+            isError: grokToolFailed(update.status, update.rawOutput),
+            exitCode: grokToolExitCode(update.rawOutput),
+          },
         ];
       }
       case "auto_compact_started":

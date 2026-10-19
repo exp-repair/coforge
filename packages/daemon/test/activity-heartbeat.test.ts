@@ -1279,6 +1279,7 @@ test.each([
         kind: "tool_start",
         toolName: tool.toolName,
         toolInput: tool.toolInput,
+        callId: "1",
         subagent: { parentToolUseId: "t1" },
       },
     ]);
@@ -1292,7 +1293,7 @@ test.each([
       detail: tool.detail,
     });
     expect(activities[1]?.entries).toEqual([
-      { kind: "tool_start", toolName: tool.toolName, toolInput: tool.toolInput },
+      { kind: "tool_start", toolName: tool.toolName, toolInput: tool.toolInput, callId: "2" },
     ]);
   } finally {
     await runtime.stop();
@@ -1411,6 +1412,155 @@ test("compaction interruptions and subagent progress retain their conversation o
       conversationId: "conversation-team",
       conversationTarget: "#team",
     });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+// The reference client 1.0.50 keys a tool's outcome to its start by the provider's call id
+// (`toolCallOutcome.ts`), timing the call from the daemon's own start observation.
+test("a tool-end reports its outcome, timed from the matching tool-start, keyed by its callId", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "tool-start", id: "call-1", name: "Bash", input: { command: "make" } });
+    emitEvent({ type: "tool-end", id: "call-1", isError: true, exitCode: 2 });
+    expect(activities).toHaveLength(2);
+    expect(activities[0]!.entries).toEqual([
+      { kind: "tool_start", toolName: "bash", toolInput: "make", callId: "call-1" },
+    ]);
+    expect(activities[1]).toMatchObject({
+      detailKind: "tool_end",
+      detail: "Tool finished",
+      // As in the reference client, a known exit code means the call ran: ok, whatever the code.
+      toolOutcome: { callId: "call-1", ok: true, exitCode: 2 },
+    });
+    // Timed by the launch's ledger (tool-call-ledger.test.ts).
+    expect(activities[1]!.toolOutcome?.durationMs).toBeGreaterThanOrEqual(0);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a call the Web hides (send_message) still reports its outcome", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({
+      type: "tool-start",
+      id: "call-1",
+      name: "bash",
+      input: { command: "coforge message send --target '#x' 'hi'" },
+    });
+    emitEvent({ type: "tool-end", id: "call-1", isError: false });
+    expect(activities[0]!.entries).toEqual([
+      { kind: "tool_start", toolName: "send_message", toolInput: "#x", callId: "call-1" },
+    ]);
+    expect(activities[1]!.toolOutcome).toMatchObject({ callId: "call-1", ok: true });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a call still open when its turn completes reports no duration at a late end", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    emitEvent({ type: "tool-start", id: "call-1", name: "Read" });
+    emitEvent({ type: "completed", status: "interrupted" });
+    activities.length = 0;
+    emitEvent({ type: "tool-end", id: "call-1", isError: false });
+    expect(activities.find((a) => a.detailKind === "tool_end")?.toolOutcome).toEqual({
+      callId: "call-1",
+      ok: true,
+    });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a tool-end with no observed start reports its outcome without a duration", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "tool-end", id: "unseen", isError: false });
+    expect(activities).toHaveLength(1);
+    expect(activities[0]!.toolOutcome).toEqual({ callId: "unseen", ok: true });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a failed call with no exit code reports not ok", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "tool-end", id: "call-1", isError: true });
+    expect(activities[0]!.toolOutcome).toEqual({ callId: "call-1", ok: false });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a provider-measured duration takes precedence over the daemon's own timing", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "tool-start", id: "call-1", name: "Read", input: { path: "a.ts" } });
+    await Bun.sleep(60);
+    emitEvent({ type: "tool-end", id: "call-1", isError: false, durationMs: 42.4 });
+    expect(activities.at(-1)!.toolOutcome).toEqual({ callId: "call-1", ok: true, durationMs: 42 });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a call's outcome is reported once: a repeated tool-end has no duration", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "tool-start", id: "call-1", name: "Read" });
+    emitEvent({ type: "tool-end", id: "call-1", isError: false });
+    emitEvent({ type: "tool-end", id: "call-1", isError: false });
+    expect(activities[1]!.toolOutcome).toHaveProperty("durationMs");
+    expect(activities[2]!.toolOutcome).toEqual({ callId: "call-1", ok: true });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("the busy heartbeat after a tool-end does not repeat its outcome", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  jest.useFakeTimers();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "tool-start", id: "call-1", name: "Read" });
+    emitEvent({ type: "tool-end", id: "call-1", isError: false });
+    jest.advanceTimersByTime(60_000);
+    const heartbeat = activities.at(-1)!;
+    expect(heartbeat).toMatchObject({ detailKind: "tool_end", isHeartbeat: true });
+    expect(heartbeat).not.toHaveProperty("toolOutcome");
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a probe reply after a tool-end does not repeat its outcome", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "tool-start", id: "call-1", name: "Read" });
+    emitEvent({ type: "tool-end", id: "call-1", isError: false });
+    await runtime.handleAgentActivityProbe({
+      protocolMajor: 1,
+      requestId: "probe-request-outcome",
+      workspaceId: connection.workspaceId,
+      computerId: connection.computerId,
+      agentId: "agent-a",
+      probeId: "probe-outcome",
+    });
+    const reply = activities.at(-1)!;
+    expect(reply).toMatchObject({ detailKind: "tool_end", probeId: "probe-outcome" });
+    expect(reply).not.toHaveProperty("toolOutcome");
   } finally {
     await runtime.stop();
   }

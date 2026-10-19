@@ -93,11 +93,15 @@ describe("CodexItemEvents: commands", () => {
       input: { command: "command" },
     });
     expect(feed(events, completed({ type: "commandExecution", id: "c1", exitCode: 0 }))).toEqual([
-      { type: "tool-end", id: "c1", isError: false },
+      { type: "tool-end", id: "c1", isError: false, exitCode: 0 },
     ]);
-    expect(feed(events, completed({ type: "commandExecution", id: "c2", exitCode: 2 }))).toEqual([
-      { type: "tool-end", id: "c2", isError: true },
-    ]);
+    expect(
+      feed(events, completed({ type: "commandExecution", id: "c2", exitCode: 2, durationMs: 37 })),
+    ).toEqual([{ type: "tool-end", id: "c2", isError: true, exitCode: 2, durationMs: 37 }]);
+    // A command that never exited (killed, declined) reports no exit code.
+    expect(feed(events, completed({ type: "commandExecution", id: "c3", exitCode: null }))).toEqual(
+      [{ type: "tool-end", id: "c3", isError: true }],
+    );
   });
 
   test("reports nothing for a command without an id or an item that is not one", () => {
@@ -327,8 +331,11 @@ describe("CodexItemEvents: other tool calls", () => {
       },
     ]);
     expect(
-      feed(events, completed(mcp({ status: "completed", result: { content: ["private"] } }))),
-    ).toEqual([{ type: "tool-end", id: "mcp1", isError: false }]);
+      feed(
+        events,
+        completed(mcp({ status: "completed", result: { content: ["private"] }, durationMs: 8 })),
+      ),
+    ).toEqual([{ type: "tool-end", id: "mcp1", isError: false, durationMs: 8 }]);
     // Without a server the name keeps its MCP prefix, so it never reads as a built-in or
     // CoForge tool.
     expect(feed(events, started(mcp({ id: "mcp2", server: "" })))[0]).toMatchObject({

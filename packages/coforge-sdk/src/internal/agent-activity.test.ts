@@ -154,3 +154,77 @@ test("round trips a subagent lineage's subagentType", () => {
   ]);
   expect(decoded.entries?.[1]?.subagent).not.toHaveProperty("subagentType");
 });
+
+test("round trips a tool_start entry's callId", () => {
+  const withEntry: AgentActivity = {
+    ...activity,
+    entries: [{ kind: "tool_start", toolName: "bash", toolInput: "ls", callId: "call-1" }],
+  };
+  expect(decodeAgentActivity(encodeAgentActivity(withEntry)).entries).toEqual([
+    { kind: "tool_start", toolName: "bash", toolInput: "ls", callId: "call-1" },
+  ]);
+});
+
+test("omits callId on decode when a tool_start entry did not carry one", () => {
+  const withEntry: AgentActivity = {
+    ...activity,
+    entries: [{ kind: "tool_start", toolName: "bash" }],
+  };
+  expect(decodeAgentActivity(encodeAgentActivity(withEntry)).entries?.[0]).not.toHaveProperty(
+    "callId",
+  );
+});
+
+const toolEnd: AgentActivity = {
+  protocolMajor: 1,
+  requestId: "request-2",
+  workspaceId: "workspace-1",
+  agentId: "agent-1",
+  detailKind: AGENT_ACTIVITY_DETAIL_KIND.TOOL_END,
+  level: "info",
+  detail: "Tool finished",
+  observedAtMs: Date.parse("2026-08-29T00:00:01.000Z"),
+  launchId: "launch-1",
+  clientSeq: 2,
+};
+
+test("round trips a tool_end frame's outcome, exit code and duration included", () => {
+  const finished: AgentActivity = {
+    ...toolEnd,
+    toolOutcome: { callId: "call-1", ok: false, durationMs: 1234, exitCode: 2 },
+  };
+  expect(decodeAgentActivity(encodeAgentActivity(finished))).toEqual(finished);
+});
+
+test("round trips an outcome with no duration or exit code, and a zero exit code", () => {
+  const bare: AgentActivity = { ...toolEnd, toolOutcome: { callId: "call-1", ok: true } };
+  const decoded = decodeAgentActivity(encodeAgentActivity(bare));
+  expect(decoded).toEqual(bare);
+  expect(decoded.toolOutcome).not.toHaveProperty("durationMs");
+  expect(decoded.toolOutcome).not.toHaveProperty("exitCode");
+  const zero: AgentActivity = {
+    ...toolEnd,
+    toolOutcome: { callId: "call-1", ok: true, durationMs: 0, exitCode: 0 },
+  };
+  expect(decodeAgentActivity(encodeAgentActivity(zero))).toEqual(zero);
+});
+
+test("a tool_end frame without an outcome, as an older daemon sends it, still decodes", () => {
+  const decoded = decodeAgentActivity(encodeAgentActivity(toolEnd));
+  expect(decoded).toEqual(toolEnd);
+  expect(decoded).not.toHaveProperty("toolOutcome");
+});
+
+test("rejects an outcome on a frame that is not a tool_end, or an invalid outcome", () => {
+  for (const invalid of [
+    { ...activity, toolOutcome: { callId: "call-1", ok: true } },
+    { ...toolEnd, toolOutcome: { callId: "", ok: true } },
+    { ...toolEnd, toolOutcome: { callId: "call\x00", ok: true } },
+    { ...toolEnd, toolOutcome: { callId: "call-1", ok: "yes" } },
+    { ...toolEnd, toolOutcome: { callId: "call-1", ok: true, durationMs: -1 } },
+    { ...toolEnd, toolOutcome: { callId: "call-1", ok: true, durationMs: 1.5 } },
+    { ...toolEnd, toolOutcome: { callId: "call-1", ok: true, exitCode: 1.5 } },
+    { ...toolEnd, toolOutcome: { callId: "call-1", ok: true, exitCode: 2 ** 31 } },
+  ])
+    expect(() => encodeAgentActivity(invalid as AgentActivity)).toThrow("invalid agent activity");
+});

@@ -1,5 +1,3 @@
-import type { AgentRuntimeEvent } from "@coforge/agent";
-
 /**
  * How long a busy turn's provider may stay silent before a new message restarts it, as in the
  * reference client (its `RUNTIME_PROGRESS_STALE_MS`).
@@ -11,19 +9,15 @@ export const STALLED_RECOVERY_SILENCE_MS = 15 * 60_000;
 export const STALLED_RECOVERY_EXIT_TIMEOUT_MS = 10_000;
 
 /**
- * One launch's provider progress: when the provider last reported any event, and which of its
- * tool calls are still open. Only raw provider events count — never a published Activity, which
- * the busy heartbeat repeats without any progress.
+ * One launch's provider progress: when the provider last reported any event. Only raw provider
+ * events count — never a published Activity, which the busy heartbeat repeats without any
+ * progress. Its open tool calls are the launch's `ToolCallLedger`.
  */
 export class ProviderProgress {
   #lastEventAtMs = Date.now();
-  readonly #openToolCalls = new Set<string>();
 
-  observe(event: AgentRuntimeEvent): void {
+  observe(): void {
     this.#lastEventAtMs = Date.now();
-    if (event.type === "tool-start") this.#openToolCalls.add(event.id);
-    else if (event.type === "tool-end") this.#openToolCalls.delete(event.id);
-    else if (event.type === "completed") this.#openToolCalls.clear();
   }
 
   /** Input that starts a turn (a notice to an idle Agent) restarts the clock, as in the reference
@@ -34,10 +28,6 @@ export class ProviderProgress {
 
   silentForMs(): number {
     return Date.now() - this.#lastEventAtMs;
-  }
-
-  get hasOpenToolCall(): boolean {
-    return this.#openToolCalls.size > 0;
   }
 }
 

@@ -148,7 +148,15 @@ export type AgentRuntimeEvent = { readonly conversation?: AgentConversationScope
       occurredAt?: string;
     }
   | { type: "tool-output"; id: string; text: string }
-  | { type: "tool-end"; id: string; isError: boolean }
+  | {
+      type: "tool-end";
+      id: string;
+      isError: boolean;
+      /** A command tool's exit code, when the provider reports one. */
+      exitCode?: number;
+      /** How long the call ran, when the provider measures it; otherwise the daemon times it. */
+      durationMs?: number;
+    }
   | { type: "completed"; status: "completed" | "interrupted" | "failed" }
   // Normalized signals a provider reports; the daemon core (not the provider) decides what
   // Activity, if any, each one becomes - see daemon-runtime/runtime.ts and

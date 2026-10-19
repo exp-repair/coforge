@@ -409,6 +409,49 @@ describe("Agent activity publication", () => {
     expect(published.entries).toEqual(withEntries.entries);
   });
 
+  test("keeps a tool_start callId and a tool_end outcome through the publish/persist round trip", async () => {
+    const history: Array<{ entries?: unknown; toolOutcome?: unknown }> = [];
+    const dependencies = {
+      proxySecret: "test-secret",
+      agentVisibility: async () => "public",
+      agentBelongsToWorkspace: async () => true,
+      agentBelongsToComputer: async () => true,
+      computerBelongsToWorkspace: async () => true,
+      observe: async (value: { entries?: unknown; toolOutcome?: unknown }) => {
+        history.push(value);
+      },
+    };
+    const started = {
+      ...activity,
+      entries: [{ kind: "tool_start" as const, toolName: "bash", callId: "call-1" }],
+    };
+    const finished = {
+      ...activity,
+      clientSeq: 2,
+      detailKind: "tool_end",
+      detail: "Tool finished",
+      toolOutcome: { callId: "call-1", ok: false, durationMs: 1500, exitCode: 2 },
+    };
+    const published = [];
+    for (const frame of [started, finished]) {
+      const response = await handleAgentActivityPublication(
+        request({ b64data: encodedBase64(frame) }),
+        dependencies,
+      );
+      expect(response.status).toBe(200);
+      const result = (await response.json()) as { result: { b64data: string } };
+      published.push(
+        decodeAgentActivity(
+          Uint8Array.from(atob(result.result.b64data), (character) => character.charCodeAt(0)),
+        ),
+      );
+    }
+    expect(history[0].entries).toEqual(started.entries);
+    expect(history[1].toolOutcome).toEqual(finished.toolOutcome);
+    expect(published[0].entries).toEqual(started.entries);
+    expect(published[1].toolOutcome).toEqual(finished.toolOutcome);
+  });
+
   test("rejects an untrusted proxy or mismatched connection scope", async () => {
     const dependencies = {
       proxySecret: "test-secret",

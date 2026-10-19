@@ -131,3 +131,22 @@ test("rejects a subagentType that is empty, too long, multi-line, or not a strin
       ]),
     ).toThrow("invalid activity lineage");
 });
+
+test("parses a tool_start entry's provider callId", () => {
+  expect(
+    parseActivityEntries([{ kind: "tool_start", toolName: "bash", callId: "toolu_01" }]),
+  ).toEqual([{ kind: "tool_start", toolName: "bash", callId: "toolu_01" }]);
+});
+
+test("rejects a callId that is empty, over 128 characters, or carries a control character", () => {
+  for (const callId of ["", "a".repeat(129), "call\x00id", 7])
+    expect(() => parseActivityEntries([{ kind: "tool_start", toolName: "bash", callId }])).toThrow(
+      "invalid activity entry payload",
+    );
+});
+
+test("rejects a callId on an entry that is not a tool_start", () => {
+  expect(() => parseActivityEntries([{ kind: "text", text: "hi", callId: "toolu_01" }])).toThrow(
+    "invalid activity entry payload",
+  );
+});

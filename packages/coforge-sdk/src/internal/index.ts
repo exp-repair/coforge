@@ -773,7 +773,10 @@ export {
   RELEASE_NOTES_MAX_LENGTH,
 } from "./release-version";
 export type { ReleaseNotes } from "./release-version";
+export { isActivityCallId } from "./activity-entries";
 export type { ActivityTrajectoryEntry, ActivitySubagent } from "./activity-entries";
+export { isActivityExitCode, isActivityToolOutcome } from "./activity-tool-outcome";
+export type { ActivityToolOutcome } from "./activity-tool-outcome";
 export type AgentActivity = {
   protocolMajor: number;
   requestId: string;
@@ -790,6 +793,8 @@ export type AgentActivity = {
   clientSeq: number;
   activityKind?: import("./agent-display").AgentActivityKind;
   entries?: import("./activity-entries").ActivityTrajectoryEntry[];
+  /** `tool_end` only: how the call ended. Absent from older daemons. */
+  toolOutcome?: import("./activity-tool-outcome").ActivityToolOutcome;
   /** True when this frame re-sends the last busy activity to renew the display lease. */
   isHeartbeat?: boolean;
   /** Set only on the daemon's reply to an AgentActivityProbe; echoes its probeId. */
