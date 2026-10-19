@@ -1500,6 +1500,133 @@ test("Claude tags a subagent's tool-start with its parent_tool_use_id", async ()
   }
 });
 
+test("Claude names a subagent's type on its lineage, from the Agent call that started it", async () => {
+  const fixture = await controlledClaude();
+  const scoped: AgentRuntimeEvent[] = [];
+  const lineages: unknown[] = [];
+  fixture.session.subscribe((event) => {
+    if ((event.type === "tool-start" || event.type === "text-delta") && event.subagent) {
+      scoped.push(event);
+      lineages.push(event.subagent);
+    }
+  });
+  try {
+    await fixture.session.sendMessage("wait");
+    await fixture.emit(
+      {
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_agent",
+              name: "Agent",
+              input: { subagent_type: "Explore", description: "Find it", prompt: "private" },
+            },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent",
+        message: {
+          content: [
+            { type: "text", text: "Looking" },
+            { type: "tool_use", id: "child-1", name: "Read", input: { file_path: "a" } },
+          ],
+        },
+      },
+    );
+    await waitForEvent(scoped, "tool-start");
+    expect(lineages).toEqual([
+      { parentToolUseId: "toolu_agent", subagentType: "Explore" },
+      { parentToolUseId: "toolu_agent", subagentType: "Explore" },
+    ]);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("Claude names a subagent's type from its own record, or from task_started, else leaves it out", async () => {
+  // Claude Code 2.1.303 stamps a subagent's assistant records with `subagent_type`;
+  // `task_started` names the type of the tool call it belongs to.
+  const fixture = await controlledClaude();
+  const toolStarts: AgentRuntimeEvent[] = [];
+  fixture.session.subscribe((event) => {
+    if (event.type === "tool-start") toolStarts.push(event);
+  });
+  const childCall = (parent: string, id: string, extra: Record<string, unknown> = {}) => ({
+    type: "assistant",
+    parent_tool_use_id: parent,
+    ...extra,
+    message: { content: [{ type: "tool_use", id, name: "Bash", input: { command: "ls" } }] },
+  });
+  try {
+    await fixture.session.sendMessage("wait");
+    await fixture.emit(
+      childCall("toolu_a", "child-a", { subagent_type: "Plan" }),
+      {
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-b",
+        tool_use_id: "toolu_b",
+        subagent_type: "general-purpose",
+        task_type: "local_agent",
+      },
+      childCall("toolu_b", "child-b"),
+      childCall("toolu_c", "child-c"),
+    );
+    await Bun.sleep(20);
+    expect(toolStarts.map((event) => event.type === "tool-start" && event.subagent)).toEqual([
+      { parentToolUseId: "toolu_a", subagentType: "Plan" },
+      { parentToolUseId: "toolu_b", subagentType: "general-purpose" },
+      { parentToolUseId: "toolu_c" },
+    ]);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("Claude makes a subagent's type single-line and capped where its lineage is made, or leaves it out", async () => {
+  const fixture = await controlledClaude();
+  const lineages: unknown[] = [];
+  fixture.session.subscribe((event) => {
+    if (event.type === "tool-start" && event.subagent) lineages.push(event.subagent);
+  });
+  const agentCall = (id: string, subagentType: string) => ({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: {
+      content: [{ type: "tool_use", id, name: "Agent", input: { subagent_type: subagentType } }],
+    },
+  });
+  const childCall = (parent: string, extra: Record<string, unknown> = {}) => ({
+    type: "assistant",
+    parent_tool_use_id: parent,
+    ...extra,
+    message: { content: [{ type: "tool_use", id: `${parent}-child`, name: "Bash", input: {} }] },
+  });
+  try {
+    await fixture.session.sendMessage("wait");
+    await fixture.emit(
+      childCall("toolu_a", { subagent_type: " Explore\n  agent " }),
+      agentCall("toolu_b", "x".repeat(60)),
+      childCall("toolu_b"),
+      agentCall("toolu_c", "\x07 \n"),
+      childCall("toolu_c"),
+    );
+    await Bun.sleep(20);
+    expect(lineages).toEqual([
+      { parentToolUseId: "toolu_a", subagentType: "Explore agent" },
+      { parentToolUseId: "toolu_b", subagentType: `${"x".repeat(39)}…` },
+      { parentToolUseId: "toolu_c" },
+    ]);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 async function controlledClaude(
   sessionId?: string,
   onSessionId?: (id: string) => Promise<void>,

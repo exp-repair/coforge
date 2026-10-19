@@ -1214,6 +1214,7 @@ export function encodeAgentActivity(value: AgentActivity): Uint8Array {
                 ? { case: "thinking" as const, value: entry.text }
                 : { case: "text" as const, value: entry.text },
         parentToolUseId: entry.subagent?.parentToolUseId ?? "",
+        subagentType: entry.subagent?.subagentType ?? "",
         toolInput: entry.kind === "tool_start" ? (entry.toolInput ?? "") : "",
       })),
     }),
@@ -1270,7 +1271,12 @@ export function decodeAgentActivity(bytes: Uint8Array): AgentActivity {
   const v = fromBinary(AgentActivitySchema, bytes);
   const entries = v.entries.map((entry): ActivityTrajectoryEntry => {
     const scope = entry.parentToolUseId
-      ? { subagent: { parentToolUseId: entry.parentToolUseId } }
+      ? {
+          subagent: {
+            parentToolUseId: entry.parentToolUseId,
+            ...(entry.subagentType ? { subagentType: entry.subagentType } : {}),
+          },
+        }
       : {};
     if (entry.content.case === "toolName")
       return {

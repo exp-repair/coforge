@@ -17,7 +17,11 @@ import { cn } from "#src/lib/utils";
 import { m } from "#src/paraglide/messages";
 import type { ActivityEntry } from "./agent-activity";
 import { ACTIVITY_MARKER_CLASS, ActivityMarker } from "./activity-marker";
-import { presentActivityRows, type PresentedActivityRow } from "./agent-activity-presentation";
+import {
+  presentActivityRows,
+  subagentBadgeLabel,
+  type PresentedActivityRow,
+} from "./agent-activity-presentation";
 
 /** The profile panel's Activity log: one monospace row per entry, each hung on a round marker on
  * a connector line with its clock on the right, oldest at the top, newest at the bottom, the list
@@ -151,7 +155,7 @@ const ActivityTimelineRow = memo(function ActivityTimelineRow({
           )}
           {row.subagent && (
             <Badge type="modern" size="sm" color="gray" className="ml-1.5 inline-flex">
-              Subagent
+              {subagentBadgeLabel(row.subagent)}
             </Badge>
           )}
           {row.detail && !showDetailBelowLabel && (

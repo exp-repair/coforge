@@ -1,6 +1,5 @@
 import type { AgentRuntimeEvent } from "@coforge/agent";
-import { truncateCodePointsWithEllipsis } from "@lrm/coforge-sdk/internal";
-import { collapseWhitespace } from "#src/code-agent/agent-instructions";
+import { subagentTypeLabel } from "#src/code-agent/subagent-type";
 
 type SubagentProgress = Extract<AgentRuntimeEvent, { type: "subagent-progress" }>;
 
@@ -16,7 +15,7 @@ const PHASE_LABEL: Readonly<Record<SubagentProgress["phase"], string>> = {
  * task description or summary, which can carry prompt text), single-line and capped.
  */
 export function subagentProgressDetail(event: SubagentProgress): string {
-  const type = collapseWhitespace((event.subagentType ?? "").replace(/[\x00-\x1f\x7f]/g, " "));
+  const type = subagentTypeLabel(event.subagentType);
   const label = PHASE_LABEL[event.phase];
-  return type ? `${label} (${truncateCodePointsWithEllipsis(type, 40)})` : label;
+  return type ? `${label} (${type})` : label;
 }

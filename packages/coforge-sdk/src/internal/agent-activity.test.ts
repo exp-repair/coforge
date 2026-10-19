@@ -130,3 +130,27 @@ test("round trips a system entry", () => {
     { kind: "system", title: "Session reset", text: "The daemon restarted the session." },
   ]);
 });
+
+test("round trips a subagent lineage's subagentType", () => {
+  const withEntry: AgentActivity = {
+    ...activity,
+    entries: [
+      {
+        kind: "tool_start",
+        toolName: "read_file",
+        subagent: { parentToolUseId: "toolu_1", subagentType: "Explore" },
+      },
+      { kind: "text", text: "found it", subagent: { parentToolUseId: "toolu_1" } },
+    ],
+  };
+  const decoded = decodeAgentActivity(encodeAgentActivity(withEntry));
+  expect(decoded.entries).toEqual([
+    {
+      kind: "tool_start",
+      toolName: "read_file",
+      subagent: { parentToolUseId: "toolu_1", subagentType: "Explore" },
+    },
+    { kind: "text", text: "found it", subagent: { parentToolUseId: "toolu_1" } },
+  ]);
+  expect(decoded.entries?.[1]?.subagent).not.toHaveProperty("subagentType");
+});

@@ -70,6 +70,10 @@ These rules apply to `src/features/agents/`.
   effort, not a guarantee that every sensitive statement can be recognized.
 - Merge consecutive text (or thinking) fragments of the same launch, conversation, and
   subagent into one row; the Daemon delivers one statement in several frames.
+- Show a `subagent_activity` frame's entries as their own rows, like the main Agent's (never one
+  merged "Subagent working" row); its tool and system rows carry the badge `Subagent: <type>`
+  (`subagentBadgeLabel`, else `Subagent`), its thinking and text rows none. The Agent's current
+  label stays "Subagent working…"; an entry-less progress row keeps the daemon's phase text.
 - The Activity log is complete: show every persisted frame, including
   `tool_end`, `thinking_end`, and `compaction_finished` as status rows. The
   Daemon's `detail` wins; fall back to the "… finished" wording only when

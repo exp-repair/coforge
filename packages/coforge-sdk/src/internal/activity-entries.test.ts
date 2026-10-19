@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { parseActivityEntries } from "./activity-entries";
+import { ACTIVITY_SUBAGENT_TYPE_MAX, parseActivityEntries } from "./activity-entries";
 
 test("parses a tool_start entry without toolInput", () => {
   expect(parseActivityEntries([{ kind: "tool_start", toolName: "bash" }])).toEqual([
@@ -95,4 +95,39 @@ test("preserves subagent scope on a system entry", () => {
   ).toEqual([
     { kind: "system", title: "t", text: "body", subagent: { parentToolUseId: "tool-1" } },
   ]);
+});
+
+test("preserves a subagent lineage's subagentType", () => {
+  expect(
+    parseActivityEntries([
+      {
+        kind: "tool_start",
+        toolName: "read_file",
+        subagent: { parentToolUseId: "tool-1", subagentType: "Explore" },
+      },
+    ]),
+  ).toEqual([
+    {
+      kind: "tool_start",
+      toolName: "read_file",
+      subagent: { parentToolUseId: "tool-1", subagentType: "Explore" },
+    },
+  ]);
+});
+
+test("rejects a subagentType that is empty, too long, multi-line, or not a string", () => {
+  const longest = "x".repeat(ACTIVITY_SUBAGENT_TYPE_MAX);
+  expect(
+    parseActivityEntries([
+      { kind: "text", text: "a", subagent: { parentToolUseId: "tool-1", subagentType: longest } },
+    ]),
+  ).toEqual([
+    { kind: "text", text: "a", subagent: { parentToolUseId: "tool-1", subagentType: longest } },
+  ]);
+  for (const subagentType of ["", `${longest}x`, "Ex\nplore", 7])
+    expect(() =>
+      parseActivityEntries([
+        { kind: "text", text: "a", subagent: { parentToolUseId: "tool-1", subagentType } },
+      ]),
+    ).toThrow("invalid activity lineage");
 });

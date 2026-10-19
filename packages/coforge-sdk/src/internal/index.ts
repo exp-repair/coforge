@@ -753,7 +753,7 @@ export type AgentMessageDeliveryRejection = Omit<AgentMessageDeliveryAck, "metho
   method: typeof AGENT_MESSAGE_REJECT_METHOD;
   reason: AgentDeliveryRejectionReason;
 };
-export { parseActivityEntries } from "./activity-entries";
+export { ACTIVITY_SUBAGENT_TYPE_MAX, parseActivityEntries } from "./activity-entries";
 export {
   HELD_CONTEXT_LIMIT,
   SEEN_EXACT_SEQS_LIMIT,

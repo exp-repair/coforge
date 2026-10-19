@@ -277,31 +277,51 @@ test("a tool_end status row between two text fragments closes the merge group li
   expect(rows.map((row) => row.detail)).toEqual(["before", "Tool finished", "after"]);
 });
 
-test("subagent_activity always shows one unified label, even with entries", () => {
+test("a subagent's entries show as their own rows: tool and system rows badged, thinking and text not", () => {
+  const explore = { parentToolUseId: "t1", subagentType: "Explore" };
   const observation = {
     activityKind: "working" as const,
     detailKind: "subagent_activity",
     level: "info",
     detail: "",
     entries: [
-      { kind: "tool_start" as const, toolName: "bash", subagent: { parentToolUseId: "t1" } },
+      { kind: "thinking" as const, text: "Where is it?", subagent: explore },
+      { kind: "text" as const, text: "Looking", subagent: explore },
+      { kind: "tool_start" as const, toolName: "read_file", toolInput: "a.ts", subagent: explore },
+      { kind: "system" as const, title: "Hook", text: "ran", subagent: { parentToolUseId: "t1" } },
     ],
   };
-  expect(presentActivity(observation)).toEqual([
-    {
-      label: "Subagent working",
-      detail: "",
-      recentLabel: "Subagent working…",
-      currentLabel: "Subagent working…",
-      tone: "working",
-      recentTone: "working",
-      detailOnOwnLine: false,
-      expandable: false,
-    },
+  const rows = presentActivity(observation);
+  expect(rows.map((row) => [row.label, row.detail, row.subagent])).toEqual([
+    ["Thinking", "Where is it?", undefined],
+    ["Output", "Looking", undefined],
+    ["Reading file", "a.ts", explore],
+    ["Hook", "ran", { parentToolUseId: "t1" }],
   ]);
+  // The Agent's own status stays the one subagent signal.
+  expect(rows.map((row) => row.currentLabel)).toEqual(Array(4).fill("Subagent working…"));
+  expect(agentDisplay(display({ ...observation, detail: "" })).label).toBe("Subagent working…");
   expect(presentActivity({ ...observation, level: "error", detail: "boom" })).toMatchObject([
     { label: "Error", tone: "error" },
   ]);
+});
+
+test("a subagent frame whose only entry is hidden still reads Subagent working…", () => {
+  const observation = {
+    activityKind: "working" as const,
+    detailKind: "subagent_activity",
+    level: "info",
+    detail: "",
+    entries: [
+      {
+        kind: "tool_start" as const,
+        toolName: "send_message",
+        subagent: { parentToolUseId: "t1" },
+      },
+    ],
+  };
+  expect(presentActivity(observation)).toEqual([]);
+  expect(agentDisplay(display(observation)).label).toBe("Subagent working…");
 });
 
 test("a subagent progress row keeps the unified label and shows the daemon's phase as its detail", () => {
@@ -365,19 +385,19 @@ test("structured tools separate the label from command and path details", () => 
   ).toEqual([]);
 });
 
-test("thinking and output entries stay separate and retain provider text and lineage", () => {
-  expect(
-    presentActivity({
-      activityKind: "thinking",
-      detailKind: "model_response_started",
-      level: "info",
-      detail: "",
-      entries: [
-        { kind: "thinking", text: "检查两个边界", subagent: { parentToolUseId: "parent-1" } },
-        { kind: "text", text: "<script>not executable</script>" },
-      ],
-    }),
-  ).toMatchObject([
+test("thinking and output entries stay separate, retain provider text, and show no subagent badge", () => {
+  const rows = presentActivity({
+    activityKind: "thinking",
+    detailKind: "model_response_started",
+    level: "info",
+    detail: "",
+    entries: [
+      { kind: "thinking", text: "检查两个边界", subagent: { parentToolUseId: "parent-1" } },
+      { kind: "text", text: "<script>not executable</script>" },
+    ],
+  });
+  expect(rows[0]).not.toHaveProperty("subagent");
+  expect(rows).toMatchObject([
     {
       label: "Thinking",
       detail: "检查两个边界",
@@ -385,7 +405,6 @@ test("thinking and output entries stay separate and retain provider text and lin
       currentLabel: "Thinking…",
       tone: "thinking",
       expandable: true,
-      subagent: { parentToolUseId: "parent-1" },
     },
     {
       label: "Output",

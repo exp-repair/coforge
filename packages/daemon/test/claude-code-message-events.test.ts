@@ -39,7 +39,8 @@ describe("claudeAssistantEvents", () => {
     });
   });
 
-  test("names the parent tool call of a subagent's blocks", () => {
+  test("carries a subagent's lineage on each of its blocks", () => {
+    const subagent = { parentToolUseId: "toolu_1", subagentType: "Explore" };
     const { events } = claudeAssistantEvents(
       record(
         "assistant",
@@ -50,11 +51,12 @@ describe("claudeAssistantEvents", () => {
         ],
         "toolu_1",
       ),
+      subagent,
     );
     expect(events).toEqual([
-      { type: "thinking-delta", text: "Hmm", subagent: { parentToolUseId: "toolu_1" } },
-      { type: "text-delta", text: "Found it", subagent: { parentToolUseId: "toolu_1" } },
-      expect.objectContaining({ id: "toolu_2", subagent: { parentToolUseId: "toolu_1" } }),
+      { type: "thinking-delta", text: "Hmm", subagent },
+      { type: "text-delta", text: "Found it", subagent },
+      expect.objectContaining({ id: "toolu_2", subagent }),
     ]);
   });
 
@@ -145,13 +147,25 @@ describe("claudeAssistantEvents", () => {
       }).events,
     ).toEqual([text("API Error: 500 while I retry"), expect.objectContaining({ id: "toolu_1" })]);
     expect(
-      claudeAssistantEvents({
-        ...record("assistant", [{ type: "text", text: "Subagent answer" }], "toolu_1"),
-        error: "rate_limit",
-      }).events,
+      claudeAssistantEvents(
+        {
+          ...record("assistant", [{ type: "text", text: "Subagent answer" }], "toolu_1"),
+          error: "rate_limit",
+        },
+        { parentToolUseId: "toolu_1" },
+      ).events,
     ).toEqual([
       { type: "text-delta", text: "Subagent answer", subagent: { parentToolUseId: "toolu_1" } },
     ]);
+    // Whether a record is the main session's is the record's own fact, not the caller's.
+    for (const scope of [{ parent_tool_use_id: "toolu_1" }, { subagent_type: "Explore" }])
+      expect(
+        claudeAssistantEvents({
+          ...record("assistant", [{ type: "text", text: "Subagent answer" }]),
+          ...scope,
+          error: "rate_limit",
+        }).events,
+      ).toEqual([{ type: "text-delta", text: "Subagent answer" }]);
   });
 });
 

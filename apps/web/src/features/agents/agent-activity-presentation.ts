@@ -1,5 +1,9 @@
 import type { ActivityEntry } from "./agent-activity";
-import type { AgentDisplaySnapshot, ActivityTrajectoryEntry } from "@lrm/coforge-sdk/internal";
+import type {
+  ActivitySubagent,
+  AgentDisplaySnapshot,
+  ActivityTrajectoryEntry,
+} from "@lrm/coforge-sdk/internal";
 import {
   AGENT_ACTIVITY_DETAIL_KIND,
   TOOL_LABELS,
@@ -29,8 +33,16 @@ export type ActivityRow = {
    * row's secondary text stays inline after it. */
   detailOnOwnLine: boolean;
   expandable: boolean;
-  subagent?: { parentToolUseId: string };
+  subagent?: ActivitySubagent;
 };
+
+/** The Agent's current label while a subagent works, whatever row its frame shows. */
+const SUBAGENT_WORKING = "Subagent working…";
+
+/** A subagent row's badge: the provider's subagent type when the daemon reported one. */
+export function subagentBadgeLabel(subagent: ActivitySubagent): string {
+  return subagent.subagentType ? `Subagent: ${subagent.subagentType}` : "Subagent";
+}
 
 /**
  * tool_end, thinking_end and compaction_finished are entry-less status
@@ -145,26 +157,32 @@ function presentEntryItem(
       recentTone: thinking ? "thinking" : "working",
       detailOnOwnLine: true,
       expandable: true,
-      subagent: item.subagent,
     },
+    // A subagent's statement shows no badge (only its tool, system and status rows do), but
+    // never merges with the main Agent's or another subagent's.
     mergeGroup: `${thinking ? "thinking" : "text"}:${item.subagent?.parentToolUseId ?? ""}`,
   };
 }
 
 function activityAtoms(observation: ActivityObservation): ActivityAtom[] {
   const { detailKind: kind, level, detail } = observation;
-  // Any activity reclassified as subagent_activity (a trajectory
-  // entry carrying a subagent scope) shows one unified label, regardless of
-  // its underlying entries. A subagent progress row's phase ("Subagent started
-  // (Explore)") is its detail; a reclassified trajectory row has none.
+  // The daemon reclassifies a frame with subagent-scoped entries as subagent_activity. Its
+  // entries show as their own rows, as the main Agent's do (tool and system rows carry the
+  // subagent badge); the Agent's current label stays the one "Subagent working…" signal. A
+  // subagent progress row has no entries: its phase ("Subagent started (Explore)") is its detail.
   if (kind === AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY && level !== "error") {
+    if (observation.entries?.length)
+      return observation.entries.map((entry) => {
+        const atom = presentEntryItem(entry, kind, detail);
+        return atom.row ? { ...atom, row: { ...atom.row, currentLabel: SUBAGENT_WORKING } } : atom;
+      });
     return [
       {
         row: {
           label: "Subagent working",
           detail,
-          recentLabel: "Subagent working…",
-          currentLabel: "Subagent working…",
+          recentLabel: SUBAGENT_WORKING,
+          currentLabel: SUBAGENT_WORKING,
           tone: "working",
           recentTone: "working",
           detailOnOwnLine: false,
@@ -379,7 +397,11 @@ export function agentDisplay(display?: AgentDisplaySnapshot, options?: { stopped
           ? "Thinking…"
           : kind === "error"
             ? (row?.recentLabel ?? "Error")
-            : (row?.currentLabel ?? "Working…");
+            : (row?.currentLabel ??
+              // A subagent frame whose only entry is hidden (`send_message`) has no row.
+              (display.detailKind === AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY
+                ? SUBAGENT_WORKING
+                : "Working…"));
   return {
     kind,
     label,

@@ -1,6 +1,11 @@
 import { codePointLength } from "./truncate";
 
-export type ActivitySubagent = { parentToolUseId: string };
+/** The longest subagent type a lineage carries, in code points. */
+export const ACTIVITY_SUBAGENT_TYPE_MAX = 40;
+/** A subagent-scoped entry's lineage: the tool call that started the subagent, and the
+ * provider's subagent type when it is known (single-line, at most
+ * `ACTIVITY_SUBAGENT_TYPE_MAX` code points). */
+export type ActivitySubagent = { parentToolUseId: string; subagentType?: string };
 export type ActivityTrajectoryEntry = (
   | { kind: "text" | "thinking"; text: string }
   | { kind: "tool_start"; toolName: string; toolInput?: string }
@@ -16,14 +21,22 @@ export function parseActivityEntries(value: unknown): ActivityTrajectoryEntry[] 
     let subagent: ActivitySubagent | undefined;
     if (item.subagent !== undefined) {
       const lineage = item.subagent as Record<string, unknown> | null;
-      if (!lineage || !validName(lineage.parentToolUseId))
+      if (
+        !lineage ||
+        !validLine(lineage.parentToolUseId, 128) ||
+        (lineage.subagentType !== undefined &&
+          !validLine(lineage.subagentType, ACTIVITY_SUBAGENT_TYPE_MAX))
+      )
         throw new Error("invalid activity lineage");
-      subagent = { parentToolUseId: lineage.parentToolUseId };
+      subagent = {
+        parentToolUseId: lineage.parentToolUseId,
+        ...(lineage.subagentType !== undefined ? { subagentType: lineage.subagentType } : {}),
+      };
     }
     const scope = subagent ? { subagent } : {};
     if (
       item.kind === "tool_start" &&
-      validName(item.toolName) &&
+      validLine(item.toolName, 128) &&
       item.text === undefined &&
       item.title === undefined &&
       (item.toolInput === undefined || validToolInput(item.toolInput))
@@ -45,7 +58,7 @@ export function parseActivityEntries(value: unknown): ActivityTrajectoryEntry[] 
       return { kind: item.kind, text: item.text, ...scope };
     if (
       item.kind === "system" &&
-      validTitle(item.title) &&
+      validLine(item.title, 120) &&
       typeof item.text === "string" &&
       codePointLength(item.text) <= 2000 &&
       item.toolName === undefined &&
@@ -56,28 +69,20 @@ export function parseActivityEntries(value: unknown): ActivityTrajectoryEntry[] 
   });
 }
 
-function validName(value: unknown): value is string {
+/** A non-empty single-line string of at most `maxCodePoints` code points. */
+function validLine(value: unknown, maxCodePoints: number): value is string {
   return (
     typeof value === "string" &&
     value.length > 0 &&
-    codePointLength(value) <= 128 &&
+    codePointLength(value) <= maxCodePoints &&
     !/[\x00-\x1f\x7f]/.test(value)
   );
 }
 
 // `toolInput`: the short, already-redacted argument summary. Same
-// control-character rejection as `validName`, with a longer cap.
+// control-character rejection as `validLine`, but it may be empty.
 function validToolInput(value: unknown): value is string {
   return (
     typeof value === "string" && codePointLength(value) <= 200 && !/[\x00-\x1f\x7f]/.test(value)
-  );
-}
-
-function validTitle(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    codePointLength(value) <= 120 &&
-    !/[\x00-\x1f\x7f]/.test(value)
   );
 }

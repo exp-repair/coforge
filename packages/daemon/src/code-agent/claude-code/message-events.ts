@@ -1,13 +1,14 @@
+import type { ActivitySubagent } from "@lrm/coforge-sdk/internal";
 import type { AgentRuntimeEvent } from "#src/code-agent/contract";
-import { asRecord, eventTime, textContent } from "#src/code-agent/json-record";
+import { asRecord, eventTime, nonEmptyString, textContent } from "#src/code-agent/json-record";
 
 /**
  * What one Claude Code `assistant` record reports, block by block in order: a completed `thinking`
  * or `text` block's whole text (once; its partial deltas carry none, see `stream-events.ts`), and
  * for tool calls the id of every `tool_use` block (the calls the turn now waits on) with a
  * `tool-start` for each one that also names its tool. Empty and redacted blocks show nothing.
- * A subagent's block carries its parent tool call. Which ids count as outstanding (top-level only)
- * stays with the session.
+ * A subagent's block carries its `subagent` lineage. Which ids count as outstanding (top-level
+ * only) stays with the session.
  *
  * A text block that reports a failed API request is an `error`, not model text: Claude Code
  * writes such a failure as a synthetic assistant message, flagging a main-session one without
@@ -16,20 +17,24 @@ import { asRecord, eventTime, textContent } from "#src/code-agent/json-record";
  * timeout reads as one too. The turn's failed `result` then ends the turn without a second
  * report (the daemon core shows one reason per failed turn).
  */
-export function claudeAssistantEvents(record: Readonly<Record<string, unknown>>): {
+export function claudeAssistantEvents(
+  record: Readonly<Record<string, unknown>>,
+  lineage?: ActivitySubagent,
+): {
   ids: string[];
   events: AgentRuntimeEvent[];
 } {
   const ids: string[] = [];
   const events: AgentRuntimeEvent[] = [];
-  const subagent =
-    typeof record.parent_tool_use_id === "string"
-      ? { subagent: { parentToolUseId: record.parent_tool_use_id } }
-      : {};
+  const subagent = lineage ? { subagent: lineage } : {};
   const content = messageContent(record);
   const callsTools = content.some((block) => block?.type === "tool_use");
+  // A subagent's record names its parent tool call or its subagent type.
+  const mainSession =
+    nonEmptyString(record.parent_tool_use_id) === undefined &&
+    nonEmptyString(record.subagent_type) === undefined;
   const apiError =
-    !callsTools && !("subagent" in subagent) && typeof record.error === "string" && record.error
+    !callsTools && mainSession && typeof record.error === "string" && record.error
       ? record.error
       : undefined;
   for (const block of content) {

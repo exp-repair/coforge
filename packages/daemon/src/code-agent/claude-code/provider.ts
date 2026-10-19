@@ -15,6 +15,7 @@ import type { AgentContextReport } from "@lrm/coforge-sdk/internal";
 import { createPromptFile } from "./prompt-file";
 import { claudeStreamEvents } from "./stream-events";
 import { claudeAssistantEvents, claudeToolResults } from "./message-events";
+import { ClaudeSubagentLineage } from "./subagent-lineage";
 import { claudeStaticCatalog, discoverExternalCodeAgents } from "#src/code-agent/runtime-inventory";
 import type { ProviderDiscoveryOptions } from "#src/code-agent/contract";
 import { asRecord, eventTime, nonEmptyString } from "#src/code-agent/json-record";
@@ -158,8 +159,10 @@ class ClaudeCodeAgentSession implements AgentSession {
   // A fresh Claude session becomes ready at its first result.
   #sessionReadyForNotices = false;
   #compacting = false;
-  /** Subagent tasks announced by `task_started`, by task id, with their reported type. */
+  /** Subagent tasks announced by `task_started`, by task id, with the tool call each belongs to;
+   * their types live in `#subagentLineage`. */
   readonly #subagentTasks = new Map<string, string | undefined>();
+  readonly #subagentLineage = new ClaudeSubagentLineage();
   #inputFailure: Error | undefined;
   #recoveryFailed = false;
   readonly #outstandingTools = new Set<string>();
@@ -286,6 +289,7 @@ class ClaudeCodeAgentSession implements AgentSession {
     this.#sessionId = fresh.sessionId;
     // The old process's tasks never report again.
     this.#subagentTasks.clear();
+    this.#subagentLineage.clear();
     this.#identity = { sessionId: fresh.sessionId, state: "empty" };
     this.#bindProcess(this.#process);
     await this.ready();
@@ -457,25 +461,29 @@ class ClaudeCodeAgentSession implements AgentSession {
 
   /**
    * Relays a subagent's `task_started`/`task_progress`/`task_notification` as
-   * `subagent-progress`. Only `task_started` names the task's type, and a background command's
-   * later records look like a subagent's, so the subagent tasks it announced are remembered here.
+   * `subagent-progress`. Only `task_started` reliably names the task's type, and a background
+   * command's later records look like a subagent's, so the subagent tasks it announced are
+   * remembered here, and their types with the tool call's lineage.
    */
   #acceptTaskLifecycle(record: Readonly<Record<string, unknown>>): void {
     const phase = TASK_LIFECYCLE_PHASE.get(record.subtype);
     const taskId = typeof record.task_id === "string" ? record.task_id : undefined;
     if (!phase || !taskId) return;
-    const reportedType = nonEmptyString(record.subagent_type);
+    const toolUseId = typeof record.tool_use_id === "string" ? record.tool_use_id : undefined;
     if (phase === "started") {
       if (record.task_type !== "local_agent" && record.task_type !== "remote_agent") return;
-      this.#subagentTasks.set(taskId, reportedType);
+      this.#subagentTasks.set(taskId, toolUseId);
+      this.#subagentLineage.remember(toolUseId, record.subagent_type);
     } else if (!this.#subagentTasks.has(taskId)) return;
-    const subagentType = reportedType ?? this.#subagentTasks.get(taskId);
+    const subagentType =
+      nonEmptyString(record.subagent_type) ??
+      this.#subagentLineage.typeOf(this.#subagentTasks.get(taskId));
     if (phase === "notification") this.#subagentTasks.delete(taskId);
     this.#emit({
       type: "subagent-progress",
       phase,
       ...(subagentType ? { subagentType } : {}),
-      ...(typeof record.tool_use_id === "string" ? { parentToolUseId: record.tool_use_id } : {}),
+      ...(toolUseId ? { parentToolUseId: toolUseId } : {}),
       occurredAt: eventTime(record),
     });
   }
@@ -566,12 +574,15 @@ class ClaudeCodeAgentSession implements AgentSession {
       return;
     }
     if (record.type === "assistant") {
-      const { ids, events } = claudeAssistantEvents(record);
+      const { ids, events } = claudeAssistantEvents(record, this.#subagentLineage.of(record));
       if (record.parent_tool_use_id == null) {
         if (this.#state === "idle") this.#state = "running";
         for (const id of ids) this.#outstandingTools.add(id);
       }
-      for (const event of events) this.#emit(event);
+      for (const event of events) {
+        if (event.type === "tool-start") this.#subagentLineage.rememberCall(event);
+        this.#emit(event);
+      }
       return;
     }
     if (record.type === "user") {
