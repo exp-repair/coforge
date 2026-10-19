@@ -29,8 +29,11 @@ A completed turn leaves the process alive. Background waiting remains enabled.
 
 Stop reasons `end_turn`, `max_tokens`, `max_turn_requests` and `refusal` complete a
 turn without an error; `cancelled` interrupts it; any other reason (Grok reports
-`error`) fails it with an error event. A process failure or a rejected prompt fails
-the turn with its own error; a rejected prompt reports Grok's `data.detail`.
+`error`) fails it with an error event. Grok sends a failed turn's error text as
+`turn_completed.agent_result` (a string) before it rejects the prompt, so that text
+is the error message; without it the message names the stop reason. A process
+failure or a prompt rejected before its turn ends fails the turn with its own error;
+a rejected prompt reports Grok's `data.detail`.
 A `tool_call_update` ending `cancelled` ends the call as an error, with any
 `content` text as its output.
 
@@ -106,7 +109,31 @@ Sources: [official ACP guide](https://docs.x.ai/build/cli/headless-scripting),
 the `yoloMode` table in `xai-grok-pager/docs/user-guide/15-agent-mode.md`; native
 verification on `1.0.62`).
 Alignment reference: the [reference Computer](reference-cli-research/README.md) 1.0.47
-(darwin-arm64, release `38026b19-199f-4f13-b044-de5a8f9b5b50`, examined 2026-10-19).
+(artifact target darwin-arm64, release `38026b19-199f-4f13-b044-de5a8f9b5b50`, examined
+2026-10-19; binary sha256
+`34bb347a1f4c58b1bb6a2851f78079a4e7a742b7e832430478619ae8e59604e9`, extracted bundle
+`raft-computer-1.0.47.cjs` sha256
+`f0daae4d98de9138b10f6ce48b91b9ea82e0627c04562531c9b18a1fc988dd8d`). "Core" below is
+the daemon bundle module `packages/daemon/dist/core-D2FAeq9h.js`; "runtime" is
+`node_modules/.pnpm/@botiverse+oar@0.56.0_*/node_modules/@botiverse/oar/dist/runtimes/grok/session.js`
+in the extracted tree. Behaviours aligned with it:
+
+- Missing-session replacement: only a `session/load` error whose `data.code` is
+  `FS_NOT_FOUND` starts a fresh session (core `isMissingSessionError`, used by
+  `GrokDriver`; runtime's Grok ACP profile resume-not-found check).
+- Approval: launch with `--always-approve` plus `yoloMode: true` session metadata,
+  and answer a permission request with its allow-once option (runtime profile
+  arguments and session metadata; core `GrokDriver` auto-approval).
+- Refused interjection: the reference reports it as a delivery failure and restores
+  the notice for later delivery (core `GrokDriver`, then the process manager's
+  async-rejection restore); CoForge sends it through `session/prompt` directly.
+- Cancelled tool call: `cancelled` is a terminal tool status that ends the call
+  (core `GrokEventNormalizer`).
+- Stop reasons: `error` fails the turn with `agent_result` as its message (core
+  `GrokEventNormalizer` prompt finish).
+- Turn end: the `turn_completed` session notification finishes its prompt's turn
+  (core `GrokEventNormalizer`).
+
 The xAI extension names and rules-on-load restriction are implementation-specific,
 verified against that source and the official binary rather than assumed ACP
 standard features.

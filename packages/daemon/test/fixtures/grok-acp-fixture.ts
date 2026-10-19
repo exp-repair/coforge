@@ -10,10 +10,15 @@ const note = (method: string, params: unknown) => write({ jsonrpc: "2.0", method
 const update = (value: unknown) => note("session/update", { sessionId, update: value });
 let pending: { id: string; promptId: string } | undefined;
 let awaitingPermission: { id: string; promptId: string; answers: number } | undefined;
-const terminal = (promptId: string, stopReason = "end_turn") =>
+const terminal = (promptId: string, stopReason = "end_turn", agentResult?: string) =>
   note("_x.ai/session_notification", {
     sessionId,
-    update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: stopReason },
+    update: {
+      sessionUpdate: "turn_completed",
+      prompt_id: promptId,
+      stop_reason: stopReason,
+      ...(agentResult ? { agent_result: agentResult } : {}),
+    },
   });
 const askPermission = (id: string, forSession: string) =>
   write({
@@ -248,9 +253,19 @@ for await (const line of console) {
         askPermission("permission-own", sessionId);
         break;
       }
-      // Grok's turn_completed carries "error" for a failed turn.
-      const stopReasons: Record<string, string> = { fail: "error", "max tokens": "max_tokens" };
-      terminal(promptId, stopReasons[params.prompt[0].text] ?? "end_turn");
+      if (params.prompt[0].text === "fail") {
+        // A failed turn: Grok sends turn_completed with stop_reason "error" and the error's
+        // display text in agent_result, then rejects the prompt request with the same detail.
+        const detail = "stream_error: upstream connection reset";
+        terminal(promptId, "error", detail);
+        write({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: { code: -32603, message: "Internal error", data: detail },
+        });
+        break;
+      }
+      terminal(promptId, params.prompt[0].text === "max tokens" ? "max_tokens" : "end_turn");
       reply({ stopReason: "end_turn", _meta: { promptId } });
       break;
     }

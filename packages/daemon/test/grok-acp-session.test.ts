@@ -290,7 +290,14 @@ test(
       await session.notify!("fail");
       await done;
       expect(events.at(-1)).toEqual({ type: "completed", status: "failed" });
-      expect(events.at(-2)).toMatchObject({ type: "error", providerErrorReason: "error" });
+      expect(events.filter((e) => e.type === "error")).toEqual([
+        {
+          type: "error",
+          message: "stream_error: upstream connection reset",
+          providerErrorReason: "error",
+        },
+      ]);
+      expect(events.at(-2)?.type).toBe("error");
     } finally {
       await close();
     }

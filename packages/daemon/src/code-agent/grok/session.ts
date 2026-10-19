@@ -371,8 +371,23 @@ class GrokSession implements AgentSession {
     }
     const update = asRecord(params.update);
     const finished = completedPromptId(update);
-    if (finished) this.#finish(finished, update?.stop_reason);
-    else if (update && update.sessionUpdate !== "turn_completed") {
+    if (finished) {
+      // A failed turn's error text rides `agent_result`, and this update arrives before the
+      // prompt rejection that repeats it, so it is the one that reports the failure.
+      const detail = nonEmptyString(update?.agent_result);
+      const reason = update?.stop_reason;
+      this.#finish(
+        finished,
+        reason,
+        detail
+          ? {
+              type: "error",
+              message: detail,
+              providerErrorReason: typeof reason === "string" ? reason : "unknown_stop_reason",
+            }
+          : undefined,
+      );
+    } else if (update && update.sessionUpdate !== "turn_completed") {
       const promptId = nonEmptyString(asRecord(params._meta)?.promptId) ?? this.#runningId;
       const turn = promptId ? this.#turns.get(promptId) : undefined;
       // Grok streams only a prompt it is already running, so its own update also admits it.
