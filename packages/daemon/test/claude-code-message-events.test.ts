@@ -83,6 +83,76 @@ describe("claudeAssistantEvents", () => {
       events: [],
     });
   });
+
+  test("reports the text of a record Claude Code marks with an API error as that error", () => {
+    const message = "API Error: Rate limit reached";
+    expect(
+      claudeAssistantEvents({
+        ...record("assistant", [
+          { type: "thinking", thinking: "Planning" },
+          { type: "text", text: message },
+        ]),
+        error: "rate_limit",
+      }).events,
+    ).toEqual([
+      { type: "thinking-delta", text: "Planning" },
+      { type: "error", message, providerErrorCode: "rate_limit", occurredAt: timestamp },
+    ]);
+  });
+
+  test("reports a text block that reads as an API request failure as an error", () => {
+    const failures = [
+      "API Error: 500 Internal server error. This is a server-side issue.",
+      "API Error: 529 Overloaded",
+      "API Error: Unable to connect to API (ECONNRESET)",
+      "API Error: Request timed out.",
+      "  api error: connect ETIMEDOUT 10.0.0.1:443",
+    ];
+    for (const message of failures)
+      expect(claudeAssistantEvents(record("assistant", [{ type: "text", text: message }]))).toEqual(
+        { ids: [], events: [{ type: "error", message, occurredAt: timestamp }] },
+      );
+  });
+
+  test("a subagent's API failure text is an error, without its parent tool call", () => {
+    const message = "API Error: 503 Service Unavailable";
+    expect(
+      claudeAssistantEvents(record("assistant", [{ type: "text", text: message }], "toolu_1"))
+        .events,
+    ).toEqual([{ type: "error", message, occurredAt: timestamp }]);
+  });
+
+  test("keeps text that only resembles an API failure, or that shares a record with a tool call", () => {
+    const text = (value: string) => ({ type: "text-delta" as const, text: value });
+    expect(
+      claudeAssistantEvents(
+        record("assistant", [
+          { type: "text", text: "API Error: no status or connection failure named" },
+          { type: "text", text: "The log said API Error: 500 earlier." },
+        ]),
+      ).events,
+    ).toEqual([
+      text("API Error: no status or connection failure named"),
+      text("The log said API Error: 500 earlier."),
+    ]);
+    expect(
+      claudeAssistantEvents({
+        ...record("assistant", [
+          { type: "text", text: "API Error: 500 while I retry" },
+          { type: "tool_use", id: "toolu_1", name: "Bash", input: {} },
+        ]),
+        error: "server_error",
+      }).events,
+    ).toEqual([text("API Error: 500 while I retry"), expect.objectContaining({ id: "toolu_1" })]);
+    expect(
+      claudeAssistantEvents({
+        ...record("assistant", [{ type: "text", text: "Subagent answer" }], "toolu_1"),
+        error: "rate_limit",
+      }).events,
+    ).toEqual([
+      { type: "text-delta", text: "Subagent answer", subagent: { parentToolUseId: "toolu_1" } },
+    ]);
+  });
 });
 
 describe("claudeToolResults", () => {

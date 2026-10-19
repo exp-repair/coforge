@@ -21,6 +21,7 @@ Rules for the provider seam and adapters in `src/code-agent/`. They extend
 - Adapters emit only official display events and explicit lineage, never raw
   reasoning. Claude Code text and thinking come once per completed `assistant` content
   block (as the reference Computer shows them); its stream deltas are only `progress`.
+  A text block reporting a failed API request (`error` field, `API Error:` text) is an `error`.
 - A `notice-undelivered` for a turn comes before that turn's `completed`, and
   echoes the `deliveryIds` `notify` was given: the daemon settles tracked
   mentions on `completed`. Kiro waits, bounded, for the turn's steering

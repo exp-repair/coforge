@@ -2408,7 +2408,7 @@ export class DaemonRuntime {
       }
       this.#sendAgentStatus(agentId, "active");
       this.#activityPublisher.publish(agentId, launch, {
-        ...this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.STARTING, "info", "Starting…"),
+        ...this.#startingActivity(agentId),
         requestId,
       });
       launch.startup = new AgentStartup(() => this.#scheduleStartupFailure(agentId, launch));
@@ -3191,7 +3191,7 @@ export class DaemonRuntime {
     const remembered = this.#activityPublisher.lastBusy(probe.agentId);
     if (launch.startup?.waiting) {
       this.#activityPublisher.publish(probe.agentId, launch, {
-        ...this.#activity(probe.agentId, AGENT_ACTIVITY_DETAIL_KIND.STARTING, "info", "Starting…"),
+        ...this.#startingActivity(probe.agentId),
         probeId: probe.probeId,
       });
       return;
@@ -3776,6 +3776,10 @@ export class DaemonRuntime {
         error_code: diagnosticErrorName(error),
       });
     });
+  }
+
+  #startingActivity(agentId: string): ActivityDraft {
+    return this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.STARTING, "info", "Starting…");
   }
 
   #idleActivity(agentId: string): ActivityDraft {

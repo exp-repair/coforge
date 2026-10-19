@@ -31,6 +31,9 @@ function endsThinking(event: AgentRuntimeEvent): boolean {
   }
 }
 
+/** How long a text or thinking run stays quiet before its pending text is flushed as a row. */
+export const TRAJECTORY_QUIET_WINDOW_MS = 350;
+
 /** One instance per launch. Never retains tool arguments/output or hidden reasoning. */
 export class ActivityTrajectory {
   #pending?: {
@@ -97,7 +100,7 @@ export class ActivityTrajectory {
       }
       this.#pending = pending;
       clearTimeout(this.#timer);
-      this.#timer = setTimeout(() => this.flush(), 350);
+      this.#timer = setTimeout(() => this.flush(), TRAJECTORY_QUIET_WINDOW_MS);
       return;
     }
     // Phase boundaries (compaction, review) flush pending text first, like a tool call or a
@@ -121,7 +124,7 @@ export class ActivityTrajectory {
 
   /**
    * Announces a fresh run's kind immediately, with no entries, so the Agent's status
-   * flips to thinking/working at once instead of waiting for the 350ms flush (which
+   * flips to thinking/working at once instead of waiting for the quiet-window flush (which
    * carries the entries, as before). Skipped when the kind is already the last
    * announced one — an idle-timer split continuing the same run re-announces nothing.
    */

@@ -8,6 +8,13 @@ import { asRecord, eventTime, textContent } from "#src/code-agent/json-record";
  * `tool-start` for each one that also names its tool. Empty and redacted blocks show nothing.
  * A subagent's block carries its parent tool call. Which ids count as outstanding (top-level only)
  * stays with the session.
+ *
+ * A text block that reports a failed API request is an `error`, not model text: Claude Code
+ * writes such a failure as a synthetic assistant message, flagging a main-session one without
+ * tool calls with the record's `error` category (kept as `providerErrorCode`), and any record's
+ * text that starts with `API Error:` and names an HTTP status, a connection failure, or a
+ * timeout reads as one too. The turn's failed `result` then ends the turn without a second
+ * report (the daemon core shows one reason per failed turn).
  */
 export function claudeAssistantEvents(record: Readonly<Record<string, unknown>>): {
   ids: string[];
@@ -19,13 +26,26 @@ export function claudeAssistantEvents(record: Readonly<Record<string, unknown>>)
     typeof record.parent_tool_use_id === "string"
       ? { subagent: { parentToolUseId: record.parent_tool_use_id } }
       : {};
-  for (const block of messageContent(record)) {
+  const content = messageContent(record);
+  const callsTools = content.some((block) => block?.type === "tool_use");
+  const apiError =
+    !callsTools && !("subagent" in subagent) && typeof record.error === "string" && record.error
+      ? record.error
+      : undefined;
+  for (const block of content) {
     if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking) {
       events.push({ type: "thinking-delta", text: block.thinking, ...subagent });
       continue;
     }
     if (block?.type === "text" && typeof block.text === "string" && block.text) {
-      events.push({ type: "text-delta", text: block.text, ...subagent });
+      if (apiError || (!callsTools && readsAsApiFailure(block.text)))
+        events.push({
+          type: "error",
+          message: block.text,
+          ...(apiError ? { providerErrorCode: apiError } : {}),
+          occurredAt: eventTime(record),
+        });
+      else events.push({ type: "text-delta", text: block.text, ...subagent });
       continue;
     }
     if (block?.type !== "tool_use" || typeof block.id !== "string") continue;
@@ -62,6 +82,19 @@ export function claudeToolResults(record: Readonly<Record<string, unknown>>): {
     events.push({ type: "tool-end", id: block.tool_use_id, isError: block.is_error === true });
   }
   return { ids, events };
+}
+
+/** Claude Code's own wording for a failed API request (https://code.claude.com/docs/en/errors). */
+const API_FAILURE_PREFIX = /^\s*API Error:/i;
+const API_FAILURE_CAUSES = [
+  /\b[45]\d{2}\b/,
+  /\b(?:ECONNRESET|EPIPE|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN)\b/i,
+  /\bUnable to connect to API\b/i,
+  /\b(?:timed out|timeout)\b/i,
+];
+
+function readsAsApiFailure(text: string): boolean {
+  return API_FAILURE_PREFIX.test(text) && API_FAILURE_CAUSES.some((cause) => cause.test(text));
 }
 
 function messageContent(

@@ -3,7 +3,10 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ActivityTrajectory } from "#src/agent-runtime/activity-trajectory";
+import {
+  ActivityTrajectory,
+  TRAJECTORY_QUIET_WINDOW_MS,
+} from "#src/agent-runtime/activity-trajectory";
 import { ClaudeCodeProvider } from "#src/code-agent/claude-code/provider";
 import {
   AGENT_RUNTIME_EVENT_TYPE,
@@ -478,7 +481,7 @@ test("Claude Code shows each completed text and thinking block as one Activity r
     if (event.type !== "text-delta" || event.text !== "fixture-input-observed")
       trajectory.accept(event);
   });
-  const pause = () => Bun.sleep(400);
+  const pause = () => Bun.sleep(TRAJECTORY_QUIET_WINDOW_MS + 50);
   const delta = (value: Record<string, unknown>) => ({
     type: "stream_event",
     event: { type: "content_block_delta", delta: value },
@@ -543,6 +546,35 @@ test("Claude Code shows a completed text block that arrives without partial delt
     await session.sendMessage("wait");
     await emit({ type: "assistant", message: { content: [{ type: "text", text: "Only block" }] } });
     expect(texts).toEqual([{ type: "text-delta", text: "Only block" }]);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("Claude Code reports a synthetic API-error message as one error before the failed turn", async () => {
+  const fixture = await controlledClaude();
+  const { session, emit } = fixture;
+  const events: AgentRuntimeEvent[] = [];
+  session.subscribe((event) => {
+    if (event.type === "error" || event.type === "completed" || event.type === "text-delta")
+      if (event.type !== "text-delta" || event.text !== "fixture-input-observed")
+        events.push(event);
+  });
+  const message = "API Error: 529 Overloaded. The API is at capacity.";
+  try {
+    await session.sendMessage("wait");
+    await emit(
+      {
+        type: "assistant",
+        error: "overloaded",
+        message: { content: [{ type: "text", text: message }] },
+      },
+      { type: "result", subtype: "success", is_error: true, result: message, errors: [] },
+    );
+    expect(events).toEqual([
+      { type: "error", message, providerErrorCode: "overloaded", occurredAt: expect.any(String) },
+      { type: "completed", status: "failed" },
+    ]);
   } finally {
     await fixture.dispose();
   }
