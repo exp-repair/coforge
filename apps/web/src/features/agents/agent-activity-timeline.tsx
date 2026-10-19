@@ -13,20 +13,15 @@ import {
   EmptyTitle,
 } from "#src/components/ui/empty";
 import { ClockTime } from "#src/components/ui/relative-time";
-import { StatusDot } from "#src/components/ui/status-dot";
 import { cn } from "#src/lib/utils";
 import { m } from "#src/paraglide/messages";
 import type { ActivityEntry } from "./agent-activity";
+import { ACTIVITY_MARKER_CLASS, ActivityMarker } from "./activity-marker";
 import { presentActivityRows, type PresentedActivityRow } from "./agent-activity-presentation";
 
-/** A log row's clock column and status dot. The error banner over the Activity tab lines its own
- * dot up with them (`agent-error-banner.tsx`), so the two cannot drift apart. */
-export const ACTIVITY_CLOCK_CLASS =
-  "mt-0.5 shrink-0 font-mono text-xs whitespace-nowrap tabular-nums";
-export const ACTIVITY_DOT_CLASS = "mt-1.5 size-1.5 shrink-0";
-
-/** The profile panel's Activity log: one dense line per row, oldest at the top, newest at the
- * bottom, the list kept scrolled to the newest row. */
+/** The profile panel's Activity log: one monospace row per entry, each hung on a round marker on
+ * a connector line with its clock on the right, oldest at the top, newest at the bottom, the list
+ * kept scrolled to the newest row. */
 export function AgentActivityTimeline({
   activity,
   timeZone,
@@ -78,7 +73,7 @@ export function AgentActivityTimeline({
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto">
-      <ol aria-label="Activity timeline" className="list-none py-2">
+      <ol aria-label="Activity timeline" className="list-none px-5 py-3">
         {rows.map((row) => (
           <ActivityTimelineRow key={row.key} row={row} timeZone={timeZone} />
         ))}
@@ -88,10 +83,12 @@ export function AgentActivityTimeline({
 }
 
 // Up to 500 frames load per Agent: content-visibility keeps off-screen rows' layout/paint cheap,
-// the same trick the file browser uses for its own long lists.
+// the same trick the file browser uses for its own long lists. The estimate sits between a
+// one-line status row (2rem) and a row with its detail on a second line (3.25rem), so the first
+// scroll to the newest row lands close before the placeholders resolve.
 const ROW_RENDER_COST: CSSProperties = {
   contentVisibility: "auto",
-  containIntrinsicSize: "auto 2rem",
+  containIntrinsicSize: "auto 2.75rem",
 };
 
 const ActivityTimelineRow = memo(function ActivityTimelineRow({
@@ -105,12 +102,11 @@ const ActivityTimelineRow = memo(function ActivityTimelineRow({
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
   const canExpand = row.expandable && row.detail.length > 200;
-  const errorText = row.tone === "error" && "text-error-primary";
   const label = canExpand ? (
     <Button
       color="link-gray"
       size="sm"
-      className="font-medium text-primary hover:text-primary"
+      className="font-normal text-secondary hover:text-primary"
       aria-expanded={expanded}
       aria-controls={contentId}
       onPress={() => setExpanded(!expanded)}
@@ -121,24 +117,23 @@ const ActivityTimelineRow = memo(function ActivityTimelineRow({
       {row.label}
     </Button>
   ) : (
-    <span className={cn("font-medium text-primary", errorText)}>{row.label}</span>
+    <span className="text-secondary">{row.label}</span>
   );
+  const showDetailBelowLabel = !!row.detail && row.detailOnOwnLine;
   return (
+    // The connector runs through the markers' centres (left-1 on a 0.5625rem column; py-1.5 plus
+    // the marker's offset puts each centre 1rem down), from the first marker to the last. The
+    // marker's ring in the panel's own background masks the line behind it.
     <li
-      className="flex items-start gap-2 px-5 py-1.5 hover:bg-primary_hover"
+      className="relative grid grid-cols-[0.5625rem_minmax(0,1fr)_auto] gap-x-3 py-1.5 font-mono before:absolute before:inset-y-0 before:left-1 before:border-l before:border-secondary first:before:top-4 last:before:bottom-auto last:before:h-4 only:before:hidden"
       style={ROW_RENDER_COST}
     >
-      {/* An absolute HH:MM:SS reads better in a chronological log than "6h ago", which keeps
-          shifting as the page stays open; the column takes the clock's own width, so a 12-hour
-          clock's "AM" never runs into the row. */}
-      <ClockTime
-        value={new Date(row.observedAtMs)}
-        timeZone={timeZone}
-        className={cn(ACTIVITY_CLOCK_CLASS, "text-quaternary")}
+      <ActivityMarker
+        tone={row.tone}
+        className={cn(ACTIVITY_MARKER_CLASS, "relative z-1 ring-2 ring-bg-primary")}
       />
-      <StatusDot tone={row.tone} pulse={row.pulse} className={ACTIVITY_DOT_CLASS} />
-      <div className="min-w-0 flex-1 text-sm">
-        <div className="flex flex-wrap items-baseline gap-x-1.5">
+      <div className="min-w-0">
+        <div className="text-sm wrap-anywhere">
           {label}
           {row.conversationId && row.conversationTarget && (
             <Link
@@ -149,35 +144,28 @@ const ActivityTimelineRow = memo(function ActivityTimelineRow({
               }
               params={{ workspaceSlug, channelId: row.conversationId, dmId: row.conversationId }}
               search={{ profile: undefined, agentTab: undefined }}
-              className="cursor-pointer text-xs text-tertiary underline hover:text-primary"
+              className="ml-1.5 cursor-pointer text-xs text-tertiary underline hover:text-primary"
             >
               {row.conversationTarget.split(":")[0]}
             </Link>
           )}
           {row.subagent && (
-            <Badge size="sm" color="gray" className="shrink-0 self-center">
+            <Badge type="modern" size="sm" color="gray" className="ml-1.5 inline-flex">
               Subagent
             </Badge>
           )}
-          {/* Tool rows: the argument summary inline after the label, in monospace. Other
-              non-expandable rows: the status detail or error text as plain prose. */}
-          {!row.expandable && row.detail && (
-            <span
-              className={cn(
-                "min-w-0 text-tertiary select-text",
-                row.monospace ? "font-mono text-xs break-all" : "break-words whitespace-pre-wrap",
-                errorText,
-              )}
-            >
+          {row.detail && !showDetailBelowLabel && (
+            <span className="ml-1.5 whitespace-pre-wrap text-tertiary select-text">
               {row.detail}
             </span>
           )}
         </div>
-        {row.expandable && row.detail && (
+        {showDetailBelowLabel && (
           <p
             id={contentId}
             className={cn(
-              "mt-0.5 font-mono text-xs break-words whitespace-pre-wrap text-tertiary select-text",
+              "mt-0.5 text-xs text-tertiary select-text",
+              row.expandable ? "whitespace-pre-wrap wrap-anywhere" : "break-all",
               canExpand && !expanded && "line-clamp-2",
             )}
           >
@@ -185,6 +173,14 @@ const ActivityTimelineRow = memo(function ActivityTimelineRow({
           </p>
         )}
       </div>
+      {/* An absolute HH:MM:SS reads better in a chronological log than "6h ago", which keeps
+          shifting as the page stays open; the column takes the clock's own width, so a 12-hour
+          clock's "AM" never runs into the row. */}
+      <ClockTime
+        value={new Date(row.observedAtMs)}
+        timeZone={timeZone}
+        className="mt-[0.0625rem] text-xs whitespace-nowrap text-quaternary tabular-nums"
+      />
     </li>
   );
 });

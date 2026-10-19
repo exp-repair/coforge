@@ -34,7 +34,7 @@ export function statusToneClass(tone: StatusTone) {
 /**
  * The one status dot for Agents and Computers. Tone picks the colour; `pulse` animates it
  * while an Agent is working or thinking. Size and placement come from `className`, so the
- * same dot serves avatar/tile corners, inline status lines and activity rows.
+ * same dot serves avatar/tile corners and inline status lines.
  *
  * Pass `label` when the dot is the only thing conveying the status (it becomes an `img`
  * with that name); leave it out when adjacent text already says it.

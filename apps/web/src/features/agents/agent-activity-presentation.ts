@@ -25,8 +25,9 @@ export type ActivityRow = {
   currentLabel: string | null;
   tone: Tone;
   recentTone: Tone;
-  pulse: boolean;
-  monospace: boolean;
+  /** Tool input and text/thinking/system statements go on a line under the label; a status
+   * row's secondary text stays inline after it. */
+  detailOnOwnLine: boolean;
   expandable: boolean;
   subagent?: { parentToolUseId: string };
 };
@@ -73,8 +74,8 @@ const COMPUTER_LIFECYCLE: Readonly<
   },
 };
 
-/** Working and thinking are the busy tones: their dots pulse. */
-export function isBusyTone(tone: StatusTone): boolean {
+/** Working and thinking are the busy tones: an Agent avatar's status dot pulses for them. */
+function isBusyTone(tone: StatusTone): boolean {
   return tone === "working" || tone === "thinking";
 }
 
@@ -104,8 +105,7 @@ function presentEntryItem(
         currentLabel: toolActivityLabel(item.toolName),
         tone: "working",
         recentTone: "working",
-        pulse: false,
-        monospace: true,
+        detailOnOwnLine: true,
         expandable: false,
         subagent: item.subagent,
       },
@@ -123,8 +123,7 @@ function presentEntryItem(
         currentLabel: item.title,
         tone: "output",
         recentTone: "working",
-        pulse: false,
-        monospace: true,
+        detailOnOwnLine: true,
         expandable: true,
         subagent: item.subagent,
       },
@@ -144,8 +143,7 @@ function presentEntryItem(
           : "Working…",
       tone: thinking ? "thinking" : "output",
       recentTone: thinking ? "thinking" : "working",
-      pulse: thinking,
-      monospace: true,
+      detailOnOwnLine: true,
       expandable: true,
       subagent: item.subagent,
     },
@@ -169,8 +167,7 @@ function activityAtoms(observation: ActivityObservation): ActivityAtom[] {
           currentLabel: "Subagent working…",
           tone: "working",
           recentTone: "working",
-          pulse: true,
-          monospace: false,
+          detailOnOwnLine: false,
           expandable: false,
         },
       },
@@ -188,8 +185,7 @@ function activityAtoms(observation: ActivityObservation): ActivityAtom[] {
           currentLabel: null,
           tone: lifecycle.tone,
           recentTone: lifecycle.tone,
-          pulse: false,
-          monospace: false,
+          detailOnOwnLine: false,
           expandable: false,
         },
       },
@@ -282,8 +278,7 @@ function activityAtoms(observation: ActivityObservation): ActivityAtom[] {
         currentLabel: isBusyTone(tone) ? recentLabel : null,
         tone,
         recentTone: finished?.recentTone ?? tone,
-        pulse: isBusyTone(tone),
-        monospace: false,
+        detailOnOwnLine: false,
         expandable: false,
       },
     },

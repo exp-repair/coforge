@@ -81,9 +81,13 @@ These rules apply to `src/features/agents/`.
   stream only; conversation and profile headers show a plain avatar. Its
   Recent activity goes only to the viewers who get the panel's Activity tab
   (`canManageAgent`): the five newest rows, "finished" status rows included,
-  oldest at the top. The profile panel's Activity tab shows the full log
-  (`agent-activity-timeline.tsx`): one dense row per entry with its clock,
-  dot, label and detail, no day separators, oldest at the top.
+  oldest at the top, each as clock, round marker and truncated label. The
+  profile panel's Activity tab shows the full log
+  (`agent-activity-timeline.tsx`): one monospace row per entry, a round
+  marker on a connector line, label and detail beside it, the clock on the
+  right; no day separators, oldest at the top. Activity markers (both places)
+  never pulse, and an error colours only its marker. `StatusDot` stays for
+  live status (avatars, Computers).
 
 ## Members page
 

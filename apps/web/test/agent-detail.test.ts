@@ -164,8 +164,7 @@ test.each([
         currentLabel: null,
         tone,
         recentTone: tone,
-        pulse: false,
-        monospace: false,
+        detailOnOwnLine: false,
         expandable: false,
       },
     ]);
@@ -184,8 +183,7 @@ test("a computer_operation_failed row names the failure and says what happened, 
       currentLabel: null,
       tone: "error",
       recentTone: "error",
-      pulse: false,
-      monospace: false,
+      detailOnOwnLine: false,
       expandable: false,
     },
   ]);
@@ -223,7 +221,13 @@ test.each([
       detail: "",
     };
     expect(presentActivity(observation)).toMatchObject([
-      { label: "Working", detail: secondary, tone: "working", monospace: false, expandable: false },
+      {
+        label: "Working",
+        detail: secondary,
+        tone: "working",
+        detailOnOwnLine: false,
+        expandable: false,
+      },
     ]);
   },
 );
@@ -291,8 +295,7 @@ test("subagent_activity always shows one unified label, even with entries", () =
       currentLabel: "Subagent working…",
       tone: "working",
       recentTone: "working",
-      pulse: true,
-      monospace: false,
+      detailOnOwnLine: false,
       expandable: false,
     },
   ]);
@@ -331,8 +334,7 @@ test("structured tools separate the label from command and path details", () => 
       recentLabel: "Reading file",
       currentLabel: "Reading file…",
       tone: "working",
-      monospace: true,
-      pulse: false,
+      detailOnOwnLine: true,
     },
   ]);
   expect(

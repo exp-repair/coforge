@@ -2,13 +2,8 @@ import type { AgentDisplaySnapshot } from "@lrm/coforge-sdk/internal";
 
 import { Button } from "#src/components/base/buttons/button";
 import { Tooltip, TooltipTrigger } from "#src/components/base/tooltip/tooltip";
-import { ClockTime } from "#src/components/ui/relative-time";
-import { StatusDot } from "#src/components/ui/status-dot";
 import type { AgentDiagnosticFacts } from "#src/features/agents/agent-diagnostics";
-import {
-  ACTIVITY_CLOCK_CLASS,
-  ACTIVITY_DOT_CLASS,
-} from "#src/features/agents/agent-activity-timeline";
+import { ACTIVITY_MARKER_CLASS, ActivityMarker } from "#src/features/agents/activity-marker";
 import { agentDisplay } from "#src/features/agents/agent-activity-presentation";
 import { m } from "#src/paraglide/messages";
 import { CopyDiagnosticsButton } from "./copy-diagnostics-button";
@@ -27,7 +22,7 @@ export function AgentErrorBanner({
 }: {
   agent: AgentDiagnosticFacts;
   display: AgentDisplaySnapshot;
-  /** The Activity tab is open: the banner lines up with its log and leaves the copy to its band. */
+  /** The Activity tab is open: the banner leaves the copy to its band. */
   onActivityTab: boolean;
   /** Opens the Activity tab; absent when the viewer cannot see it. */
   onViewLogs?: () => void;
@@ -37,16 +32,11 @@ export function AgentErrorBanner({
   return (
     <div
       role="status"
-      className="flex shrink-0 items-start gap-2 border-b border-secondary bg-error-primary py-2.5 pr-3.5 pl-5"
+      className="flex shrink-0 items-start gap-3 border-b border-secondary bg-error-primary py-2.5 pr-3.5 pl-5"
     >
-      {/* The Activity log's own error marker. On that tab an invisible clock of the log's width
-          puts the marker and the text in the log's columns, right above its error rows. */}
-      {onActivityTab && (
-        <span aria-hidden="true" className="invisible shrink-0">
-          <ClockTime value={new Date(0)} plain className={ACTIVITY_CLOCK_CLASS} />
-        </span>
-      )}
-      <StatusDot tone="error" className={ACTIVITY_DOT_CLASS} />
+      {/* The Activity log's own error marker, at the log's inset and gap, so on that tab the
+          marker and the text sit in the log's columns, right above its error rows. */}
+      <ActivityMarker tone="error" className={ACTIVITY_MARKER_CLASS} />
       <Tooltip title={label}>
         <TooltipTrigger className="min-w-0 flex-1 cursor-default rounded-xs text-left outline-focus-ring focus-visible:outline-2">
           <span className="line-clamp-2 text-sm break-words text-primary">{label}</span>

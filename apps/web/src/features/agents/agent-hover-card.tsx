@@ -13,7 +13,8 @@ import { Skeleton } from "#src/components/ui/skeleton";
 import { StatusDot } from "#src/components/ui/status-dot";
 import { avatarInitial, avatarToneClassName } from "#src/lib/avatar-tone";
 import { m } from "#src/paraglide/messages";
-import { agentDisplay, isBusyTone, presentActivityRows } from "./agent-activity-presentation";
+import { agentDisplay, presentActivityRows } from "./agent-activity-presentation";
+import { ActivityMarker } from "./activity-marker";
 import { RECENT_ACTIVITY_LIMIT } from "./agent-activity";
 import {
   agentProfileQuery,
@@ -212,18 +213,14 @@ function CardRecentActivity({
       </Button>
       <ol className="space-y-1.5">
         {rows.map((entry) => (
-          <li key={entry.key} className="flex min-w-0 items-center gap-1.5 text-xs">
+          <li key={entry.key} className="flex min-w-0 items-center gap-2 font-mono text-xs">
             <ClockTime
               value={new Date(entry.observedAtMs)}
               timeZone={timeZone}
               plain
-              className="shrink-0 font-mono text-quaternary"
+              className="shrink-0 text-quaternary"
             />
-            <StatusDot
-              tone={entry.recentTone}
-              pulse={isBusyTone(entry.recentTone)}
-              className="size-1.5 shrink-0"
-            />
+            <ActivityMarker tone={entry.recentTone} className="size-2" />
             <span className="min-w-0 flex-1 truncate text-tertiary">{entry.recentLabel}</span>
           </li>
         ))}
