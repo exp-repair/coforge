@@ -152,27 +152,90 @@ export async function channelListPreviews(
     };
   }
   for (const row of members) {
-    const entry = result.get(row.conversationId);
-    if (!entry) continue;
-    if (row.userId) {
-      const user = userById.get(row.userId);
-      if (!user) continue;
-      entry.members.push({
-        kind: "user",
-        id: user.id,
-        name: browserSenderName({ user }),
-        avatarUrl: workspaceUserAvatarUrl(workspaceId, user.id, user.avatarObjectKey),
-      });
-    } else if (row.agentId) {
-      const agent = agentById.get(row.agentId);
-      if (!agent) continue;
-      entry.members.push({
-        kind: "agent",
-        id: agent.id,
-        name: browserSenderName({ agent }),
-        avatarUrl: agentAvatarUrl(workspaceId, agent.id, agent.avatarObjectKey),
-      });
-    }
+    const member = channelListMember(workspaceId, row, userById, agentById);
+    if (member) result.get(row.conversationId)?.members.push(member);
   }
   return result;
+}
+
+/**
+ * Each channel's first active members, by conversation id, as its collage avatar shows them: the
+ * members `channelListPreviews` gives the Chat sidebar's row, for a surface that shows no preview.
+ * A fixed number of queries whatever the channel count: the active members, then one name and
+ * avatar read per person and Agent among them.
+ */
+export async function channelListMembers(
+  db: PrismaClient,
+  workspaceId: string,
+  conversationIds: readonly string[],
+) {
+  const members = await activeMemberRows(db, conversationIds, CHANNEL_LIST_MEMBER_LIMIT);
+  const userIds = new Set(members.flatMap((row) => (row.userId ? [row.userId] : [])));
+  const agentIds = new Set(members.flatMap((row) => (row.agentId ? [row.agentId] : [])));
+  const [users, agents] = await Promise.all([
+    userIds.size
+      ? db.user.findMany({
+          where: { id: { in: [...userIds] } },
+          select: { id: true, username: true, displayName: true, avatarObjectKey: true },
+        })
+      : [],
+    agentIds.size
+      ? db.agent.findMany({
+          where: { id: { in: [...agentIds] } },
+          select: { id: true, name: true, displayName: true, avatarObjectKey: true },
+        })
+      : [],
+  ]);
+  const userById = new Map(users.map((user) => [user.id, user]));
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const result = new Map<string, ChannelListMember[]>(conversationIds.map((id) => [id, []]));
+  for (const row of members) {
+    const member = channelListMember(workspaceId, row, userById, agentById);
+    if (member) result.get(row.conversationId)?.push(member);
+  }
+  return result;
+}
+
+type ChannelListMemberUser = {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarObjectKey: string | null;
+};
+type ChannelListMemberAgent = {
+  id: string;
+  name: string;
+  displayName: string;
+  avatarObjectKey: string | null;
+};
+
+/** One active member row as a channel's collage shows it, or null when its person or Agent is
+ * gone. */
+function channelListMember(
+  workspaceId: string,
+  row: { userId: string | null; agentId: string | null },
+  userById: ReadonlyMap<string, ChannelListMemberUser>,
+  agentById: ReadonlyMap<string, ChannelListMemberAgent>,
+): ChannelListMember | null {
+  if (row.userId) {
+    const user = userById.get(row.userId);
+    if (!user) return null;
+    return {
+      kind: "user",
+      id: user.id,
+      name: browserSenderName({ user }),
+      avatarUrl: workspaceUserAvatarUrl(workspaceId, user.id, user.avatarObjectKey),
+    };
+  }
+  if (row.agentId) {
+    const agent = agentById.get(row.agentId);
+    if (!agent) return null;
+    return {
+      kind: "agent",
+      id: agent.id,
+      name: browserSenderName({ agent }),
+      avatarUrl: agentAvatarUrl(workspaceId, agent.id, agent.avatarObjectKey),
+    };
+  }
+  return null;
 }

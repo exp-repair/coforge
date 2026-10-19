@@ -7,6 +7,9 @@ import type { DirectConversationPeer } from "#src/server/conversations/direct-co
 import { ActivityInbox, type ActivityInboxItem } from "#src/server/inbox/activity-inbox.server";
 import { PublicChannels } from "#src/server/conversations/public-channels.server";
 import { openPeopleDirectConversation } from "#src/server/conversations/user-direct-conversations.server";
+import { agentAvatarUrl } from "#src/server/agents/agent-avatar.server";
+import type { ChannelListMember } from "#src/server/conversations/channel-list-preview.server";
+import { workspaceUserAvatarUrl } from "#src/server/db/repositories/user-profile.repositories.server";
 
 /**
  * The Activity inbox against PostgreSQL: which conversations and threads a person sees, their
@@ -311,6 +314,106 @@ test("a followed task thread whose owner Agent was deleted marks the owner delet
     expect(await taskOf()).toMatchObject({ ownerName: "Kiro", ownerDeleted: false });
     await db.agent.update({ where: { id: agent.id }, data: { deletedAt: new Date() } });
     expect(await taskOf()).toMatchObject({ ownerName: "Kiro", ownerDeleted: true });
+  } finally {
+    await cleanup(db, suffix);
+  }
+});
+
+test("a channel's items carry the members its group avatar shows, as the Chat sidebar's row does", async () => {
+  const db = database();
+  const suffix = crypto.randomUUID();
+  try {
+    const { alice, bob, workspace, channel, post, pin } = await seed(db, suffix);
+    const general = await channel("general");
+    const pinned = await channel("pinned");
+    await db.user.update({
+      where: { id: alice.id },
+      data: { avatarObjectKey: `avatars/${suffix}/alice.png`, avatarContentType: "image/png" },
+    });
+    const agent = await db.agent.create({
+      data: {
+        workspaceId: workspace.id,
+        name: `inbox-kiro-${suffix.slice(0, 8)}`,
+        displayName: "Kiro",
+        ownerId: alice.id,
+        runtimeConfig: {},
+        avatarObjectKey: `avatars/${suffix}/kiro.png`,
+        avatarContentType: "image/png",
+      },
+    });
+    const joined = Date.UTC(2025, 0, 1);
+    for (const { aliceMember, bobMember } of [general, pinned])
+      for (const [index, member] of [aliceMember, bobMember].entries())
+        await db.conversationMember.update({
+          where: { id: member.id },
+          data: { joinedAt: new Date(joined + index * 60_000) },
+        });
+    await db.conversationMember.create({
+      data: {
+        conversationId: general.conversation.id,
+        workspaceId: workspace.id,
+        agentId: agent.id,
+        joinedAt: new Date(joined + 2 * 60_000),
+      },
+    });
+    // A member who left is not on the avatar, as in the sidebar.
+    const carol = await db.user.create({
+      data: { username: `inbox-carol-${suffix}`, displayName: "carol" },
+    });
+    await db.conversationMember.create({
+      data: {
+        conversationId: general.conversation.id,
+        workspaceId: workspace.id,
+        userId: carol.id,
+        joinedAt: new Date(joined + 3 * 60_000),
+        leftAt: new Date(),
+      },
+    });
+    const root = await post(general.conversation.id, general.aliceMember.id, "a question");
+    await post(general.conversation.id, general.bobMember.id, "hello");
+    await db.threadFollow.create({
+      data: {
+        memberId: general.aliceMember.id,
+        rootMessageId: root.id,
+        conversationId: general.conversation.id,
+        workspaceId: workspace.id,
+      },
+    });
+    await post(general.conversation.id, general.bobMember.id, "an answer", {
+      threadRootId: root.id,
+    });
+    await post(pinned.conversation.id, pinned.bobMember.id, "pinned news");
+    await pin(pinned.aliceMember, 0);
+
+    const page = await new ActivityInbox(db).list(workspace.id, alice.id, { filter: "all" });
+    const membersOf = (item: ActivityInboxItem | undefined) =>
+      item?.place.kind === "channel" ? item.place.members : undefined;
+    const generalMembers: ChannelListMember[] = [
+      {
+        kind: "user",
+        id: alice.id,
+        name: "alice",
+        avatarUrl: workspaceUserAvatarUrl(workspace.id, alice.id, `avatars/${suffix}/alice.png`),
+      },
+      { kind: "user", id: bob.id, name: "bob", avatarUrl: null },
+      {
+        kind: "agent",
+        id: agent.id,
+        name: "Kiro",
+        avatarUrl: agentAvatarUrl(workspace.id, agent.id, `avatars/${suffix}/kiro.png`),
+      },
+    ];
+    const channelItem = page.items.find(
+      (item) => item.place.conversationId === general.conversation.id && !item.thread,
+    );
+    const threadItem = page.items.find((item) => item.thread?.root.id === root.id);
+    expect(membersOf(channelItem)).toEqual(generalMembers);
+    // A channel thread's row shows its channel's avatar under the thread badge.
+    expect(membersOf(threadItem)).toEqual(generalMembers);
+    // A pinned channel shows its own members.
+    expect(page.pinned.map(membersOf)).toEqual([
+      [alice.id, bob.id].map((id) => expect.objectContaining({ kind: "user", id })),
+    ]);
   } finally {
     await cleanup(db, suffix);
   }

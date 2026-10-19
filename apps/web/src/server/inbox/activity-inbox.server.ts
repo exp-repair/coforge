@@ -6,6 +6,7 @@ import type {
 } from "#src/features/inbox/activity-inbox.schemas";
 import { agentAvatarUrl } from "#src/server/agents/agent-avatar.server";
 import { ACTIVE_MEMBER_WHERE } from "#src/server/conversations/active-member.server";
+import { channelListMembers } from "#src/server/conversations/channel-list-preview.server";
 import {
   announceViewerEvent,
   type ConversationRealtime,
@@ -454,16 +455,18 @@ export class ActivityInbox {
     }));
   }
 
-  /** Loads the messages, DM peers (Agents and members) and tasks one page of items renders, in one
-   * query each. */
+  /** Loads the messages, DM peers (Agents and members), channel avatar members and tasks one page
+   * of items renders, in a fixed number of queries. */
   private async hydrate(workspaceId: string, userId: string, page: readonly ActivityCandidate[]) {
     const messageIds = new Set<string>();
     const agentIds = new Set<string>();
     // The member on the other side of each DM between people (the viewer, in their own), by key.
     const peerUserIds = new Map<string, string>();
     const rootIds: string[] = [];
+    const channelIds = new Set<string>();
     for (const candidate of page) {
       messageIds.add(candidate.latestMessageId);
+      if (candidate.kind === "channel") channelIds.add(candidate.conversationId);
       if (candidate.rootMessageId) {
         messageIds.add(candidate.rootMessageId);
         rootIds.push(candidate.rootMessageId);
@@ -472,7 +475,7 @@ export class ActivityInbox {
       const peerUserId = peopleDirectPeerId(candidate.directKey, userId);
       if (peerUserId) peerUserIds.set(candidate.conversationId, peerUserId);
     }
-    const [messages, agents, people, tasks] = await Promise.all([
+    const [messages, agents, people, channelMembers, tasks] = await Promise.all([
       this.db.message.findMany({
         where: { id: { in: [...messageIds] }, workspaceId },
         select: browserMessageFields,
@@ -486,6 +489,8 @@ export class ActivityInbox {
         where: { id: { in: [...new Set(peerUserIds.values())] } },
         select: peoplePeerUserFields,
       }),
+      // The members a channel's group avatar shows, as on the Chat sidebar's row.
+      channelListMembers(this.db, workspaceId, [...channelIds]),
       this.db.task.findMany({
         where: { messageId: { in: rootIds }, workspaceId },
         select: {
@@ -544,6 +549,7 @@ export class ActivityInbox {
               kind: "channel" as const,
               conversationId: candidate.conversationId,
               channelName: candidate.channelName ?? "",
+              members: channelMembers.get(candidate.conversationId) ?? [],
             }
           : peer
             ? { kind: "direct" as const, conversationId: candidate.conversationId, peer }

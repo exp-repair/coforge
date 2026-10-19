@@ -237,6 +237,18 @@ input[type="search"]::-webkit-search-cancel-button {
     background: transparent;
   }
 
+  /* The collage at the "sm" message avatar's 36 × 40px (an Activity row), radius from its 40px
+     side as `[data-avatar][class]` does. */
+  .avatar-group.avatar-group-sm {
+    width: 2.25rem;
+    height: 2.5rem;
+    border-radius: 0.625rem;
+  }
+
+  .avatar-group-sm > .avatar-group-grid {
+    border-radius: 0.5625rem;
+  }
+
   [data-avatar] > :first-child {
     position: relative;
     border-radius: inherit;

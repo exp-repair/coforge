@@ -16,7 +16,6 @@ import {
   Hash01,
   Inbox01,
   Mail01,
-  MessageTextSquare01,
   Pin01,
   User01,
 } from "@untitledui/icons";
@@ -48,6 +47,8 @@ import {
   markDirectThreadRead,
   setDirectConversationUnread,
 } from "#src/features/conversations/conversations.functions";
+import { collageLayout } from "#src/features/conversations/collage-layout";
+import { GroupAvatar } from "#src/features/conversations/group-avatar";
 import { MessagePreview } from "#src/features/conversations/message-preview";
 import { useRefreshSidebarLists } from "#src/features/conversations/sidebar-lists";
 import { TASK_STATUS_COLOR } from "#src/features/tasks/task-workflow";
@@ -754,9 +755,10 @@ const ActivityInboxRow = memo(function ActivityInboxRow({
 });
 
 /**
- * A row's 2.25rem mark: the peer's face for a DM, with Chat's avatar components, otherwise a muted
- * square with the place's glyph (`#` for a channel, a person for a DM), which a thread badges at
- * its corner.
+ * A row's mark, the size of Chat's message avatar: the peer's face for a DM, with Chat's avatar
+ * components; a channel's group avatar (its members' collage, as on the Chat sidebar's row);
+ * otherwise a muted square with the place's glyph (`#` for a channel with no members, a person for
+ * a DM thread).
  */
 function ActivityItemIcon({ item }: { item: ActivityInboxItem }) {
   const { place, thread } = item;
@@ -775,15 +777,16 @@ function ActivityItemIcon({ item }: { item: ActivityInboxItem }) {
         src={place.peer.avatarUrl}
       />
     );
+  if (place.kind === "channel" && collageLayout(place.members.length).length > 0)
+    return (
+      <span className="flex shrink-0">
+        <GroupAvatar members={place.members} className="avatar-group-sm" />
+      </span>
+    );
   const Glyph = place.kind === "channel" ? Hash01 : User01;
   return (
-    <span className="relative flex size-9 shrink-0 items-center justify-center rounded-md bg-tertiary">
+    <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-tertiary">
       <Glyph aria-hidden="true" className="size-4.5 text-fg-quaternary" />
-      {thread && (
-        <span className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full bg-primary ring-1 ring-secondary">
-          <MessageTextSquare01 aria-hidden="true" className="size-3 text-fg-tertiary" />
-        </span>
-      )}
     </span>
   );
 }
