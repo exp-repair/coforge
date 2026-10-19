@@ -47,6 +47,7 @@ import { sidebarPreview } from "./records-sidebar";
 import {
   formatSendWindowCountdown,
   isWeeklySendArmed,
+  isWeeklyTemplateChipHighlighted,
   weeklySendWindow,
 } from "./weekly-send-window";
 
@@ -684,23 +685,37 @@ function FormatChipSlot({
   const alreadySent = chip.alreadySent;
 
   useEffect(() => {
-    if (!chip.interactive || !appliedSchedule || alreadySent) return;
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    if (!chip.interactive || !appliedSchedule) return;
+    const timer = window.setInterval(() => {
+      const next = new Date();
+      setNow(next);
+      const windowRange = weeklySendWindow({
+        now: next,
+        sendWeekday: appliedSchedule.sendWeekday,
+        sendTime: appliedSchedule.sendTime,
+        scheduleEnabled: appliedSchedule.scheduleEnabled,
+      });
+      if (windowRange && next.getTime() >= windowRange.end.getTime()) {
+        window.clearInterval(timer);
+      }
+    }, 1000);
     return () => window.clearInterval(timer);
-  }, [chip.interactive, appliedSchedule, alreadySent]);
+  }, [chip.interactive, appliedSchedule]);
 
-  const sendArmed =
+  const scheduleInput =
     chip.interactive && appliedSchedule
-      ? isWeeklySendArmed({
-          applied: true,
+      ? {
+          applied: true as const,
           alreadySent,
           sendWeekday: appliedSchedule.sendWeekday,
           sendTime: appliedSchedule.sendTime,
           scheduleEnabled: appliedSchedule.scheduleEnabled,
           autoSendCancelled: chip.autoSendCancelled,
           now,
-        })
-      : false;
+        }
+      : null;
+  const sendArmed = scheduleInput ? isWeeklySendArmed(scheduleInput) : false;
+  const highlighted = scheduleInput ? isWeeklyTemplateChipHighlighted(scheduleInput) : false;
 
   const windowRange =
     sendArmed && appliedSchedule
@@ -737,10 +752,10 @@ function FormatChipSlot({
 
   const chipClassName = cn(
     "flex min-h-9 w-full items-center gap-2 rounded-xl border px-2 py-2 text-sm font-medium transition-colors",
-    sendArmed
+    highlighted
       ? "border-transparent bg-brand-primary text-brand-secondary"
       : "border-transparent text-secondary",
-    chip.interactive && !sendArmed && "hover:bg-primary_hover",
+    chip.interactive && !highlighted && "hover:bg-primary_hover",
     !chip.interactive && "cursor-not-allowed opacity-60",
     selected && "border-chat-selected-border bg-chat-selected-bg text-brand-secondary",
   );

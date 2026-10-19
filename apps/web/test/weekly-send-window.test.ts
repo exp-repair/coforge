@@ -7,6 +7,7 @@ import {
   formatOfferSendWeekTitle,
   isInWeeklySendWindow,
   isWeeklySendArmed,
+  isWeeklyTemplateChipHighlighted,
   pickPinnedWeekTemplate,
   splitWeeklyTemplateRoles,
   weeklySendWindow,
@@ -139,6 +140,33 @@ test("scheduled chip is armed only in the hour before sendTime", () => {
       now: fridayInPreview,
     }),
   ).toBe(false);
+});
+
+test("template chip stays highlighted after the countdown, including once sent", () => {
+  const fridayInPreview = new Date("2026-09-18T06:30:00.000Z");
+  const fridayAfterSend = new Date("2026-09-18T07:30:00.000Z");
+  const fridayMorning = new Date("2026-09-18T01:00:00.000Z");
+  const base = {
+    applied: true,
+    sendWeekday: 5,
+    sendTime: "15:00",
+    scheduleEnabled: true,
+  };
+  expect(isWeeklyTemplateChipHighlighted({ ...base, alreadySent: false, now: fridayMorning })).toBe(
+    false,
+  );
+  expect(
+    isWeeklyTemplateChipHighlighted({ ...base, alreadySent: false, now: fridayInPreview }),
+  ).toBe(true);
+  expect(
+    isWeeklyTemplateChipHighlighted({ ...base, alreadySent: true, now: fridayInPreview }),
+  ).toBe(false);
+  expect(
+    isWeeklyTemplateChipHighlighted({ ...base, alreadySent: true, now: fridayAfterSend }),
+  ).toBe(true);
+  expect(
+    isWeeklyTemplateChipHighlighted({ ...base, alreadySent: false, now: fridayAfterSend }),
+  ).toBe(true);
 });
 
 test("top chip countdown grays out after this week's send", () => {

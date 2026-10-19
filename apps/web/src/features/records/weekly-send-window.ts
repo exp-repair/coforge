@@ -181,6 +181,33 @@ export function isWeeklySendArmed(input: {
   });
 }
 
+/**
+ * Sidebar template chip fill. Colored during the countdown, and still colored
+ * after that window closes, so the row stays a link instead of looking disabled.
+ * A send that lands during the countdown drops the timer without this fill
+ * until the window actually ends.
+ */
+export function isWeeklyTemplateChipHighlighted(input: {
+  applied: boolean;
+  alreadySent: boolean;
+  sendWeekday: number;
+  sendTime: string;
+  scheduleEnabled?: boolean;
+  autoSendCancelled?: boolean;
+  now: Date;
+}): boolean {
+  if (!input.applied) return false;
+  if (isWeeklySendArmed(input)) return true;
+  const window = weeklySendWindow({
+    now: input.now,
+    sendWeekday: input.sendWeekday,
+    sendTime: input.sendTime,
+    scheduleEnabled: input.scheduleEnabled,
+  });
+  if (!window) return false;
+  return input.now.getTime() >= window.end.getTime();
+}
+
 /** Manual send after preview start (scheduled) or sendTime (manual-only), until midnight. */
 export function canSendWeeklyAssignmentsNow(input: {
   applied: boolean;
