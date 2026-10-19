@@ -2,8 +2,7 @@ name: Publish Computer (staging)
 run-name: ${{ inputs.withdraw_version && format('Withdraw Computer {0} from staging', inputs.withdraw_version) || format('Publish Computer {0} to staging', inputs.version || 'the next dev build') }}
 
 # Publishing a local Computer distribution is manual, never automatic on a push to main - see
-# docs/release/github-actions.md: a client release leaves a persistent
-# artifact set behind, unlike the cloud application track's replace-a-running-service model, so a
+# docs/release/github-actions.md: a client release leaves a persistent artifact set behind, so a
 # build per merge is waste. Do not add a `push:` trigger here.
 on:
   workflow_dispatch:

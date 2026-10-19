@@ -99,11 +99,54 @@ test("the aggregate gate executes even after failure and rejects missing, skippe
   }
 });
 
-test("release callers select separate tracks and a no-op Web change cannot build an image", async () => {
+test("CI validates every pull request and every push to main, and a newer run replaces a stale one", () => {
+  // A push to main, a maintainer's or a merged PR's, is validated afterwards; docs/release/github-actions.md.
+  expect(Object.keys(ci.on).sort()).toEqual(["pull_request", "push", "workflow_call"]);
+  expect(ci.on.push).toEqual({ branches: ["main"] });
+  // A superseded run is safe to cancel: a push diffs from the last successful push run, so the
+  // cancelled push stays in scope. A caller's gates (workflow_dispatch) are never cancelled.
+  expect(ci.concurrency).toEqual({
+    group: "ci-${{ github.workflow }}-${{ github.ref }}",
+    "cancel-in-progress":
+      "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
+  });
+});
+
+test("CI holds nothing that can deploy or publish", async () => {
+  // No secret, environment, OIDC token, write permission, or nested workflow call: a CI run, a push
+  // run included, can reach neither a deployment target nor a release feed. Uploading the
+  // installer's third-party notices as a run artifact is not a publication.
+  const text = await Bun.file(".github/workflows/ci.yml").text();
+  expect(text).not.toMatch(/\bsecrets\b/);
+  expect(Object.values(ci.permissions)).toEqual(["read"]);
+  for (const [name, job] of Object.entries(ci.jobs as Record<string, Job & { uses?: string }>)) {
+    expect(job.environment, name).toBeUndefined();
+    expect(job.uses, name).toBeUndefined();
+    for (const access of Object.values(job.permissions ?? {})) expect(access, name).toBe("read");
+    for (const step of job.steps ?? []) {
+      expect(step.uses ?? "", name).not.toMatch(/^(docker\/(login|build-push)-action|\.\/)/);
+      expect(step.run ?? "", name).not.toMatch(/\b(publish|deploy)[^/\s]*\.(ts|sh)\b/);
+    }
+  }
+});
+
+test("a push to main starts no deployment or publication", async () => {
+  // Only CI listens for a push; every deploy and release workflow is started by hand.
+  for (const file of new Bun.Glob("*.{yml,yaml}").scanSync(".github/workflows")) {
+    if (file === "ci.yml") continue;
+    const workflow = Bun.YAML.parse(await Bun.file(`.github/workflows/${file}`).text());
+    expect(Object.keys(workflow.on), file).toEqual(["workflow_dispatch"]);
+  }
+});
+
+test("release callers select separate tracks and the Web image waits for the main-only gates", async () => {
   const deploy = Bun.YAML.parse(await Bun.file(".github/workflows/deploy-staging.yml").text());
   const release = Bun.YAML.parse(await Bun.file(".github/workflows/release-staging.yml").text());
   expect(deploy.jobs.gates.with.track).toBe("web");
-  // The newest pending push replaces older pending ones; a running deployment is never cancelled.
+  // Web staging deploys only when an operator dispatches it from main; docs/release/github-actions.md.
+  expect(Object.keys(deploy.on)).toEqual(["workflow_dispatch"]);
+  expect(deploy.jobs.gates.if).toBe("github.ref == 'refs/heads/main'");
+  // The newest pending dispatch replaces older pending ones; a running deployment is never cancelled.
   expect(deploy.concurrency.queue).toBeUndefined();
   expect(deploy.concurrency["cancel-in-progress"]).toBe(false);
   // Finding the base reads this repository's workflow runs.

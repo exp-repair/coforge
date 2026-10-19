@@ -2,10 +2,12 @@
 
 ## Cloud application
 
-The automated cloud path is:
+The cloud path runs only when an operator dispatches **Deploy Web (staging)**
+from `main` (`gh workflow run deploy-staging.yml --repo lrm-lab/coforge`); a
+merge to `main` does not deploy:
 
-1. Run the Web-track test, check, and build gates for the latest `main` commit,
-   covering every change since the last successful run.
+1. Run the complete Web-track test, check, and build gates for the dispatched
+   `main` commit.
 2. Build and push the service image once, tagged with the full commit SHA.
    The build fixes file timestamps instead of using a build cache, so an
    unchanged migration toolchain layer keeps its digest and hosts do not pull it

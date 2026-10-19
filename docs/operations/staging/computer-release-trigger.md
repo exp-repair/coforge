@@ -1,6 +1,6 @@
 # 触发 Computer 本地分发发布
 
-云应用走 push-to-main 自动部署，但本地 Computer/Daemon 发布是手动的（见
+云应用的 staging 部署（见 [README](README.md)）和本地 Computer/Daemon 发布都是手动的（见
 [`docs/release/local-distribution.md`](../../release/local-distribution.md)）：只挂
 `workflow_dispatch`，不挂 `on: push`。触发一次 staging 发布：
 

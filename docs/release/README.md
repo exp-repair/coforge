@@ -2,7 +2,7 @@
 
 Status: approved workflow contract; the cloud staging and production deployment workflows and the local Computer and installer staging and production publish workflows are implemented; every production run waits for the human approval gate
 
-Updated: 2026-09-09
+Updated: 2026-10-19
 
 This document is the canonical release specification for CoForge. It defines
 which artifact may move between environments, who authorizes that movement,
@@ -13,7 +13,10 @@ implements this contract without duplicating it.
 ## Release invariants
 
 - Keep one long-lived branch, `main`. Short-lived branches open a PR into
-  `main`, run CI, and do not deploy. Do not add a long-lived `dev` branch.
+  `main`, run CI, and do not deploy; a maintainer may also push to `main`
+  directly. CI validates every push to `main` afterwards; a merge or push to
+  `main` deploys nothing by itself. Do not add a
+  long-lived `dev` branch.
 - Treat cloud applications and the local Computer distribution as distinct
   release tracks. Inside the local track, Computer and Daemon are two
   independently buildable packages that are nonetheless built, tested, and
@@ -60,7 +63,7 @@ Read this overview first, then the topic files the task needs.
 | [Installer feed and release workflow](installer-feed.md)            | The `installer/` feed layout, its write-once versions, the installer's manual release workflow, `pointer_only`, and the product gate |
 | [Per-user installation](per-user-installation.md)                   | Installation paths, PATH shims, version store, launchers, selection modes, and environment-bound builds    |
 | [Reading GitHub Actions](github-actions.md)                         | The CI, Web deploy, and Computer publish workflows, check selection, and version naming                    |
-| [Main to staging](main-to-staging.md)                               | The automated cloud deployment and local publication paths to staging                                      |
+| [Main to staging](main-to-staging.md)                               | The operator-dispatched cloud deployment and local publication paths to staging                            |
 | [Staging to production](staging-to-production.md)                   | The two-party production promotion for each track                                                          |
 | [Health verification](health-verification.md)                       | Cloud health checks, diagnostics, local readiness gates, and upgrade health checks                         |
 | [Upgrade operations](upgrade-operations.md)                         | Installer-run upgrades and downgrades, receipts, recovery, and the restart runner hold                     |

@@ -9,6 +9,14 @@ loopback diagnostics (`18080` web, `18000` centrifugo). HTTPS responses carry
 HSTS, and port 80 serves only the permanent redirect to the same URL over
 HTTPS.
 
+Web reaches staging only when an operator dispatches **Deploy Web (staging)**
+from `main`; a merge to `main` does not deploy
+([Main to staging](../../release/main-to-staging.md#cloud-application)):
+
+```sh
+gh workflow run deploy-staging.yml --repo lrm-lab/coforge --ref main
+```
+
 ## Contents
 
 - [One-time operator bootstrap](operator-bootstrap.md): One-time host bootstrap: deployment user, secrets, RAM role, CDN signing key, DNS, and the first deploy.

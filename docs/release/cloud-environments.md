@@ -2,8 +2,8 @@
 
 | Concern            | `staging`                                        | `production`                                        |
 | ------------------ | ------------------------------------------------ | --------------------------------------------------- |
-| Trigger            | Successful push to `main`                        | Promotion request for a tested digest               |
-| Authorization      | Automatic                                        | Human approves the exact digest; Agent executes     |
+| Trigger            | Operator dispatch from `main`                    | Promotion request for a tested digest               |
+| Authorization      | The dispatch; no approval gate                   | Human approves the exact digest; Agent executes     |
 | Artifact           | Newly built immutable digest                     | Same digest already healthy in `staging`            |
 | GitHub Environment | `staging`                                        | `production`                                        |
 | Compose project    | `coforge-staging`                                | `coforge-production`                                |

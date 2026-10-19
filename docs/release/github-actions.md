@@ -2,17 +2,18 @@
 
 | Workflow                       | When it runs                        | Steps                                                                                    |
 | ------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------- |
-| **CI**                         | A pull request is opened or updated | Plan checks → validate affected packages and scripts → CI passed                         |
-| **Deploy Web (staging)**       | A commit reaches `main`             | Validate → build and push Docker image → deploy and verify Web                           |
+| **CI**                         | A pull request is opened or updated, or a commit reaches `main` | Plan checks → validate affected packages and scripts → CI passed |
+| **Deploy Web (staging)**       | Manually started from `main`        | Validate → build and push Docker image → deploy and verify Web                           |
 | **Publish Computer (staging)** | Manually started from `main`        | Validate → build all six platforms → upload and verify release → update staging `latest` |
 | **Publish installer (staging)** | Manually started from `main`       | Validate → plan → build each target natively → package, upload, and verify, write the manifest, and update `installer/latest`; or with `pointer_only` move that pointer alone |
 | **Publish installer (production)** | Manually started from `main` with an approved commit and version | Verify staging published it → approval → plan → build that commit natively against the production feed → package, upload, and verify, and update `installer/latest`; or with `pointer_only` move that pointer alone |
 | **Publish Computer (production)** | Manually started from `main` with an approved commit and stable version | Verify the selected staging version's `latest` and manifest identify that commit → approval → build that commit against the production feed → upload and verify → update production `latest` |
 
-The Web workflow skips image build and deployment when the commit does not
-affect Web. Computer publication is manual and its run title includes the
-version. Its build, upload, integrity checks, and selector update stay together
-in one publication transaction; expand that step to see each platform and object.
+Every staging workflow is manual. A Web deployment validates, builds, and
+deploys the selected `main` commit whatever it changed. Computer publication's
+run title includes the version. Its build, upload, integrity checks, and
+selector update stay together in one publication transaction; expand that step
+to see each platform and object.
 
 `Validate` reuses CI. Package jobs run tests, static checks, and a build where
 applicable. The Web deployment omits the preliminary package build: Docker
@@ -23,7 +24,8 @@ required check and keeps its existing name for branch protection.
 CI has one reusable validation definition in `.github/workflows/ci.yml`, invoked
 with three scopes selected by `scripts/ci/selection.ts`:
 
-- Pull requests validate changed modules and affected downstream consumers.
+- Pull requests and pushes to `main` validate changed modules and affected
+  downstream consumers.
   Web-only changes run Web gates; Daemon changes also validate Computer.
   Agent changes additionally validate Web's imported Agent test contract.
   Client source changes retain native macOS and Windows smoke checks. Changes
@@ -33,11 +35,9 @@ with three scopes selected by `scripts/ci/selection.ts`:
   Web's frozen image install; lockfile changes still select full coverage.
   PowerShell installer changes run both PowerShell parsers and lint. Both
   installers are embedded in the Web image, so changing either also validates Web.
-- Each `main` push checks whether the Web image or deployment inputs changed.
-  If so, the exact main commit runs Web, protocol, and deploy-script gates before
-  building and deploying the image. Client-only and documentation-only pushes
-  do not build an image or deploy. There is no second standalone CI workflow
-  for that main push.
+- A dispatched Web deployment runs the complete Web track for its exact selected
+  main commit: Web, protocol, CI-policy, and deploy-script gates, then builds and
+  deploys the image.
 - Manual local publication always runs the complete local track for its exact
   selected main commit: protocol, Agent, CLI, Computer, Daemon, release scripts,
   native macOS/Windows checks, and Windows installer checks. It does not run
@@ -50,22 +50,29 @@ PRs run path selection and changed-line whitespace checks without installing
 workspace dependencies. CI-policy tests and workflow/static lint run as a
 parallel script suite when shared inputs, CI, or unclassified files change.
 No documentation link checker is currently configured.
-PR diffs use the merge base; a push diffs from the head of the last successful
-run of the same workflow on that branch, so commits whose runs were superseded,
-cancelled, or failed stay in scope. Renames include both old and new paths, and
-a push with no earlier successful run gets full coverage.
+PR diffs use the merge base. A push to `main` diffs from the head of CI's last
+successful push run on `main`, so commits whose runs were superseded, cancelled,
+or failed stay in scope until a run passes; with no earlier successful push run
+it gets full coverage. Renames include both old and new paths. A dispatched run
+has no diff base and gets its track's full coverage.
+
+A push to `main`, a maintainer's direct push or a merged PR, is a post-push
+safety net: CI validates it after it has landed and blocks nothing. It holds no
+secret, environment, OIDC token, or write permission, and every deploy and
+release workflow starts only by hand, so a push deploys and publishes nothing.
+A red run on `main` means `main` is broken; fix it before pushing anything else.
 
 Every run ends with `CI passed`, which requires successful selection and
 every selected job to succeed. An unexpectedly skipped, failed, cancelled, or
 missing selected job cannot pass. Configure branch protection to require this
 aggregate rather than individual conditional/matrix job names; changing that
-GitHub setting requires separate authorization. PR updates cancel stale PR
-checks; release-track checks do not cancel an active publication or deployment.
-The cloud workflow keeps GitHub's default single pending run: a newer push to
-`main` replaces a waiting one, and the running deployment is never cancelled, so
-staging converges on the latest commit. Because the replacement diffs from the
-last successful run, a later documentation-only push still deploys a Web change
-it superseded.
+GitHub setting requires separate authorization. The `main` ruleset lets the
+Maintain and Admin roles bypass it, and CI checks their direct pushes only
+after they land, so a maintainer runs the local checks before pushing. A PR
+update or a newer push to `main` cancels the stale CI run; release-track checks
+do not cancel an active publication or deployment.
+The cloud workflow keeps GitHub's default single pending run: a newer dispatch
+replaces a waiting one, and the running deployment is never cancelled.
 
 Module-owned test/check/build commands remain unchanged. Local full validation
 still uses `mise run test`, `mise run check`, and `mise run build`; CI-policy
@@ -99,10 +106,9 @@ ten seconds. HTTP error pages, including 404 and 502, fail deployment verificati
 the probe does not claim to validate an authenticated application session.
 
 Publishing a local-distribution release is **manual**. The workflow exposes only
-`workflow_dispatch`; it is not triggered by merging to `main`. Continuous publish
-on merge suits the cloud application, which replaces a running service, but a
-client release leaves a persistent artifact set behind, and at the current user
-count a build per merge is waste. Adding a trigger later is one line.
+`workflow_dispatch`; it is not triggered by merging to `main`. A client release
+leaves a persistent artifact set behind, and at the current user count a build
+per merge is waste.
 
 Each release line counts its own staging builds, as semver pre-releases do
 (`1.0.0-beta.2 < 1.0.0-beta.11`). The workflow's `DEV_LINE` names the current
