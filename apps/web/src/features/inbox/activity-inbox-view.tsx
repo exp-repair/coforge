@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getRouteApi, Link, useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -17,6 +17,7 @@ import {
   Inbox01,
   Mail01,
   MessageTextSquare01,
+  Pin01,
 } from "@untitledui/icons";
 import { Link as AriaLink } from "react-aria-components";
 
@@ -78,7 +79,9 @@ const appRoute = getRouteApi("/w/$workspaceSlug");
 
 /**
  * The Activity page: the viewer's channels, direct messages and followed threads with activity
- * they have not marked Done, newest first. A card opens its conversation or thread and reads it:
+ * they have not marked Done, newest first. The All view puts the viewer's pinned conversations
+ * (Chat's Pinned) first under a Pinned heading, then the rest under All conversations; with nothing
+ * pinned it shows no headings. A card opens its conversation or thread and reads it:
  * from `lg` up, beside the list, which stays on screen with the card marked as the open one (kept
  * in the URL); below it, in Chat. Nothing opens on its own, since opening reads. The check on a
  * card marks it Done, which keeps it away until a newer message arrives; the pane stays open.
@@ -106,22 +109,23 @@ export function ActivityInboxView({
     placeholderData: keepPreviousData,
   });
 
+  const firstPage = query.data?.pages[0];
+  const pinned = useMemo(() => firstPage?.pinned ?? [], [firstPage]);
   // Pages are offsets into a list that can move between fetches; an item that slid onto the next
-  // page is shown once.
+  // page is shown once, and never again below Pinned.
   const items = useMemo(() => {
-    const seen = new Set<string>();
+    const seen = new Set(pinned.map((item) => item.key));
     return (query.data?.pages ?? [])
       .flatMap((page) => page.items)
       .filter((item) => !seen.has(item.key) && seen.add(item.key));
-  }, [query.data]);
-  const firstPage = query.data?.pages[0];
+  }, [query.data, pinned]);
 
   // List and conversation side by side need the width Chat pins them at (`lg`); narrower, a card
   // opens Chat instead.
   const wide = useBreakpoint("lg");
   const currentKey = useMemo(
-    () => (wide ? openedItemKey(items, opened) : undefined),
-    [wide, items, opened],
+    () => (wide ? openedItemKey([...pinned, ...items], opened) : undefined),
+    [wide, pinned, items, opened],
   );
 
   const refreshList = useCallback(
@@ -134,7 +138,12 @@ export function ActivityInboxView({
     () => Promise.all([refreshList(), refreshSidebar()]).then(() => undefined),
     [refreshList, refreshSidebar],
   );
-  useActivityInboxRealtime({ workspaceId, userId: user.id, onActivity: refreshList });
+  useActivityInboxRealtime({
+    workspaceId,
+    userId: user.id,
+    onActivity: refreshList,
+    refreshOnPins: true,
+  });
 
   // A failed change is shown in the toolbar with its retry until it succeeds or is dismissed.
   const [failure, setFailure] = useState<{ retry: () => void } | null>(null);
@@ -156,6 +165,38 @@ export function ActivityInboxView({
     };
     run();
   }, [markAllRead, loadedAt, refresh]);
+
+  const empty = items.length === 0 && pinned.length === 0;
+  const pinnedLabel = m.conversation_pinned_section();
+  const sections = [
+    {
+      heading: <ActivityInboxSectionHeading icon={Pin01} label={pinnedLabel} />,
+      label: pinnedLabel,
+      items: pinned,
+    },
+    {
+      heading: pinned.length > 0 && (
+        <ActivityInboxSectionHeading
+          label={m.activity_inbox_all_conversations()}
+          className="mt-5"
+        />
+      ),
+      label: m.navigation_activity(),
+      items,
+    },
+  ].filter((section) => section.items.length > 0);
+
+  const card = (item: ActivityInboxItem) => (
+    <ActivityInboxCard
+      key={item.key}
+      item={item}
+      filter={filter}
+      actions={actions}
+      viewerId={user.id}
+      current={item.key === currentKey}
+      onOpen={wide ? onOpen : undefined}
+    />
+  );
 
   const list = (
     <div className={cn("flex min-h-0 flex-col", wide ? "w-96 shrink-0" : "min-w-0 flex-1")}>
@@ -195,24 +236,19 @@ export function ActivityInboxView({
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:px-6">
-        {query.isError && items.length === 0 ? (
+        {query.isError && empty ? (
           <ActivityInboxLoadError onRetry={() => void query.refetch()} />
-        ) : items.length === 0 ? (
+        ) : empty ? (
           <ActivityInboxEmpty filter={filter} onShowAll={() => onFilterChange("all")} />
         ) : (
-          <ol aria-label={m.navigation_activity()} className="flex flex-col gap-2">
-            {items.map((item) => (
-              <ActivityInboxCard
-                key={item.key}
-                item={item}
-                filter={filter}
-                actions={actions}
-                viewerId={user.id}
-                current={item.key === currentKey}
-                onOpen={wide ? onOpen : undefined}
-              />
-            ))}
-          </ol>
+          sections.map((section) => (
+            <Fragment key={section.label}>
+              {section.heading}
+              <ol aria-label={section.label} className="flex flex-col gap-2">
+                {section.items.map(card)}
+              </ol>
+            </Fragment>
+          ))
         )}
         <ActivityInboxLoadMore
           hasNextPage={query.hasNextPage}
@@ -296,6 +332,27 @@ function ActivityInboxTabs({
         ))}
       </TabList>
     </Tabs>
+  );
+}
+
+/** A list section's label (Pinned, All conversations): a tertiary subheading, with the section's
+ * mark when it has one. */
+function ActivityInboxSectionHeading({
+  icon: Icon,
+  label,
+  className,
+}: {
+  icon?: typeof Pin01;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <h2
+      className={cn("mb-2 flex items-center gap-1.5 text-sm font-medium text-tertiary", className)}
+    >
+      {Icon && <Icon aria-hidden="true" className="size-3.5 shrink-0 text-fg-quaternary" />}
+      {label}
+    </h2>
   );
 }
 
@@ -474,7 +531,8 @@ function useActivityItemActions({
 
 /**
  * A cached view of the item's Workspace without the item, until the refetch lands. The tab counts
- * cover every view, so each view drops the item from them, whether or not it lists the item.
+ * cover every view, so each view drops the item from them, whether or not it lists the item. A
+ * pinned conversation stays under Pinned after Done, so `pinned` keeps it.
  */
 function withoutItem(
   data: InfiniteData<ActivityInboxPage>,

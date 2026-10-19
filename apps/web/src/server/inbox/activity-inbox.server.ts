@@ -44,6 +44,8 @@ import { requireWorkspaceMember } from "#src/server/workspaces/workspace-members
  * message arrives. It also lists each message whose sender had them notified of a mention from
  * outside that channel, until they mark it Done. A message between members stores no mentions and
  * notifies nobody outside the DM, so a DM between members only ever lists as itself or a thread.
+ * The All view lists the viewer's pinned conversations (the Chat sidebar's Pinned) apart, in pin
+ * order and whatever their Done, and leaves their conversation items out of its list.
  *
  * Unread is the Chat sidebar's rule (`HUMAN_UNREAD_MESSAGE_SQL`), so the two surfaces agree. A
  * conversation item covers top-level messages only; a thread item covers its replies and keeps its
@@ -74,6 +76,18 @@ type ActivityCandidate = {
   firstMentionMessageId: string | null;
   /** A mention the viewer was notified of from outside the channel, until they mark it Done. */
   mentionAction?: { resolutionId: string; threadRootId: string | null };
+  /** Whether the item has activity past Done; a pinned conversation is returned without it. */
+  pastDone: boolean;
+  /** A conversation's own item the viewer pinned: its place among their pins. Null otherwise. */
+  pin: { order: number; at: Date } | null;
+};
+
+type PinnedCandidate = ActivityCandidate & { pin: NonNullable<ActivityCandidate["pin"]> };
+
+/** A candidate as the grouped statements return it, with the pin as its two columns. */
+type ActivityCandidateRow = Omit<ActivityCandidate, "pin"> & {
+  pinOrder: number | null;
+  pinnedAt: Date | null;
 };
 
 const DEFAULT_PAGE_SIZE = 30;
@@ -87,6 +101,7 @@ export class ActivityInbox {
     private readonly realtime?: Pick<ConversationRealtime, "viewerChanged">,
   ) {}
 
+  /** One page of a view, newest activity first, with the Unread and Mentions counts. */
   async list(
     workspaceId: string,
     userId: string,
@@ -99,12 +114,13 @@ export class ActivityInbox {
     // Every candidate carries its unread and mention state: the filters select on them and the
     // Unread and Mentions counts cover every item, whichever filter is showing.
     const all = await this.candidates(workspaceId, userId);
-    const candidates = all.filter((candidate) =>
+    const inboxCandidates = all.filter((candidate) => candidate.pastDone);
+    const candidates = inboxCandidates.filter((candidate) =>
       options.filter === "unread"
         ? candidate.unreadCount > 0
         : options.filter === "mentions"
           ? candidate.firstMentionMessageId !== null
-          : true,
+          : candidate.pin === null,
     );
     candidates.sort(
       (left, right) =>
@@ -114,12 +130,30 @@ export class ActivityInbox {
     const offset = Math.max(0, options.offset ?? 0);
     const limit = clampPageLimit(options.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
     const end = offset + limit;
+    const pins =
+      options.filter === "all" && offset === 0
+        ? all
+            .filter((candidate): candidate is PinnedCandidate => candidate.pin !== null)
+            .sort(
+              (left, right) =>
+                left.pin.order - right.pin.order || left.pin.at.getTime() - right.pin.at.getTime(),
+            )
+        : [];
+    const [items, pinned] = await Promise.all([
+      this.hydrate(workspaceId, userId, candidates.slice(offset, end)),
+      pins.length > 0 ? this.hydrate(workspaceId, userId, pins) : [],
+    ]);
     return {
-      items: await this.hydrate(workspaceId, userId, candidates.slice(offset, end)),
+      items,
+      /**
+       * The viewer's pinned conversations in their pin order, on the All view's first page only
+       * (empty otherwise): listed whatever their Done boundary, with the item's usual fields.
+       */
+      pinned,
       /** How many items have something unread, whatever the filter: the Unread tab's count. */
-      unreadItemCount: all.filter((candidate) => candidate.unreadCount > 0).length,
+      unreadItemCount: inboxCandidates.filter((candidate) => candidate.unreadCount > 0).length,
       /** How many items have an unread mention, whatever the filter: the Mentions tab's count. */
-      unreadMentionItemCount: all.filter((candidate) => candidate.unreadMention).length,
+      unreadMentionItemCount: inboxCandidates.filter((candidate) => candidate.unreadMention).length,
       /** Where the next page starts in the list, or null on the last page. */
       nextOffset: end < candidates.length ? end : null,
       /** When this list was read: Mark all read reads through it, and no further. */
@@ -299,8 +333,8 @@ export class ActivityInbox {
   }
 
   /**
-   * Every listed item with its counts, in two grouped statements driven from the viewer's own
-   * memberships, so each message range is an index condition on
+   * Every listed item, and every pinned conversation, with its counts, in grouped statements
+   * driven from the viewer's own memberships, so each message range is an index condition on
    * `messages(conversationId, threadRootId, sequence)` rather than a Workspace-wide scan.
    */
   private async candidates(workspaceId: string, userId: string): Promise<ActivityCandidate[]> {
@@ -308,7 +342,7 @@ export class ActivityInbox {
     // items, and none of them depends on the others. Starting them together means the page waits
     // for the slowest instead of for two waves.
     const [conversations, threads, mentions] = await Promise.all([
-      this.db.$queryRaw<ActivityCandidate[]>`
+      this.db.$queryRaw<ActivityCandidateRow[]>`
         SELECT
           CASE WHEN c."channelName" IS NOT NULL THEN 'channel' ELSE 'direct' END AS "kind",
           cm."id" AS "memberId",
@@ -323,12 +357,20 @@ export class ActivityInbox {
           unread."count" AS "unreadCount",
           unread."firstId" AS "firstUnreadMessageId",
           mention."unread" AS "unreadMention",
-          mention."firstId" AS "firstMentionMessageId"
+          mention."firstId" AS "firstMentionMessageId",
+          ${conversationPastDoneSql} AS "pastDone",
+          pin."sortOrder" AS "pinOrder",
+          pin."createdAt" AS "pinnedAt"
         FROM ${conversationItemsSql(workspaceId, userId)}
+        LEFT JOIN "conversation_pins" pin
+          ON pin."workspaceId" = ${workspaceId}::uuid
+         AND pin."memberId" = cm."id"
+         AND pin."conversationId" = cm."conversationId"
         ${conversationUnreadLateral}
         ${conversationMentionLateral}
-        WHERE ${conversationItemListedSql(userId)}`,
-      this.db.$queryRaw<ActivityCandidate[]>`
+        WHERE ${conversationItemVisibleSql(userId)}
+          AND (${conversationPastDoneSql} OR pin."memberId" IS NOT NULL)`,
+      this.db.$queryRaw<ActivityCandidateRow[]>`
         SELECT
           threads."kind" AS "kind",
           threads."memberId" AS "memberId",
@@ -343,14 +385,17 @@ export class ActivityInbox {
           replies."unread" AS "unreadCount",
           replies."firstUnreadId" AS "firstUnreadMessageId",
           mention."unread" AS "unreadMention",
-          mention."firstId" AS "firstMentionMessageId"
+          mention."firstId" AS "firstMentionMessageId",
+          TRUE AS "pastDone",
+          NULL::int AS "pinOrder",
+          NULL::timestamp AS "pinnedAt"
         FROM ${threadItemsSql(workspaceId, userId)}
         ${threadUnreadLateral}
         ${threadMentionLateral}
         WHERE ${threadItemListedSql(userId)}`,
       this.mentionCandidates(workspaceId, userId),
     ]);
-    return [...conversations, ...threads, ...mentions];
+    return [...conversations, ...threads].map(activityCandidate).concat(mentions);
   }
 
   /**
@@ -398,6 +443,8 @@ export class ActivityInbox {
       unreadMention: !row.targetReadAt,
       firstMentionMessageId: row.messageId,
       mentionAction: { resolutionId: row.id, threadRootId: row.message.threadRootId },
+      pastDone: true,
+      pin: null,
     }));
   }
 
@@ -507,11 +554,7 @@ export class ActivityInbox {
       if (!latest || !place || root === undefined) return [];
       return [
         {
-          key: candidate.mentionAction
-            ? `mention:${candidate.mentionAction.resolutionId}`
-            : candidate.rootMessageId
-              ? `thread:${candidate.rootMessageId}`
-              : `conversation:${candidate.conversationId}`,
+          key: activityItemKey(candidate),
           place,
           // A channel thread is listed because the viewer follows it; a direct-message thread
           // has no follow switch.
@@ -588,8 +631,8 @@ const threadMentionLateral = Prisma.sql`CROSS JOIN LATERAL (
 
 /**
  * The viewer's joined conversations with a DM's Agent (`peer`) and newest top-level message
- * (`latest`), as the `FROM` of an item query over `cm` and `c`. `conversationItemListedSql` is
- * its `WHERE`: the list and the nav dot share both, so they cannot disagree on what is listed.
+ * (`latest`), as the `FROM` of an item query over `cm` and `c`. The list and the nav dot share it
+ * and the clauses of `conversationItemListedSql`, so they cannot disagree on what is listed.
  */
 function conversationItemsSql(workspaceId: string, userId: string) {
   return Prisma.sql`"conversation_members" cm
@@ -614,13 +657,39 @@ function conversationItemsSql(workspaceId: string, userId: string) {
     ) latest`;
 }
 
-/**
- * A joined conversation is listed when it is a channel or one of the viewer's own DMs (the ones
- * their Direct messages list holds), with activity past Done.
- */
+/** A joined conversation the inbox can list: a channel, or one of the viewer's own DMs (the ones
+ * their Direct messages list holds). */
+function conversationItemVisibleSql(userId: string) {
+  return Prisma.sql`(c."channelName" IS NOT NULL OR ${viewerDirectConversationSql(userId)})`;
+}
+
+/** A joined conversation's newest top-level message is past the viewer's Done boundary. */
+const conversationPastDoneSql = Prisma.sql`(latest."sequence" > COALESCE(cm."doneThroughSequence", 0))`;
+
+/** A joined conversation is listed when the inbox can list it and it has activity past Done. */
 function conversationItemListedSql(userId: string) {
-  return Prisma.sql`(c."channelName" IS NOT NULL OR ${viewerDirectConversationSql(userId)})
-    AND latest."sequence" > COALESCE(cm."doneThroughSequence", 0)`;
+  return Prisma.sql`${conversationItemVisibleSql(userId)} AND ${conversationPastDoneSql}`;
+}
+
+/** A candidate from its statement row, its two pin columns joined into one pin. */
+function activityCandidate({
+  pinOrder,
+  pinnedAt,
+  ...row
+}: ActivityCandidateRow): ActivityCandidate {
+  return {
+    ...row,
+    pin: pinOrder !== null && pinnedAt !== null ? { order: pinOrder, at: pinnedAt } : null,
+  };
+}
+
+/** An item's key on the page: its mention notification, its thread, or its conversation. */
+function activityItemKey(candidate: ActivityCandidate) {
+  return candidate.mentionAction
+    ? `mention:${candidate.mentionAction.resolutionId}`
+    : candidate.rootMessageId
+      ? `thread:${candidate.rootMessageId}`
+      : `conversation:${candidate.conversationId}`;
 }
 
 /**

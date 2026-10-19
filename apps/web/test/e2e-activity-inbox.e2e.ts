@@ -17,12 +17,14 @@ import { DEV_BROWSER_USER } from "#src/server/auth/dev-skip-auth.server";
  * thread pane at the first unread reply,
  * and a thread read to the end opens at its newest reply. On a phone a card opens the conversation
  * in Chat. A direct message with a member, and the viewer's with themself, list under that member's
- * name and face, and opening one beside the list reads it.
+ * name and face, and opening one beside the list reads it. A pinned channel lists under Pinned,
+ * before All conversations and not again below it, while its followed thread stays below; it stays
+ * under Pinned after Done, and Mentions has no Pinned section.
  *
  * Opt-in like the other browser E2Es: real local Web + `agent-browser`. The channel, its peer and
  * its messages are seeded deterministically and reset on every run. Screenshots of the wide
- * layout, with and without a conversation open, and of the phone layout are written under
- * `.amp/e2e/activity-inbox/`.
+ * layout, with and without a conversation open, with a Pinned section (`pinned.png`), and of the
+ * phone layout are written under `.amp/e2e/activity-inbox/`.
  */
 const origin = Bun.env.COFORGE_E2E_WEB_URL;
 if (!origin || !["localhost", "127.0.0.1"].includes(new URL(origin).hostname))
@@ -52,6 +54,9 @@ const hydrated = `(!window.$_TSR || window.$_TSR.hydrated === true)`;
  * conversation open beside it renders its messages, with the same seeded text, as list items too.
  */
 const cardItems = JSON.stringify('ol[aria-label="Activity"] > li');
+
+/** The Pinned section's cards, as a selector literal for page expressions. */
+const pinnedItems = JSON.stringify('ol[aria-label="Pinned"] > li');
 
 /** The pane beside the list that shows the conversation a card opened. */
 const pane = `document.querySelector('section[aria-label="Selected conversation"]')`;
@@ -88,6 +93,92 @@ function browserSession(session: string) {
   return { browser, evaluate };
 }
 
+/**
+ * A channel shared by the viewer and the seeded peer, reset to this run's messages: the viewer's
+ * thread root (`root`), which they follow, the peer's reply in it (`reply`), then a newer top-level
+ * message from the peer (`newest`). The message `mention` names mentions the viewer. Every id comes
+ * from `key`, so a rerun replaces the same rows.
+ */
+async function seedChannel(
+  db: PrismaClient,
+  options: {
+    workspaceId: string;
+    key: string;
+    channelName: string;
+    root: string;
+    reply: string;
+    newest: { key: string; body: string };
+    mention: "reply" | "newest";
+  },
+) {
+  const { workspaceId, key } = options;
+  const peer = await db.user.upsert({
+    where: { id: seededUuid("e2e-activity-inbox:peer") },
+    update: {},
+    create: {
+      id: seededUuid("e2e-activity-inbox:peer"),
+      username: "e2e-activity-peer",
+      displayName: "Activity Peer",
+    },
+  });
+  await db.workspaceMembership.upsert({
+    where: { workspaceId_userId: { workspaceId, userId: peer.id } },
+    update: {},
+    create: { workspaceId, userId: peer.id },
+  });
+  const channelId = seededUuid(`${key}channel`);
+  await db.conversation.upsert({
+    where: { id: channelId },
+    update: { archivedAt: null },
+    create: { id: channelId, workspaceId, channelName: options.channelName },
+  });
+  // Every run starts from the same state: no messages, follows or cursors from the last one.
+  await db.message.deleteMany({ where: { conversationId: channelId } });
+  const [viewer, other] = await Promise.all(
+    [DEV_BROWSER_USER.id, peer.id].map((userId) =>
+      db.conversationMember.upsert({
+        where: { conversationId_userId: { conversationId: channelId, userId } },
+        update: {
+          leftAt: null,
+          hiddenAt: null,
+          readThroughSequence: 0,
+          doneThroughSequence: null,
+          unreadFromSequence: null,
+        },
+        create: { conversationId: channelId, workspaceId, userId },
+      }),
+    ),
+  );
+  const rootId = seededUuid(`${key}root`);
+  const replyId = seededUuid(`${key}reply`);
+  const newestId = seededUuid(`${key}${options.newest.key}`);
+  const rows = [
+    { id: rootId, body: options.root, senderMemberId: viewer!.id, threadRootId: null },
+    { id: replyId, body: options.reply, senderMemberId: other!.id, threadRootId: rootId },
+    { id: newestId, body: options.newest.body, senderMemberId: other!.id, threadRootId: null },
+  ];
+  let sequence = 1;
+  for (const row of rows)
+    await db.message.create({
+      data: { ...row, conversationId: channelId, workspaceId, sequence: sequence++ },
+    });
+  await db.messageMention.create({
+    data: {
+      messageId: options.mention === "reply" ? replyId : newestId,
+      memberId: viewer!.id,
+      conversationId: channelId,
+      workspaceId,
+      kind: "user",
+      actorId: DEV_BROWSER_USER.id,
+      handle: DEV_BROWSER_USER.username,
+    },
+  });
+  await db.threadFollow.create({
+    data: { memberId: viewer!.id, rootMessageId: rootId, conversationId: channelId, workspaceId },
+  });
+  return { channelId, viewer: viewer!, rootId, replyId, newestId };
+}
+
 test("the Activity page lists, filters, marks Done and opens inbox items", async () => {
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
   const session = `activity-inbox-${process.pid}`;
@@ -102,77 +193,14 @@ test("the Activity page lists, filters, marks Done and opens inbox items", async
       include: { workspace: { select: { slug: true } } },
     });
     const workspacePath = `/en/w/${workspace.slug}`;
-    const peer = await db.user.upsert({
-      where: { id: seededUuid("e2e-activity-inbox:peer") },
-      update: {},
-      create: {
-        id: seededUuid("e2e-activity-inbox:peer"),
-        username: "e2e-activity-peer",
-        displayName: "Activity Peer",
-      },
-    });
-    await db.workspaceMembership.upsert({
-      where: { workspaceId_userId: { workspaceId, userId: peer.id } },
-      update: {},
-      create: { workspaceId, userId: peer.id },
-    });
-    const channelId = seededUuid("e2e-activity-inbox:channel");
-    await db.conversation.upsert({
-      where: { id: channelId },
-      update: { archivedAt: null },
-      create: { id: channelId, workspaceId, channelName: "e2e-activity-inbox" },
-    });
-    // Every run starts from the same state: no messages, follows or cursors from the last one.
-    await db.message.deleteMany({ where: { conversationId: channelId } });
-    const [viewer, other] = await Promise.all(
-      [DEV_BROWSER_USER.id, peer.id].map((userId) =>
-        db.conversationMember.upsert({
-          where: { conversationId_userId: { conversationId: channelId, userId } },
-          update: {
-            leftAt: null,
-            readThroughSequence: 0,
-            doneThroughSequence: null,
-            unreadFromSequence: null,
-          },
-          create: { conversationId: channelId, workspaceId, userId },
-        }),
-      ),
-    );
-    const rootId = seededUuid("e2e-activity-inbox:root");
-    const replyId = seededUuid("e2e-activity-inbox:reply");
-    const rows = [
-      { id: rootId, body: "E2E activity root", senderMemberId: viewer!.id, threadRootId: null },
-      {
-        id: replyId,
-        body: `<@human:${DEV_BROWSER_USER.id}> E2E activity **reply** with \`code\``,
-        senderMemberId: other!.id,
-        threadRootId: rootId,
-      },
-      {
-        id: seededUuid("e2e-activity-inbox:unread"),
-        body: "E2E activity unread",
-        senderMemberId: other!.id,
-        threadRootId: null,
-      },
-    ];
-    let sequence = 1;
-    for (const row of rows)
-      await db.message.create({
-        data: { ...row, conversationId: channelId, workspaceId, sequence: sequence++ },
-      });
-    await db.messageMention.create({
-      data: {
-        messageId: replyId,
-        memberId: viewer!.id,
-        conversationId: channelId,
-        workspaceId,
-        kind: "user",
-        actorId: DEV_BROWSER_USER.id,
-        handle: DEV_BROWSER_USER.username,
-      },
-    });
-    await db.threadFollow.create({
-      data: { memberId: viewer!.id, rootMessageId: rootId, conversationId: channelId, workspaceId },
+    const { channelId, rootId, replyId } = await seedChannel(db, {
+      workspaceId,
+      key: "e2e-activity-inbox:",
+      channelName: "e2e-activity-inbox",
+      root: "E2E activity root",
+      reply: `<@human:${DEV_BROWSER_USER.id}> E2E activity **reply** with \`code\``,
+      newest: { key: "unread", body: "E2E activity unread" },
+      mention: "reply",
     });
     // A second channel with a followed thread the viewer has read to the end, where nothing
     // mentions them. The channel itself is Done, so only the thread card lists.
@@ -567,6 +595,121 @@ test("a direct message with a member, and the one with themself, list with the m
     );
   } finally {
     await browser("close").catch(() => undefined);
+    await db.$disconnect();
+  }
+}, 90_000);
+
+test("a pinned channel lists under Pinned, before All conversations, and stays there after Done", async () => {
+  const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+  const session = `activity-inbox-pinned-${process.pid}`;
+  const { browser, evaluate } = browserSession(session);
+  const channelId = seededUuid("e2e-activity-inbox:pinned-channel");
+  /** The text of every card under `selector` that previews this test's messages. */
+  const cardsIn = (selector: string) =>
+    `[...document.querySelectorAll(${selector})].map((card) => card.textContent).filter((text) => text.includes("E2E pinned"))`;
+  try {
+    const { workspaceId, workspace } = await db.workspaceMembership.findFirstOrThrow({
+      where: { userId: DEV_BROWSER_USER.id },
+      include: { workspace: { select: { slug: true } } },
+    });
+    const workspacePath = `/en/w/${workspace.slug}`;
+    // Every run starts unpinned.
+    await db.conversationPin.deleteMany({ where: { conversationId: channelId } });
+    // A followed thread in the channel, and a newer top-level message that mentions the viewer.
+    const { viewer, newestId: helloId } = await seedChannel(db, {
+      workspaceId,
+      key: "e2e-activity-inbox:pinned-",
+      channelName: "e2e-activity-pinned",
+      root: "E2E pinned root",
+      reply: "E2E pinned reply",
+      newest: { key: "hello", body: `<@human:${DEV_BROWSER_USER.id}> E2E pinned hello` },
+      mention: "newest",
+    });
+    await db.conversationPin.create({
+      data: { conversationId: channelId, memberId: viewer.id, workspaceId, sortOrder: 0 },
+    });
+    await mkdir(artifacts, { recursive: true });
+
+    await browser("set", "viewport", "1440", "900");
+    await browser("open", `${origin}${workspacePath}/activity`);
+    await browser(
+      "wait",
+      "--fn",
+      `${cardsIn(pinnedItems)}.length === 1 && ${cardsIn(cardItems)}.length === 1 && ${hydrated}`,
+    );
+    // The channel's own card is under Pinned, and only there; its followed thread is below.
+    const [pinnedCard] = await evaluate<string[]>(cardsIn(pinnedItems));
+    expect(pinnedCard).toContain("#e2e-activity-pinned");
+    expect(pinnedCard).toContain("Activity Peer: ");
+    expect(pinnedCard).toContain("E2E pinned hello");
+    expect(pinnedCard).toContain("1 new");
+    const [threadCard] = await evaluate<string[]>(cardsIn(cardItems));
+    expect(threadCard).toContain("E2E pinned root");
+    expect(threadCard).not.toContain("E2E pinned hello");
+    // Pinned, its cards, then All conversations and the rest of the list.
+    expect(
+      await evaluate<boolean>(`(() => {
+        const pinned = document.querySelector('ol[aria-label="Pinned"]');
+        const [pinnedHeading, allHeading] = pinned.parentElement.querySelectorAll(":scope > h2");
+        if (pinnedHeading?.textContent.trim() !== "Pinned") return false;
+        if (allHeading?.textContent.trim() !== "All conversations") return false;
+        const all = document.querySelector('ol[aria-label="Activity"]');
+        const follows = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+        return follows(pinnedHeading, pinned) && follows(pinned, allHeading) && follows(allHeading, all);
+      })()`),
+    ).toBe(true);
+    await browser("screenshot", join(artifacts, "pinned.png"));
+
+    // Mentions has no Pinned section: the pinned channel lists among its cards.
+    await browser("find", "role", "tab", "click", "--name", "Mentions");
+    await browser("wait", "--fn", `location.search.includes("filter=mentions")`);
+    await browser(
+      "wait",
+      "--fn",
+      `${cardsIn(cardItems)}.some((text) => text.includes("E2E pinned hello"))`,
+    );
+    expect(
+      await evaluate<boolean>(`document.querySelector('ol[aria-label="Pinned"]') === null`),
+    ).toBe(true);
+    await browser("find", "role", "tab", "click", "--name", "All");
+    await browser("wait", "--fn", `${cardsIn(pinnedItems)}.length === 1`);
+
+    // Done keeps a pinned card under Pinned. Done reads the card too, and Pinned keeps its badge
+    // until the refetch, so the badge leaving means the server took the Done.
+    await evaluate(`(() => {
+      const card = [...document.querySelectorAll(${pinnedItems})].find((item) =>
+        item.textContent.includes("E2E pinned hello"));
+      card.querySelector('[aria-label="Mark as Done"]').click();
+      return true;
+    })()`);
+    await browser(
+      "wait",
+      "--fn",
+      `${cardsIn(pinnedItems)}.length === 1 && !${cardsIn(pinnedItems)}[0].includes("1 new")`,
+    );
+    expect(await evaluate<boolean>(`!document.querySelector('[role="alert"]')`)).toBe(true);
+    await browser("reload");
+    await browser("wait", "--fn", `${cardsIn(pinnedItems)}.length === 1 && ${hydrated}`);
+    expect((await evaluate<string[]>(cardsIn(pinnedItems)))[0]).toContain("E2E pinned hello");
+    expect(await evaluate<string[]>(cardsIn(cardItems))).toEqual([
+      expect.stringContaining("E2E pinned root"),
+    ]);
+
+    // A pinned card opens beside the list and is marked as the open one.
+    await browser("find", "text", "E2E pinned hello", "click");
+    await browser("wait", "--fn", `${openParam} === ${JSON.stringify(`channel:${channelId}`)}`);
+    await browser("wait", "--fn", inPane(helloId));
+    await browser(
+      "wait",
+      "--fn",
+      `[...document.querySelectorAll(${pinnedItems})].some((item) => item.querySelector("a")?.getAttribute("aria-current") === "true" && item.textContent.includes("E2E pinned hello"))`,
+    );
+  } finally {
+    await browser("close").catch(() => undefined);
+    // Leave the dev user's sidebar without this test's pin.
+    await db.conversationPin
+      .deleteMany({ where: { conversationId: channelId } })
+      .catch(() => undefined);
     await db.$disconnect();
   }
 }, 90_000);
