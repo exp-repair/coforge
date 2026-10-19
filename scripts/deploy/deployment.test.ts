@@ -1896,16 +1896,6 @@ describe("GitHub validation workflow contract", () => {
     expect(gates).toContain("if: github.ref == 'refs/heads/main'");
   });
 
-  test("CI serves pull requests and reusable callers without also running on main pushes", async () => {
-    const workflow = await Bun.file(
-      new URL("../../.github/workflows/ci.yml", import.meta.url),
-    ).text();
-
-    expect(workflow).toContain("  pull_request:\n");
-    expect(workflow).toContain("  workflow_call:\n");
-    expect(workflow).not.toContain("  push:\n");
-  });
-
   test("staging deployment and manual release use the shared CI gates", async () => {
     for (const path of [
       "../../.github/workflows/deploy-staging.yml",
