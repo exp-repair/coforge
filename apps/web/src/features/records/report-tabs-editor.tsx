@@ -44,6 +44,7 @@ export function ReportTabsEditor({
   onChange,
   onBlur,
   onUploadFile,
+  onActiveTabChange,
   readingTurn,
 }: {
   content: ReportContent;
@@ -56,6 +57,7 @@ export function ReportTabsEditor({
   trailingTabs?: readonly { id: string; label: string }[];
   renderTrailingTab?: (id: string) => ReactNode;
   onChange: (content: ReportContent) => void;
+  onActiveTabChange?: (name: string) => void;
   onBlur?: () => void;
   onUploadFile?: (file: File) => Promise<UploadResult | null>;
   /** Wheel at the body edge turns pages, then the next person of this template. */
@@ -91,6 +93,10 @@ export function ReportTabsEditor({
   const trailingActive = trailing.some((tab) => tab.id === activeTab);
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
+
+  useEffect(() => {
+    if (activeTab) onActiveTabChange?.(activeTab);
+  }, [activeTab, onActiveTabChange]);
 
   useEffect(() => {
     if (!allTabIds.includes(selectedTab)) setSelectedTab(tabNames[0] ?? trailing[0]?.id ?? "");

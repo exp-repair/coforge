@@ -48,7 +48,6 @@ import {
   updateFormatReportMeta,
 } from "./records.functions";
 import {
-  clearReportContent,
   currentIsoWeek,
   formatWeeklyReportCompletedAt,
   isAutoSendCancelled,
@@ -76,7 +75,7 @@ import { RecordsReadingColumn } from "./records-reading-column";
 import { RecordSidePanel } from "./record-side-panel";
 import { readSidePanelPinned } from "./record-side-panel-pin";
 import { TemplateChildrenTable, type TemplateChild } from "./template-children-table";
-import { normalizeLeaderFormatTabs } from "./template-outline-sections";
+import { normalizeLeaderFormatTabs, resetLeaderFormatPage } from "./template-outline-sections";
 import { WEEKLY_SEND_TOAST_MS, WeeklySendConfirmDialog } from "./weekly-send-confirm-dialog";
 import { zonedCalendarDate } from "./weekly-report-schedule-due";
 import { sendWindowEnd, useWeeklySendArmed } from "./use-send-window";
@@ -220,6 +219,8 @@ function ReportDetail({
     setSideOpen(readSidePanelPinned("report", report.id, memberSurface));
   }, [report.id, memberSurface]);
   const [saving, setSaving] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [favorited, setFavorited] = useState(Boolean(report.favorited));
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [keyPointRestartBusy, setKeyPointRestartBusy] = useState(false);
@@ -381,6 +382,7 @@ function ReportDetail({
   async function removeCurrentReport() {
     if (!editable || saving) return;
     setSaving(true);
+    setDeleteError("");
     try {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
@@ -389,6 +391,7 @@ function ReportDetail({
       await waitForReportSave(report.id);
       await removeReport({ data: { reportId: report.id } });
       clearReportDraft(report.id);
+      setDeleteOpen(false);
       await router.invalidate({ sync: true });
       void navigate({
         to: "/w/$workspaceSlug/records",
@@ -397,6 +400,8 @@ function ReportDetail({
           tab: previous.tab === "notes" ? "notes" : "weekly",
         }),
       });
+    } catch {
+      setDeleteError(m.records_delete_error());
     } finally {
       setSaving(false);
     }
@@ -658,7 +663,10 @@ function ReportDetail({
                       onAction={(key) => {
                         if (key === "favorite") void toggleFavorite();
                         if (key === "export") exportReport();
-                        if (key === "delete") void removeCurrentReport();
+                        if (key === "delete") {
+                          setDeleteError("");
+                          setDeleteOpen(true);
+                        }
                       }}
                     >
                       <Dropdown.Item
@@ -724,6 +732,19 @@ function ReportDetail({
         </div>
       </div>
 
+      <RecordsDeleteConfirmDialog
+        open={deleteOpen}
+        title={m.records_report_delete_confirm_title({ name: report.title })}
+        description={m.records_report_delete_confirm_body()}
+        busy={saving}
+        error={deleteError}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          setDeleteError("");
+        }}
+        onConfirm={() => void removeCurrentReport()}
+      />
+
       <RecordSidePanel
         key={report.id}
         subjectType="report"
@@ -768,6 +789,10 @@ function TemplateReportDetail({
     normalizeLeaderFormatTabs(readReportDraft(report.id) ?? normalizeReportContent(report.content)),
   );
   const [titleDraft, setTitleDraft] = useState(report.title);
+  const [editorRevision, setEditorRevision] = useState(0);
+  const formatPageRef = useRef("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [teamKeyPointBusy, setTeamKeyPointBusy] = useState(false);
   const contentRef = useRef(content);
   contentRef.current = content;
@@ -1016,9 +1041,11 @@ function TemplateReportDetail({
   async function removeOverviewNode() {
     if (!isOverviewLeader || saving || sending) return;
     setSaving(true);
+    setDeleteError("");
     try {
       await removeOverview({ data: { reportId: report.id } });
       clearReportDraft(report.id);
+      setDeleteOpen(false);
       await router.invalidate({ sync: true });
       void navigate({
         to: "/w/$workspaceSlug/records",
@@ -1028,7 +1055,7 @@ function TemplateReportDetail({
         }),
       });
     } catch {
-      toast.error(m.records_week_delete_failed());
+      setDeleteError(m.records_week_delete_failed());
     } finally {
       setSaving(false);
     }
@@ -1131,7 +1158,12 @@ function TemplateReportDetail({
                         isDisabled={saving || sending}
                       />
                       <Dropdown.Popover placement="bottom end" className="w-44">
-                        <Dropdown.Menu onAction={() => void removeOverviewNode()}>
+                        <Dropdown.Menu
+                          onAction={() => {
+                            setDeleteError("");
+                            setDeleteOpen(true);
+                          }}
+                        >
                           <Dropdown.Item id="delete" icon={Trash} label={m.records_week_delete()} />
                         </Dropdown.Menu>
                       </Dropdown.Popover>
@@ -1149,12 +1181,14 @@ function TemplateReportDetail({
                     <Dropdown.Popover placement="bottom end" className="w-44">
                       <Dropdown.Menu
                         onAction={() => {
-                          const next = clearReportContent(contentRef.current);
-                          markLocalContent(next);
-                          void persist(next, "draft");
+                          const page =
+                            formatPageRef.current || Object.keys(contentRef.current.tabs ?? {})[0];
+                          if (!page) return;
+                          markLocalContent(resetLeaderFormatPage(contentRef.current, page));
+                          setEditorRevision((revision) => revision + 1);
                         }}
                       >
-                        <Dropdown.Item id="clear" icon={Trash} label={m.records_report_clear()} />
+                        <Dropdown.Item id="reset" icon={Trash} label={m.records_report_reset()} />
                       </Dropdown.Menu>
                     </Dropdown.Popover>
                   </Dropdown.Root>
@@ -1187,9 +1221,13 @@ function TemplateReportDetail({
           <ReportTabsEditor
             content={content}
             editableTabs
+            contentRevision={editorRevision}
             placeholder={m.records_report_body_placeholder()}
             onUploadFile={fileToDataUrlUpload}
             onChange={markLocalContent}
+            onActiveTabChange={(name) => {
+              formatPageRef.current = name;
+            }}
           />
         )}
       </div>
@@ -1224,6 +1262,19 @@ function TemplateReportDetail({
         busy={sending}
         onOpenChange={setConfirmOpen}
         onConfirm={() => void onSendAssignments()}
+      />
+
+      <RecordsDeleteConfirmDialog
+        open={deleteOpen}
+        title={m.records_week_delete_confirm_title({ name: titleDraft.trim() || report.title })}
+        description={m.records_week_delete_confirm_body()}
+        busy={saving}
+        error={deleteError}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          setDeleteError("");
+        }}
+        onConfirm={() => void removeOverviewNode()}
       />
     </div>
   );

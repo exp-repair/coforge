@@ -6,6 +6,7 @@ import {
   markdownToSections,
   normalizeLeaderFormatTabs,
   parseLevel2Blocks,
+  resetLeaderFormatPage,
   parseTemplateSections,
   reportContentFromSections,
   sectionsFromReportContent,
@@ -118,6 +119,27 @@ test("alignReportContentToSections keeps bodies under matching H2 titles across 
       Summary: { markdown: "kept-a\n## Current Works\nkept-b\n## Next Steps" },
       Technique: { markdown: "" },
     },
+  });
+});
+
+test("resetLeaderFormatPage clears the current page body and leaves other pages", () => {
+  expect(
+    resetLeaderFormatPage(
+      {
+        tabs: {
+          Summary: { markdown: "## Current Works\ncurrent work\n## Next Steps\nfuture work" },
+          Research: { markdown: "## Papers\nkeep me" },
+        },
+        assignment: { unread: true },
+      },
+      "Summary",
+    ),
+  ).toEqual({
+    tabs: {
+      Summary: { markdown: "## Current Works\n## Next Steps" },
+      Research: { markdown: "## Papers\nkeep me" },
+    },
+    assignment: { unread: true },
   });
 });
 
