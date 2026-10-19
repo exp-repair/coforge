@@ -553,136 +553,122 @@ function ReportDetail({
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden">
       <div
-        className={`${sideOpen ? "hidden md:flex" : "flex"} relative min-w-0 flex-1 flex-col overflow-hidden`}
+        className={`${sideOpen ? "hidden lg:flex" : "flex"} relative min-w-0 flex-1 flex-col overflow-hidden`}
       >
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 h-52 bg-gradient-to-b from-secondary via-secondary/50 to-transparent"
-        />
-        <header className="relative shrink-0">
-          <RecordsReadingColumn className="pb-6 pt-4">
-            <div className="flex items-start gap-3">
-              <span className="flex shrink-0 items-center gap-1 pt-0.5">
-                {returnTo ? <RecordsKeyPointReturnBack returnTo={returnTo} /> : <BackToRecords />}
-              </span>
-              <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                <Avatar
-                  size="sm"
-                  alt={report.author.displayName}
-                  src={report.author.avatarUrl ?? undefined}
-                  initials={avatarInitial(report.author.displayName)}
-                  contentClassName={avatarToneClassName(report.author.displayName)}
-                  className="mt-0.5"
-                />
-                <div className="min-w-0 flex-1">
-                  <h1 className="truncate text-lg font-semibold text-primary">{report.title}</h1>
-                  {report.submittedAt ? (
-                    <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-6 gap-y-1 text-sm text-tertiary">
-                      <span className="truncate">
-                        {m.records_report_completed_at({
-                          time: formatWeeklyReportCompletedAt(report.submittedAt),
-                        })}
-                      </span>
-                      <span className="truncate">
-                        {m.records_report_shared_by({
-                          name: report.sharedBy?.displayName ?? report.author.displayName,
-                        })}
-                      </span>
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-              <div className="ml-auto flex shrink-0 items-center gap-1 pt-0.5">
-                {editable && restoreView ? (
-                  <Button
-                    size="sm"
-                    color="secondary"
-                    isDisabled={restoreBusy}
-                    isLoading={restoreBusy}
-                    onPress={() => void onSwitchBodyVersion()}
-                  >
-                    {restoreView.showing === "latest"
-                      ? m.records_body_restore_previous()
-                      : m.records_body_restore_latest()}
-                  </Button>
-                ) : null}
-                {editable && isAssignment ? (
-                  <>
-                    {sendAck ? (
-                      <span
-                        role="status"
-                        className="inline-flex items-center gap-1 text-sm font-medium text-success-primary duration-200 animate-in fade-in"
-                      >
-                        <CheckCircle aria-hidden="true" className="size-4" />
-                        {m.records_report_send_succeeded()}
-                      </span>
-                    ) : null}
-                    <Button
-                      size="sm"
-                      color="primary"
-                      className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
-                      preventFocusOnPress
-                      isDisabled={assignmentUnchanged}
-                      onPress={() => void submitReport()}
-                    >
-                      {sent ? m.records_report_resend() : m.records_report_send()}
-                    </Button>
-                  </>
-                ) : null}
-                <ButtonUtility
-                  size="sm"
-                  color="tertiary"
-                  icon={Heart}
-                  aria-label={
-                    favorited ? m.records_report_unfavorite() : m.records_report_favorite()
-                  }
-                  aria-pressed={favorited}
-                  isDisabled={favoriteBusy}
-                  className={favorited ? "text-brand-secondary" : undefined}
-                  onClick={() => void toggleFavorite()}
-                />
-                {sideOpen ? null : (
-                  <ButtonUtility
-                    size="sm"
-                    color="tertiary"
-                    icon={Message}
-                    aria-label={m.records_side_chat()}
-                    onClick={() => setSideOpen(true)}
-                  />
-                )}
-                <Dropdown.Root>
-                  <ButtonUtility
-                    size="sm"
-                    color="tertiary"
-                    icon={DotsHorizontal}
-                    aria-label={m.records_report_actions()}
-                    isDisabled={saving || favoriteBusy}
-                  />
-                  <Dropdown.Popover placement="bottom end" className="w-44">
-                    <Dropdown.Menu
-                      onAction={(key) => {
-                        if (key === "favorite") void toggleFavorite();
-                        if (key === "export") exportReport();
-                        if (key === "delete") {
-                          setDeleteError("");
-                          setDeleteOpen(true);
-                        }
-                      }}
-                    >
-                      <Dropdown.Item
-                        id="export"
-                        icon={Download}
-                        label={m.records_report_export()}
-                      />
-                      {editable ? (
-                        <Dropdown.Item id="delete" icon={Trash} label={m.records_report_delete()} />
-                      ) : null}
-                    </Dropdown.Menu>
-                  </Dropdown.Popover>
-                </Dropdown.Root>
-              </div>
+        <header className="flex shrink-0 items-start gap-3 border-b border-secondary px-4 py-2 sm:px-6">
+          <span className="flex shrink-0 items-center gap-1 pt-0.5">
+            {returnTo ? <RecordsKeyPointReturnBack returnTo={returnTo} /> : <BackToRecords />}
+          </span>
+          <div className="flex min-w-0 flex-1 items-start gap-2.5">
+            <Avatar
+              size="sm"
+              alt={report.author.displayName}
+              src={report.author.avatarUrl ?? undefined}
+              initials={avatarInitial(report.author.displayName)}
+              contentClassName={avatarToneClassName(report.author.displayName)}
+              className="mt-0.5"
+            />
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-lg font-semibold text-primary">{report.title}</h1>
+              {report.submittedAt ? (
+                <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-6 gap-y-1 text-sm text-tertiary">
+                  <span className="truncate">
+                    {m.records_report_completed_at({
+                      time: formatWeeklyReportCompletedAt(report.submittedAt),
+                    })}
+                  </span>
+                  <span className="truncate">
+                    {m.records_report_shared_by({
+                      name: report.sharedBy?.displayName ?? report.author.displayName,
+                    })}
+                  </span>
+                </p>
+              ) : null}
             </div>
-          </RecordsReadingColumn>
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1 pt-0.5">
+            {editable && restoreView ? (
+              <Button
+                size="sm"
+                color="secondary"
+                isDisabled={restoreBusy}
+                isLoading={restoreBusy}
+                onPress={() => void onSwitchBodyVersion()}
+              >
+                {restoreView.showing === "latest"
+                  ? m.records_body_restore_previous()
+                  : m.records_body_restore_latest()}
+              </Button>
+            ) : null}
+            {editable && isAssignment ? (
+              <>
+                {sendAck ? (
+                  <span
+                    role="status"
+                    className="inline-flex items-center gap-1 text-sm font-medium text-success-primary duration-200 animate-in fade-in"
+                  >
+                    <CheckCircle aria-hidden="true" className="size-4" />
+                    {m.records_report_send_succeeded()}
+                  </span>
+                ) : null}
+                <Button
+                  size="sm"
+                  color="primary"
+                  className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
+                  preventFocusOnPress
+                  isDisabled={assignmentUnchanged}
+                  onPress={() => void submitReport()}
+                >
+                  {sent ? m.records_report_resend() : m.records_report_send()}
+                </Button>
+              </>
+            ) : null}
+            <ButtonUtility
+              size="sm"
+              color="tertiary"
+              icon={Heart}
+              aria-label={favorited ? m.records_report_unfavorite() : m.records_report_favorite()}
+              aria-pressed={favorited}
+              isDisabled={favoriteBusy}
+              className={favorited ? "text-brand-secondary" : undefined}
+              onClick={() => void toggleFavorite()}
+            />
+            {sideOpen ? null : (
+              <ButtonUtility
+                size="sm"
+                color="tertiary"
+                icon={Message}
+                aria-label={m.records_side_chat()}
+                onClick={() => setSideOpen(true)}
+              />
+            )}
+            <Dropdown.Root>
+              <ButtonUtility
+                size="sm"
+                color="tertiary"
+                icon={DotsHorizontal}
+                aria-label={m.records_report_actions()}
+                isDisabled={saving || favoriteBusy}
+              />
+              <Dropdown.Popover placement="bottom end" className="w-44">
+                <Dropdown.Menu
+                  onAction={(key) => {
+                    if (key === "favorite") void toggleFavorite();
+                    if (key === "export") exportReport();
+                    if (key === "delete") {
+                      setDeleteError("");
+                      setDeleteOpen(true);
+                    }
+                  }}
+                >
+                  <Dropdown.Item id="export" icon={Download} label={m.records_report_export()} />
+                  {editable ? (
+                    <Dropdown.Item id="delete" icon={Trash} label={m.records_report_delete()} />
+                  ) : null}
+                </Dropdown.Menu>
+              </Dropdown.Popover>
+            </Dropdown.Root>
+          </div>
         </header>
 
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1081,126 +1067,118 @@ function TemplateReportDetail({
   return (
     <div className="relative flex min-h-0 flex-1">
       <div
-        className={`${sideOpen ? "hidden md:flex" : "flex"} relative min-w-0 flex-1 flex-col overflow-hidden`}
+        className={`${sideOpen ? "hidden lg:flex" : "flex"} relative min-w-0 flex-1 flex-col overflow-hidden`}
       >
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-secondary via-secondary/40 to-transparent"
-        />
-        <header className="relative shrink-0">
-          <RecordsReadingColumn className="min-h-0 py-0">
-            <div className="flex h-12 items-center gap-3">
-              <span className="flex shrink-0 items-center gap-2">
-                {returnTo ? <RecordsKeyPointReturnBack returnTo={returnTo} /> : <BackToRecords />}
-                <WeekBadge week={report.cycle.week} />
-              </span>
-              {isOverview ? (
-                <h1 className="min-w-0 truncate text-md font-semibold text-primary sm:text-lg">
-                  {report.title}
-                </h1>
-              ) : (
-                <input
-                  type="text"
-                  aria-label={m.records_template_name()}
-                  value={titleDraft}
-                  disabled={saving || sending}
-                  onChange={(event) => setTitleDraft(event.target.value)}
-                  className="min-w-0 flex-1 truncate bg-transparent text-md font-semibold text-primary outline-none placeholder:text-tertiary focus-visible:outline-none disabled:opacity-60 sm:text-lg"
-                />
-              )}
-              <div className="ml-auto flex shrink-0 items-center gap-1">
-                {isOverview ? null : (
-                  <>
-                    <Button
-                      size="sm"
-                      color="primary"
-                      className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
-                      isDisabled={
-                        saving ||
-                        sending ||
-                        hasUnsavedEdits ||
-                        Boolean(sendSchedule?.alreadySent) ||
-                        (!canSendAssignments && !weekDismissed)
-                      }
-                      onPress={() => setConfirmOpen(true)}
-                    >
-                      {m.records_report_send()}
-                    </Button>
-                    {hasUnsavedEdits ? (
-                      <Button
-                        size="sm"
-                        color="secondary"
-                        isDisabled={saving || sending}
-                        onPress={() => void saveFormatEdits()}
-                      >
-                        {m.records_report_save()}
-                      </Button>
-                    ) : null}
-                  </>
-                )}
-                {sideOpen ? null : (
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-secondary px-4 sm:px-6">
+          <span className="flex shrink-0 items-center gap-2">
+            {returnTo ? <RecordsKeyPointReturnBack returnTo={returnTo} /> : <BackToRecords />}
+            <WeekBadge week={report.cycle.week} />
+          </span>
+          {isOverview ? (
+            <h1 className="min-w-0 truncate text-md font-semibold text-primary sm:text-lg">
+              {report.title}
+            </h1>
+          ) : (
+            <input
+              type="text"
+              aria-label={m.records_template_name()}
+              value={titleDraft}
+              disabled={saving || sending}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              className="min-w-0 flex-1 truncate bg-transparent text-md font-semibold text-primary outline-none placeholder:text-tertiary focus-visible:outline-none disabled:opacity-60 sm:text-lg"
+            />
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {isOverview ? null : (
+              <>
+                <Button
+                  size="sm"
+                  color="primary"
+                  className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
+                  isDisabled={
+                    saving ||
+                    sending ||
+                    hasUnsavedEdits ||
+                    Boolean(sendSchedule?.alreadySent) ||
+                    (!canSendAssignments && !weekDismissed)
+                  }
+                  onPress={() => setConfirmOpen(true)}
+                >
+                  {m.records_report_send()}
+                </Button>
+                {hasUnsavedEdits ? (
+                  <Button
+                    size="sm"
+                    color="secondary"
+                    isDisabled={saving || sending}
+                    onPress={() => void saveFormatEdits()}
+                  >
+                    {m.records_report_save()}
+                  </Button>
+                ) : null}
+              </>
+            )}
+            {sideOpen ? null : (
+              <ButtonUtility
+                size="sm"
+                color="tertiary"
+                icon={Message}
+                aria-label={m.records_side_chat()}
+                onClick={() => setSideOpen(true)}
+              />
+            )}
+            {isOverview ? (
+              isOverviewLeader ? (
+                <Dropdown.Root>
                   <ButtonUtility
                     size="sm"
                     color="tertiary"
-                    icon={Message}
-                    aria-label={m.records_side_chat()}
-                    onClick={() => setSideOpen(true)}
+                    icon={DotsHorizontal}
+                    aria-label={m.records_report_actions()}
+                    isDisabled={saving || sending}
                   />
-                )}
-                {isOverview ? (
-                  isOverviewLeader ? (
-                    <Dropdown.Root>
-                      <ButtonUtility
-                        size="sm"
-                        color="tertiary"
-                        icon={DotsHorizontal}
-                        aria-label={m.records_report_actions()}
-                        isDisabled={saving || sending}
-                      />
-                      <Dropdown.Popover placement="bottom end" className="w-44">
-                        <Dropdown.Menu
-                          onAction={() => {
-                            setDeleteError("");
-                            setDeleteOpen(true);
-                          }}
-                        >
-                          <Dropdown.Item id="delete" icon={Trash} label={m.records_week_delete()} />
-                        </Dropdown.Menu>
-                      </Dropdown.Popover>
-                    </Dropdown.Root>
-                  ) : null
-                ) : (
-                  <Dropdown.Root>
-                    <ButtonUtility
-                      size="sm"
-                      color="tertiary"
-                      icon={DotsHorizontal}
-                      aria-label={m.records_report_actions()}
-                      isDisabled={saving || sending}
-                    />
-                    <Dropdown.Popover placement="bottom end" className="w-44">
-                      <Dropdown.Menu
-                        onAction={() => {
-                          const page =
-                            formatPageRef.current || Object.keys(contentRef.current.tabs ?? {})[0];
-                          if (!page) return;
-                          markLocalContent(resetLeaderFormatPage(contentRef.current, page));
-                          setEditorRevision((revision) => revision + 1);
-                        }}
-                      >
-                        <Dropdown.Item id="reset" icon={Trash} label={m.records_report_reset()} />
-                      </Dropdown.Menu>
-                    </Dropdown.Popover>
-                  </Dropdown.Root>
-                )}
-              </div>
-            </div>
-          </RecordsReadingColumn>
+                  <Dropdown.Popover placement="bottom end" className="w-44">
+                    <Dropdown.Menu
+                      onAction={() => {
+                        setDeleteError("");
+                        setDeleteOpen(true);
+                      }}
+                    >
+                      <Dropdown.Item id="delete" icon={Trash} label={m.records_week_delete()} />
+                    </Dropdown.Menu>
+                  </Dropdown.Popover>
+                </Dropdown.Root>
+              ) : null
+            ) : (
+              <Dropdown.Root>
+                <ButtonUtility
+                  size="sm"
+                  color="tertiary"
+                  icon={DotsHorizontal}
+                  aria-label={m.records_report_actions()}
+                  isDisabled={saving || sending}
+                />
+                <Dropdown.Popover placement="bottom end" className="w-44">
+                  <Dropdown.Menu
+                    onAction={() => {
+                      const page =
+                        formatPageRef.current || Object.keys(contentRef.current.tabs ?? {})[0];
+                      if (!page) return;
+                      markLocalContent(resetLeaderFormatPage(contentRef.current, page));
+                      setEditorRevision((revision) => revision + 1);
+                    }}
+                  >
+                    <Dropdown.Item id="reset" icon={Trash} label={m.records_report_reset()} />
+                  </Dropdown.Menu>
+                </Dropdown.Popover>
+              </Dropdown.Root>
+            )}
+          </div>
         </header>
         {isOverview || !sendError ? null : (
-          <RecordsReadingColumn className="border-b border-secondary py-2">
-            <p className="text-sm text-error-primary">{sendError}</p>
-          </RecordsReadingColumn>
+          <p className="border-b border-secondary px-4 py-2 text-sm text-error-primary sm:px-6">
+            {sendError}
+          </p>
         )}
 
         {isOverview ? (
