@@ -511,7 +511,7 @@ export class DaemonRuntime {
           agentId,
           AGENT_ACTIVITY_DETAIL_KIND.COMPACTION_STALE,
           "info",
-          "Compaction is still running; no finish signal was observed.",
+          "Context compaction still running; no finish event observed",
         ),
       );
   });
@@ -2409,12 +2409,7 @@ export class DaemonRuntime {
       }
       this.#sendAgentStatus(agentId, "active");
       this.#activityPublisher.publish(agentId, launch, {
-        ...this.#activity(
-          agentId,
-          AGENT_ACTIVITY_DETAIL_KIND.STARTING,
-          "info",
-          "Agent runtime is starting.",
-        ),
+        ...this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.STARTING, "info", "Starting…"),
         requestId,
       });
       launch.startup = new AgentStartup(() => this.#scheduleStartupFailure(agentId, launch));
@@ -2763,8 +2758,8 @@ export class DaemonRuntime {
           agentId,
           launch,
           event.type === "tool-start"
-            ? "Compaction finished (inferred from a new tool call)."
-            : "Compaction finished (inferred from resumed output).",
+            ? "Context compaction finished (inferred from resumed tool use)"
+            : "Context compaction finished (inferred from resumed output)",
           event.conversation,
         );
       const carriesEntries =
@@ -2811,12 +2806,17 @@ export class DaemonRuntime {
         publish(
           agentId,
           launch,
-          this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.COMPACTING_CONTEXT, "info", ""),
+          this.#activity(
+            agentId,
+            AGENT_ACTIVITY_DETAIL_KIND.COMPACTING_CONTEXT,
+            "info",
+            "Compacting context",
+          ),
         );
       return;
     }
     if (event.type === "compaction-finished") {
-      this.#finishCompaction(agentId, launch, "", event.conversation);
+      this.#finishCompaction(agentId, launch, "Context compaction finished", event.conversation);
       return;
     }
     if (event.type === "compaction-interrupted") {
@@ -2938,7 +2938,7 @@ export class DaemonRuntime {
     this.#finishCompaction(
       agentId,
       launch,
-      "Compaction finished (inferred from turn end).",
+      "Context compaction finished (inferred from turn end)",
       event.conversation,
     );
     // A turn outcome (of any status) resolves any error observed mid-turn; a crash wording only
@@ -2967,7 +2967,7 @@ export class DaemonRuntime {
             }
           : event.status === "interrupted"
             ? this.#interruptedActivity(agentId)
-            : this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.IDLE, "info", ""),
+            : this.#idleActivity(agentId),
       );
     if (collectorFailReason && this.#collectSkillAgents.has(agentId))
       void this.#failCollectorRunningSlots(agentId, collectorFailReason).catch(() => {});
@@ -3126,12 +3126,7 @@ export class DaemonRuntime {
     const remembered = this.#activityPublisher.lastBusy(probe.agentId);
     if (launch.startup?.waiting) {
       this.#activityPublisher.publish(probe.agentId, launch, {
-        ...this.#activity(
-          probe.agentId,
-          AGENT_ACTIVITY_DETAIL_KIND.STARTING,
-          "info",
-          "Agent runtime is starting.",
-        ),
+        ...this.#activity(probe.agentId, AGENT_ACTIVITY_DETAIL_KIND.STARTING, "info", "Starting…"),
         probeId: probe.probeId,
       });
       return;
@@ -3146,7 +3141,7 @@ export class DaemonRuntime {
       return;
     }
     this.#activityPublisher.publish(probe.agentId, launch, {
-      ...this.#activity(probe.agentId, AGENT_ACTIVITY_DETAIL_KIND.IDLE, "info", ""),
+      ...this.#idleActivity(probe.agentId),
       probeId: probe.probeId,
     });
   }
@@ -3718,13 +3713,12 @@ export class DaemonRuntime {
     });
   }
 
+  #idleActivity(agentId: string): ActivityDraft {
+    return this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.IDLE, "info", "Idle");
+  }
+
   #stoppedActivity(agentId: string): ActivityDraft {
-    return this.#activity(
-      agentId,
-      AGENT_ACTIVITY_DETAIL_KIND.STOPPED,
-      "info",
-      "Agent runtime stopped",
-    );
+    return this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.STOPPED, "info", "Stopped");
   }
 
   /** A running turn was cut by a requested stop/restart. */
@@ -3758,11 +3752,7 @@ export class DaemonRuntime {
     launch.trajectory?.flush();
     this.#compactionTracker.dispose(agentId);
     if (this.#isWorking(agentId)) {
-      this.#activityPublisher.publish(
-        agentId,
-        launch,
-        this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.IDLE, "info", ""),
-      );
+      this.#activityPublisher.publish(agentId, launch, this.#idleActivity(agentId));
       this.#releaseTurnEndHolds(agentId);
     }
     return true;

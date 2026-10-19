@@ -318,7 +318,11 @@ test("a liveness probe preserves Starting until actual model readiness", async (
       agentId: "agent-a",
       probeId: "probe-1",
     });
-    expect(h.activities.at(-1)).toMatchObject({ detailKind: "starting", probeId: "probe-1" });
+    expect(h.activities.at(-1)).toMatchObject({
+      detailKind: "starting",
+      detail: "Starting…",
+      probeId: "probe-1",
+    });
   } finally {
     await h.runtime.stop();
   }

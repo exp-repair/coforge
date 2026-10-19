@@ -228,7 +228,7 @@ for (const event of [
       expect(activities.at(-1)?.isHeartbeat).toBe(true);
       live = false; // The adapter finished; its normalized completion was lost.
       jest.advanceTimersByTime(60_000);
-      expect(activities.at(-1)?.detailKind).toBe("idle");
+      expect(activities.at(-1)).toMatchObject({ detailKind: "idle", detail: "Idle" });
       expect(runtime.busyAgents()).toEqual([]);
       const count = activities.length;
       listener({ type: "tool-end", id: "real-tool", isError: false });
@@ -481,7 +481,7 @@ test("idle launched Agent replies to an activity probe with idle", async () => {
     });
 
     expect(activities).toHaveLength(2);
-    expect(activities[1]).toMatchObject({ detailKind: "idle", probeId: "probe-2" });
+    expect(activities[1]).toMatchObject({ detailKind: "idle", detail: "Idle", probeId: "probe-2" });
   } finally {
     await runtime.stop();
   }
@@ -635,7 +635,10 @@ test("compaction-started reports Compacting context once, and a repeat is dedupe
     emitEvent({ type: "compaction-started" });
     emitEvent({ type: "compaction-started" });
     expect(activities).toHaveLength(1);
-    expect(activities[0]).toMatchObject({ detailKind: "compacting_context" });
+    expect(activities[0]).toMatchObject({
+      detailKind: "compacting_context",
+      detail: "Compacting context",
+    });
   } finally {
     await runtime.stop();
   }
@@ -655,7 +658,7 @@ test("compaction-finished ends an open compaction, and without one is a no-op", 
       agentId: "agent-a",
       detailKind: "compaction_finished",
       level: "info",
-      detail: "",
+      detail: "Context compaction finished",
     });
     emitEvent({ type: "compaction-finished" });
     expect(activities).toHaveLength(1);
@@ -678,7 +681,7 @@ test("a compaction still open after 5 minutes broadcasts compaction_stale once",
     expect(staleNotices).toHaveLength(1);
     expect(staleNotices[0]).toMatchObject({
       level: "info",
-      detail: "Compaction is still running; no finish signal was observed.",
+      detail: "Context compaction still running; no finish event observed",
     });
     // One-shot: the same episode never re-arms the notice; only a fresh start would.
     jest.advanceTimersByTime(5 * 60_000);
@@ -721,7 +724,7 @@ test("resumed text after an open compaction infers it finished, reported before 
     expect(activities[0]).toMatchObject({
       agentId: "agent-a",
       level: "info",
-      detail: "Compaction finished (inferred from resumed output).",
+      detail: "Context compaction finished (inferred from resumed output)",
     });
     emitEvent({ type: "compaction-finished" });
     expect(activities).toHaveLength(3);
@@ -740,7 +743,7 @@ test("a started tool after an open compaction infers it finished, reported befor
     expect(activities[0]).toMatchObject({
       agentId: "agent-a",
       level: "info",
-      detail: "Compaction finished (inferred from a new tool call).",
+      detail: "Context compaction finished (inferred from resumed tool use)",
     });
     emitEvent({ type: "compaction-finished" });
     expect(activities).toHaveLength(2);
@@ -759,7 +762,7 @@ test("a turn ending after an open compaction infers it finished, reported before
     expect(activities[0]).toMatchObject({
       agentId: "agent-a",
       level: "info",
-      detail: "Compaction finished (inferred from turn end).",
+      detail: "Context compaction finished (inferred from turn end)",
     });
     emitEvent({ type: "compaction-finished" });
     expect(activities).toHaveLength(2);
@@ -1184,6 +1187,7 @@ test("stopAgent reports runtime_interrupted before stopped when it cuts a busy t
     await runtime.stopAgent("agent-a");
     const kinds = activities.map((activity) => activity.detailKind);
     expect(kinds).toEqual(["runtime_interrupted", "stopped"]);
+    expect(activities.at(-1)).toMatchObject({ detailKind: "stopped", detail: "Stopped" });
   } finally {
     await runtime.stop();
   }

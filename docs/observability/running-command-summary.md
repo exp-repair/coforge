@@ -70,7 +70,8 @@ message: <provider 上报的完整原始消息>
 `agent:activity(starting)`、`agent:status(active)`；停止时记录
 `agent:activity(stopped)`、`agent:status(inactive)`；租约刷新不新增 Activity。
 重启是在停止后再次记录 `starting`，成功后发送 `agent:status(active)`。一次 turn 完成后记录
-`idle`，不带固定生命周期文案；这些 activity 不改变 Agent status。
+`idle`，`detail` 为 “Idle”（与参考客户端一致，Web 不重复显示与标签相同的文案）；这些
+activity 不改变 Agent status。
 进程意外退出时记录 `stopped`，但只要 Daemon 仍持有可重启配置就不发送 `inactive`；下一条
 消息会先重启 runtime，再发送无正文通知，并在通知成功后 ACK。
 

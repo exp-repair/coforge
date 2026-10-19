@@ -7511,7 +7511,7 @@ describe("DaemonRuntime", () => {
     await runtime.stop();
   });
 
-  test("publishes a completion Activity without lifecycle detail for a successful turn", async () => {
+  test("publishes a completion Activity with Idle detail for a successful turn", async () => {
     const credentials = new InMemoryDaemonCredentialStore();
     await credentials.save(connection.workspaceId, connection.computerId, "token-a");
     const activities: import("@lrm/coforge-sdk/internal").AgentActivity[] = [];
@@ -7552,7 +7552,12 @@ describe("DaemonRuntime", () => {
       listener({ type: "completed", status: "completed" });
       await Bun.sleep(10);
       expect(activities.map(({ detailKind }) => detailKind)).toEqual(["starting", "idle"]);
-      expect(activities.at(-1)).toMatchObject({ detailKind: "idle", level: "info", detail: "" });
+      expect(activities[0]).toMatchObject({ detailKind: "starting", detail: "Starting…" });
+      expect(activities.at(-1)).toMatchObject({
+        detailKind: "idle",
+        level: "info",
+        detail: "Idle",
+      });
     } finally {
       await runtime.stop();
     }

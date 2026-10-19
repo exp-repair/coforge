@@ -29,6 +29,6 @@ Activity timeline 是完整的按时间顺序工作记录，不是只读最新�
 "run-start marker" 上报一次（只用于让展示状态立即翻转到 thinking/working，不代表有可读
 内容），再在有实际文本时补发一条带 `entries` 的正式帧；Web 按 `detailKind` 和 `entries`
 是否为空识别并丢弃前者，只保留带 `entries` 的正式帧进历史和 timeline。`tool_end`/
-`thinking_end` 的副标题优先使用 daemon 上报的 `detail`（当前 daemon 发送 "Tool
-finished"/"Thinking finished"），仅当 `detail` 为空（旧版 daemon、或改版前已落库的历史
+`thinking_end`/`compaction_finished` 的副标题优先使用 daemon 上报的 `detail`（当前 daemon
+发送 "Tool finished"/"Thinking finished"/"Context compaction finished"），仅当 `detail` 为空（旧版 daemon、或改版前已落库的历史
 行）时才回退到 Web 自己的措辞；服务端在持久化前不改写、不清空这个 `detail`。
