@@ -139,6 +139,15 @@ const TASK_LIFECYCLE_PHASE = new Map<
   ["task_notification", "notification"],
 ]);
 
+type TaskStatus = NonNullable<
+  Extract<AgentRuntimeEvent, { type: "subagent-progress" }>["taskStatus"]
+>;
+
+/** Whether a `task_notification`'s status is one of its terminal ones (SDKTaskNotificationMessage). */
+function isTaskStatus(value: unknown): value is TaskStatus {
+  return value === "completed" || value === "failed" || value === "stopped";
+}
+
 class ClaudeCodeAgentSession implements AgentSession {
   #process: JsonlProcess;
   readonly #exitListeners = new Set<() => void>();
@@ -159,9 +168,9 @@ class ClaudeCodeAgentSession implements AgentSession {
   // A fresh Claude session becomes ready at its first result.
   #sessionReadyForNotices = false;
   #compacting = false;
-  /** Subagent tasks announced by `task_started`, by task id, with the tool call each belongs to;
-   * their types live in `#subagentLineage`. */
-  readonly #subagentTasks = new Map<string, string | undefined>();
+  /** Non-ambient tasks announced by `task_started` and not yet ended, by task id, with the tool
+   * call each belongs to; subagent types live in `#subagentLineage`. */
+  readonly #tasks = new Map<string, string | undefined>();
   readonly #subagentLineage = new ClaudeSubagentLineage();
   #inputFailure: Error | undefined;
   #recoveryFailed = false;
@@ -287,8 +296,16 @@ class ClaudeCodeAgentSession implements AgentSession {
     const fresh = this.spawnFresh!();
     this.#process = fresh.process;
     this.#sessionId = fresh.sessionId;
-    // The old process's tasks never report again.
-    this.#subagentTasks.clear();
+    // The old process's tasks never report again: end each one, so the daemon stops counting it.
+    for (const [taskId, toolUseId] of this.#tasks)
+      this.#emitTaskProgress(
+        "notification",
+        taskId,
+        toolUseId,
+        this.#subagentLineage.typeOf(toolUseId),
+        "stopped",
+      );
+    this.#tasks.clear();
     this.#subagentLineage.clear();
     this.#identity = { sessionId: fresh.sessionId, state: "empty" };
     this.#bindProcess(this.#process);
@@ -460,10 +477,12 @@ class ClaudeCodeAgentSession implements AgentSession {
   }
 
   /**
-   * Relays a subagent's `task_started`/`task_progress`/`task_notification` as
-   * `subagent-progress`. Only `task_started` reliably names the task's type, and a background
-   * command's later records look like a subagent's, so the subagent tasks it announced are
-   * remembered here, and their types with the tool call's lineage.
+   * Relays every task's `task_started`/`task_progress`/`task_notification` as
+   * `subagent-progress`, whatever its type (a subagent, a background command, a Monitor watch),
+   * as the reference client does. Only `task_started` says whether a task is `ambient` (Claude
+   * Code's own work, which the SDK keeps out of activity indicators), so the tasks it announced
+   * are remembered here until a terminal notification, and subagent types with the tool call's
+   * lineage.
    */
   #acceptTaskLifecycle(record: Readonly<Record<string, unknown>>): void {
     const phase = TASK_LIFECYCLE_PHASE.get(record.subtype);
@@ -471,20 +490,34 @@ class ClaudeCodeAgentSession implements AgentSession {
     if (!phase || !taskId) return;
     const toolUseId = typeof record.tool_use_id === "string" ? record.tool_use_id : undefined;
     if (phase === "started") {
-      if (record.task_type !== "local_agent" && record.task_type !== "remote_agent") return;
-      this.#subagentTasks.set(taskId, toolUseId);
+      if (record.ambient === true) return;
+      this.#tasks.set(taskId, toolUseId);
       this.#subagentLineage.remember(toolUseId, record.subagent_type);
-    } else if (!this.#subagentTasks.has(taskId)) return;
+    } else if (!this.#tasks.has(taskId)) return;
     const subagentType =
-      nonEmptyString(record.subagent_type) ??
-      this.#subagentLineage.typeOf(this.#subagentTasks.get(taskId));
-    if (phase === "notification") this.#subagentTasks.delete(taskId);
+      nonEmptyString(record.subagent_type) ?? this.#subagentLineage.typeOf(this.#tasks.get(taskId));
+    const taskStatus =
+      phase === "notification" && isTaskStatus(record.status) ? record.status : undefined;
+    if (taskStatus) this.#tasks.delete(taskId);
+    this.#emitTaskProgress(phase, taskId, toolUseId, subagentType, taskStatus, eventTime(record));
+  }
+
+  #emitTaskProgress(
+    phase: Extract<AgentRuntimeEvent, { type: "subagent-progress" }>["phase"],
+    taskId: string,
+    toolUseId: string | undefined,
+    subagentType: string | undefined,
+    taskStatus?: TaskStatus,
+    occurredAt?: string,
+  ): void {
     this.#emit({
       type: "subagent-progress",
       phase,
+      taskId,
+      ...(taskStatus ? { taskStatus } : {}),
       ...(subagentType ? { subagentType } : {}),
       ...(toolUseId ? { parentToolUseId: toolUseId } : {}),
-      occurredAt: eventTime(record),
+      ...(occurredAt ? { occurredAt } : {}),
     });
   }
 

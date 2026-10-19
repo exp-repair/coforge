@@ -8776,6 +8776,114 @@ describe("DaemonRuntime", () => {
     }
   });
 
+  test("presents a System Cleaner hint that falls due during a background-task wait at its final Idle", async () => {
+    const stateDirectory = join(tempRoot, `coforge-cleaner-wait-${crypto.randomUUID()}`);
+    const credentials = new InMemoryDaemonCredentialStore();
+    await credentials.save(connection.workspaceId, connection.computerId, "token-a");
+    const notices: string[] = [];
+    let listener: ((event: AgentRuntimeEvent) => void) | undefined;
+    let liveTurn = true;
+    const timers = new Map<number, { atMs: number; run: () => void }>();
+    let nowMs = 0;
+    let nextTimer = 1;
+    const clock = {
+      now: () => nowMs,
+      schedule: (run: () => void, delayMs: number) => {
+        timers.set(nextTimer, { atMs: nowMs + delayMs, run });
+        return nextTimer++;
+      },
+      cancel: (handle: unknown) => {
+        timers.delete(handle as number);
+      },
+    };
+    const advance = (ms: number) => {
+      nowMs += ms;
+      for (const [id, timer] of timers)
+        if (timer.atMs <= nowMs) {
+          timers.delete(id);
+          timer.run();
+        }
+    };
+    const runtime = new DaemonRuntime(
+      connection,
+      () => ({
+        provider: "pi",
+        createAgentSession: async () => ({
+          ...sessionSpy(),
+          get hasLiveTurn() {
+            return liveTurn;
+          },
+          notify: async (notice) => {
+            notices.push(notice);
+          },
+          subscribe(next) {
+            listener = next;
+            return () => {
+              listener = undefined;
+            };
+          },
+        }),
+      }),
+      credentials,
+      {
+        create: () => ({
+          async start() {},
+          async ready() {},
+          async stop() {},
+          async requestAgentApiKey() {
+            return `sk_agent_${"a".repeat(43)}`;
+          },
+          async revokeAgentApiKey() {},
+        }),
+      },
+      undefined,
+      emptyCodeAgentDiscovery,
+      stateDirectory,
+      {},
+      undefined,
+      {
+        clock,
+        measureMemoryFile: async () => ({ kind: "measured", bytes: 70 * 1024 }),
+        measureDiskSpace: async () => ({
+          kind: "measured",
+          availableBytes: 200 * 1024 ** 3,
+          totalBytes: 500 * 1024 ** 3,
+        }),
+      },
+    );
+    try {
+      await runtime.start(connection);
+      await runtime.startAgent("agent-a", config);
+      runtime.systemCleaner.applyConfig({
+        appId: "system.cleaner",
+        ownerAgentId: "agent-a",
+        enabled: true,
+        thresholdBytes: 64 * 1024,
+        intervalMs: 3_600_000,
+        revision: 1,
+      });
+      listener?.({ type: "progress" });
+      listener?.({ type: "subagent-progress", phase: "started", taskId: "task-1" });
+      liveTurn = false;
+      listener?.({ type: "completed", status: "completed" });
+      // The hint falls due while the Agent still works, waiting for its background task.
+      advance(3_600_000);
+      await runtime.systemCleaner.settled();
+      expect(notices).toEqual([]);
+      listener?.({
+        type: "subagent-progress",
+        phase: "notification",
+        taskId: "task-1",
+        taskStatus: "completed",
+      });
+      await runtime.systemCleaner.settled();
+      expect(notices).toEqual(["New app item available. Run coforge inbox check."]);
+    } finally {
+      await runtime.stop();
+      await rm(stateDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("a reminder-triggered restart waits for the shared notice outcome before becoming terminal", async () => {
     const stateDirectory = join(tempRoot, `coforge-reminder-notice-${crypto.randomUUID()}`);
     const credentials = new InMemoryDaemonCredentialStore();

@@ -170,13 +170,17 @@ export type AgentRuntimeEvent = { readonly conversation?: AgentConversationScope
   // core alone decides what Activity each one becomes.
   | { type: "review-started"; occurredAt?: string }
   | { type: "review-finished"; occurredAt?: string }
-  // A subagent's lifecycle as its provider reports it (Claude Code's `task_*` system messages):
-  // started, still working, or a terminal/update notification. `subagentType` and
+  // A provider task's lifecycle (Claude Code's `task_*` system messages for a subagent, a
+  // background command or a Monitor watch, never an ambient task): started, still working, or a
+  // notification, terminal when it carries `taskStatus`. The task can outlive the turn that
+  // started it; the daemon core counts the ones outstanding by `taskId`. `subagentType` and
   // `parentToolUseId` are raw provider facts; the daemon core alone formats the row and decides
-  // whether it is shown. A background command's task lifecycle is never reported as this.
+  // whether it is shown.
   | {
       type: "subagent-progress";
       phase: "started" | "progress" | "notification";
+      taskId?: string;
+      taskStatus?: "completed" | "failed" | "stopped";
       subagentType?: string;
       parentToolUseId?: string;
       occurredAt?: string;

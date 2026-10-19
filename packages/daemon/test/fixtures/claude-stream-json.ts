@@ -151,6 +151,15 @@ function handle(record: Record<string, unknown>): void {
         write({ type: "stream_event", event: { type: "message_start" } });
       if (process.argv.includes("init-before-missing"))
         write({ ...initialization, session_id: "missing-session" });
+      if (process.argv.includes("task-before-missing"))
+        write({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-lost",
+          tool_use_id: "toolu_lost",
+          description: "Watch the build",
+          task_type: "local_bash",
+        });
       console.error(
         `No conversation found with session ID: ${process.argv[process.argv.indexOf("--resume") + 1]}`,
       );

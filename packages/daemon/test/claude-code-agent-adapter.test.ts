@@ -94,6 +94,35 @@ test.each([
   }
 });
 
+test("Claude ends the tasks of a session it replaces with a fresh one", async () => {
+  const session = await fixtureAdapter("missing-resume", "task-before-missing").createAgentSession({
+    agentWorkspaceDirectory: tmpdir(),
+    instructions: TEST_AGENT_INSTRUCTIONS,
+    sessionId: "missing-session",
+  });
+  const events: AgentRuntimeEvent[] = [];
+  const completed = Promise.withResolvers<void>();
+  session.subscribe((event) => {
+    events.push(event);
+    if (event.type === "completed") completed.resolve();
+  });
+  try {
+    await session.sendMessage("finish");
+    await completed.promise;
+    // The old process's task never reports again, so the daemon must stop counting it.
+    expect(
+      events.flatMap((event) =>
+        event.type === "subagent-progress" ? [[event.phase, event.taskId, event.taskStatus]] : [],
+      ),
+    ).toEqual([
+      ["started", "task-lost", undefined],
+      ["notification", "task-lost", "stopped"],
+    ]);
+  } finally {
+    await session.dispose();
+  }
+});
+
 test("Claude forwards cloud-selected persistent resume while retaining approved permissions", async () => {
   const provider = new ClaudeCodeProvider({
     command: [
@@ -1063,7 +1092,7 @@ test("Claude Code reports a compaction-started event per status=compacting line,
   }
 });
 
-test("Claude Code relays a subagent's task lifecycle as subagent-progress, never a background command's", async () => {
+test("Claude Code relays every non-ambient task's lifecycle as subagent-progress", async () => {
   // Shaped like Claude Code 2.1.300 stream-json: a foreground subagent, then a background Bash
   // task, whose `task_notification` names no type, so only `task_started` tells them apart.
   const fixture = await controlledClaude();
@@ -1091,6 +1120,23 @@ test("Claude Code relays a subagent's task lifecycle as subagent-progress, never
         description: "Reading a.txt",
         subagent_type: "general-purpose",
         last_tool_name: "Read",
+      },
+      {
+        // Claude Code's own bookkeeping task: the SDK says to keep ambient tasks out of
+        // activity indicators.
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-ambient",
+        description: "Watch for updates",
+        task_type: "local_agent",
+        ambient: true,
+      },
+      {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-ambient",
+        status: "stopped",
+        summary: "stopped",
       },
       {
         type: "system",
@@ -1123,16 +1169,48 @@ test("Claude Code relays a subagent's task lifecycle as subagent-progress, never
     expect(
       events.flatMap((event) =>
         event.type === "subagent-progress"
-          ? [{ phase: event.phase, type: event.subagentType, parent: event.parentToolUseId }]
+          ? [
+              {
+                phase: event.phase,
+                taskId: event.taskId,
+                type: event.subagentType,
+                parent: event.parentToolUseId,
+                status: event.taskStatus,
+              },
+            ]
           : [],
       ),
-    ).toEqual(
-      (["started", "progress", "notification"] as const).map((phase) => ({
+    ).toEqual([
+      ...(["started", "progress"] as const).map((phase) => ({
         phase,
+        taskId: "task-agent",
         type: "general-purpose",
         parent: "toolu_agent",
+        status: undefined,
       })),
-    );
+      // A background command is a task too, with its rows, as in the reference client.
+      {
+        phase: "started",
+        taskId: "task-bash",
+        type: undefined,
+        parent: "toolu_bash",
+        status: undefined,
+      },
+      {
+        phase: "notification",
+        taskId: "task-bash",
+        type: undefined,
+        parent: "toolu_bash",
+        status: "completed",
+      },
+      {
+        phase: "notification",
+        taskId: "task-agent",
+        type: "general-purpose",
+        parent: "toolu_agent",
+        status: "completed",
+      },
+    ]);
   } finally {
     await fixture.dispose();
   }

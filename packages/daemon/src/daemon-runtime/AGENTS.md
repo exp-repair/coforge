@@ -48,16 +48,15 @@ Rules for one Workspace child's runtime in `src/daemon-runtime/`. They extend
   deadline. Session/usage bookkeeping and transport progress do not establish readiness.
   Real turn Activity or an outcome closes the deadline; timeout reports an error and tears
   down that launch. Stop, exit, and daemon shutdown cancel the deadline.
-- After a successful current-generation `notify`, ordinary live Message
-  delivery and concrete wake/resume batches report `Message received` Activity
-  with detail kind `message_received`. Summary-only recovery and deduplicated
-  inputs do not report it.
+- After a successful current-generation `notify`, ordinary live Message delivery and concrete
+  wake/resume batches report `Message received` Activity with detail kind `message_received`.
+  Summary-only recovery and deduplicated inputs do not report it.
 - `runtime.ts` publishes that best-effort Activity before the live delivery
   ACK. An observer failure must not reject accepted input.
-- `agent-activity-publisher.ts` is the one place Activity gets its launch and
-  sequence metadata, the stopping-launch mute, and the busy heartbeat; its last
-  busy Activity is the daemon's mid-turn evidence (`busyAgents`, probes). A
-  probe reply is never busy evidence.
+- `agent-activity-publisher.ts` is the one place Activity gets its launch and sequence metadata,
+  the stopping-launch mute, and the busy heartbeat; its last busy Activity is the daemon's mid-turn
+  evidence (`busyAgents`, probes), a quiet turn's `Waiting for N background task(s)` included until
+  its last task ends. A probe reply is never busy evidence.
 - `runtime.ts` routes thread targets to the existing Agent session and
   canonicalizes short channel/DM thread targets. Threads never create sessions
   or processes.

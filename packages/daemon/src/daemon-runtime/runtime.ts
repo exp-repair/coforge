@@ -24,7 +24,10 @@ import {
   type RuntimePhase,
 } from "#src/agent-runtime/runtime-phases";
 import { ToolCallLedger } from "#src/agent-runtime/tool-call-ledger";
-import { subagentProgressDetail } from "#src/agent-runtime/subagent-progress-activity";
+import {
+  OutstandingBackgroundTasks,
+  subagentProgressDetail,
+} from "#src/agent-runtime/subagent-progress-activity";
 import {
   buildRuntimeErrorActivity,
   buildRuntimeErrorFingerprintFenceActivity,
@@ -289,6 +292,8 @@ type ActivityLaunch = PublishedActivityLaunch & {
   progress?: ProviderProgress;
   /** The launch's open tool calls, and the outcome each one's end reports. */
   toolCalls?: ToolCallLedger;
+  /** Background tasks started and not yet ended; they outlive their turn, never this launch. */
+  backgroundTasks?: OutstandingBackgroundTasks;
   // The most recent `error` event not yet resolved by a `completed` event, if any (cleared on
   // `completed`). Read by the process-exit handler to decide `runtime_crashed` vs `idle` wording
   // — `AgentSession.onExit` itself carries no exit code/signal, so this is the only fact the
@@ -2231,6 +2236,7 @@ export class DaemonRuntime {
       launch.progress = progress;
       const toolCalls = new ToolCallLedger();
       launch.toolCalls = toolCalls;
+      launch.backgroundTasks = new OutstandingBackgroundTasks();
       const unsubscribe = runtime.session.subscribe((event) => {
         progress.observe();
         toolCalls.observe(event);
@@ -2604,22 +2610,26 @@ export class DaemonRuntime {
       return;
     }
     if (event.type === "subagent-progress") {
-      // Shown only while this launch's turn is busy: a background subagent can report after the
-      // turn ended, and a busy kind would wake an idle Agent. A repeat of the row just shown
-      // (one per subagent tool call) adds nothing.
+      // Counted whether or not its row is shown: a background task outlives its turn.
+      launch.backgroundTasks?.observe(event);
+      // Shown only while this launch is busy: in a turn, or after one that is waiting for its
+      // background tasks (`#showQuietTurn`). Anything later would wake an idle Agent. A
+      // repeat of the row just shown (one per subagent tool call) adds nothing.
       const last = this.#activityPublisher.lastBusy(agentId);
       if (last?.launch !== launch) return;
       const detail = subagentProgressDetail(event);
       if (
-        last.activity.detailKind === AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY &&
-        last.activity.detail === detail
+        last.activity.detailKind !== AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY ||
+        last.activity.detail !== detail
       )
-        return;
-      publish(
-        agentId,
-        launch,
-        this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY, "info", detail),
-      );
+        publish(
+          agentId,
+          launch,
+          this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY, "info", detail),
+        );
+      // After the turn, an ended task shortens the wait, and the last one ends it Idle. Runs
+      // even when the row repeated the one before, so a wait never outlives its tasks.
+      if (event.taskStatus) this.#reconcileIdleTurn(agentId, launch);
       return;
     }
     if (event.type === "progress") {
@@ -2722,19 +2732,21 @@ export class DaemonRuntime {
           if (identity) await this.#agentSessions.update(agentId, launch.launchId, identity);
         })
         .catch(() => {});
-    if (!alreadyExplained)
-      publish(
-        agentId,
-        launch,
-        event.status === "failed"
-          ? {
-              ...this.#runtimeErrorActivity(agentId, "Agent runtime failed."),
-              runtimeError: runtimeFailureDiagnostic("turn failure"),
-            }
-          : event.status === "interrupted"
-            ? this.#interruptedActivity(agentId)
-            : this.#idleActivity(agentId),
-      );
+    if (event.status === "completed") this.#showQuietTurn(agentId, launch, publish);
+    else {
+      if (!alreadyExplained)
+        publish(
+          agentId,
+          launch,
+          event.status === "failed"
+            ? {
+                ...this.#runtimeErrorActivity(agentId, "Agent runtime failed."),
+                runtimeError: runtimeFailureDiagnostic("turn failure"),
+              }
+            : this.#interruptedActivity(agentId),
+        );
+      this.systemCleaner.onAgentWorkingToIdle(agentId);
+    }
     if (collectorFailReason && this.#collectSkillAgents.has(agentId))
       void this.#failCollectorRunningSlots(agentId, collectorFailReason).catch(() => {});
     void this.drainAppInboxNotices(agentId).catch(() => {});
@@ -3609,6 +3621,29 @@ export class DaemonRuntime {
       this.#activityPublisher.publish(agentId, activityLaunch, this.#interruptedActivity(agentId));
   }
 
+  /**
+   * Shows a turn that ended without an error, as the reference client does: still working while
+   * tasks it started run in the background, otherwise Idle, which ends the Agent's working
+   * stretch (`SystemCleaner.onAgentWorkingToIdle`).
+   */
+  #showQuietTurn(
+    agentId: string,
+    launch: ActivityLaunch,
+    publish: (agentId: string, launch: ActivityLaunch, activity: ActivityDraft) => void,
+  ): void {
+    const waiting = launch.backgroundTasks?.quietDetail();
+    if (waiting) {
+      publish(
+        agentId,
+        launch,
+        this.#activity(agentId, AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY, "info", waiting),
+      );
+      return;
+    }
+    publish(agentId, launch, this.#idleActivity(agentId));
+    this.systemCleaner.onAgentWorkingToIdle(agentId);
+  }
+
   /** Restore observation and delivery gating only; this is no proof of a turn outcome. */
   #reconcileIdleTurn(agentId: string, launch: ActivityLaunch): boolean {
     if (
@@ -3616,12 +3651,24 @@ export class DaemonRuntime {
       this.#agentProcessManager.session(agentId)?.hasLiveTurn !== false
     )
       return false;
+    // A turn already showing its wait for background tasks stays as it is: the heartbeat keeps
+    // that warm until a task ends.
+    const waiting = launch.backgroundTasks?.quietDetail();
+    const shown = this.#activityPublisher.lastBusy(agentId)?.activity;
+    if (
+      waiting &&
+      shown?.detailKind === AGENT_ACTIVITY_DETAIL_KIND.SUBAGENT_ACTIVITY &&
+      shown.detail === waiting
+    )
+      return false;
     // Preserve output accepted while the turn was live before publishing its final Idle.
     // Otherwise the pending trajectory timer could publish it after Idle and rearm Busy.
     launch.trajectory?.flush();
     this.#disposePhases(agentId);
     if (this.#isWorking(agentId)) {
-      this.#activityPublisher.publish(agentId, launch, this.#idleActivity(agentId));
+      this.#showQuietTurn(agentId, launch, (id, source, activity) =>
+        this.#activityPublisher.publish(id, source, activity),
+      );
       this.#releaseTurnEndHolds(agentId);
     }
     return true;
@@ -3646,7 +3693,6 @@ export class DaemonRuntime {
     // turn rather than racing the notice that just started it.
     this.#releaseHeldAppItems(agentId);
     this.#releaseFallbackNotices(agentId);
-    this.systemCleaner.onAgentWorkingToIdle(agentId);
   }
 
   #sendAgentStatus(agentId: string, status: "active" | "inactive"): void {

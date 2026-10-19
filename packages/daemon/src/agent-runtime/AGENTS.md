@@ -8,6 +8,8 @@ Rules for Agent lifecycle, control, Session state, and Activity in
 - Agent lifecycle status values are `active` and `inactive` only. Starting,
   tool use, turns, commands, file operations, warnings, and provider errors are
   Activity records, never additional statuses.
+- `subagent-progress-activity.ts` owns task row wording and `OutstandingBackgroundTasks`: a
+  launch's tasks without a terminal notification, by task id, and the wait a quiet turn shows.
 - `activity-trajectory.ts` owns launch-local display-delta coalescing (350 ms),
   boundary flushing, bounded retention, and assembled-text redaction. Adapters
   supply only official display events and explicit lineage, never raw

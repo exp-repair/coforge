@@ -1359,7 +1359,7 @@ test("stopAgent does not report runtime_interrupted when the Agent was idle", as
   }
 });
 
-test("subagent progress shows each new phase once while the turn is busy, and nothing after it", async () => {
+test("subagent progress shows each new phase once while the turn is busy, and nothing untracked after it", async () => {
   const { runtime, activities, emitEvent } = await harness();
   try {
     emitEvent({ type: "progress" });
@@ -1380,11 +1380,251 @@ test("subagent progress shows each new phase once while the turn is busy, and no
         "Subagent started",
       ].map((detail) => ({ detailKind: "subagent_activity", level: "info", detail })),
     );
-    // A background subagent can report after the turn ends; it must not wake an idle Agent.
+    // None of these named a task, so none is outstanding: the turn ends Idle, and a late report
+    // about a task the daemon never counted must not wake the idle Agent.
     emitEvent({ type: "completed", status: "completed" });
+    expect(activities.at(-1)).toMatchObject({ detailKind: "idle" });
     activities.length = 0;
     emitEvent({ type: "subagent-progress", phase: "notification", ...lineage });
     expect(activities).toHaveLength(0);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+/** A provider whose session reports a live turn until the test ends it, as Claude Code does; a
+ * notice starts a new turn. */
+function liveTurnProvider() {
+  const state = { live: true, listener: (_event: AgentRuntimeEvent): void => undefined };
+  const notices: string[] = [];
+  const provider: CodeAgentProvider = {
+    provider: "pi",
+    async createAgentSession() {
+      state.live = true;
+      return {
+        ...sessionSpy(),
+        get hasLiveTurn() {
+          return state.live;
+        },
+        subscribe(next) {
+          state.listener = next;
+          return () => undefined;
+        },
+        async notify(text) {
+          notices.push(text);
+          state.live = true;
+        },
+      };
+    },
+  };
+  return {
+    provider,
+    notices,
+    emit(event: AgentRuntimeEvent) {
+      state.listener(event);
+    },
+    /** The provider's turn ends; with `completed: false` it reports no outcome. */
+    endTurn({ completed = true }: { completed?: boolean } = {}) {
+      state.live = false;
+      if (completed) state.listener({ type: "completed", status: "completed" });
+    },
+  };
+}
+
+const shown = (activities: AgentActivity[]) =>
+  activities.map(({ detailKind, detail }) => `${detailKind}: ${detail}`);
+
+const explore = { subagentType: "Explore", parentToolUseId: "toolu_explore" };
+
+/** Starts a turn that leaves one background subagent task running. */
+function startTaskTurn(live: ReturnType<typeof liveTurnProvider>, taskId = "task-1") {
+  live.emit({ type: "progress" });
+  live.emit({ type: "subagent-progress", phase: "started", taskId, ...explore });
+}
+
+test("a turn that ends with background tasks outstanding stays working until the last one finishes", async () => {
+  const live = liveTurnProvider();
+  const { runtime, activities } = await harness(live.provider);
+  try {
+    // task-1 is a subagent; task-2 a background command, which gets its rows too.
+    startTaskTurn(live);
+    live.emit({
+      type: "subagent-progress",
+      phase: "started",
+      taskId: "task-2",
+      parentToolUseId: "toolu_bash",
+    });
+    activities.length = 0;
+    live.endTurn();
+    expect(shown(activities)).toEqual(["subagent_activity: Waiting for 2 background tasks"]);
+    activities.length = 0;
+    // A waiting Agent still shows what its tasks report.
+    live.emit({ type: "subagent-progress", phase: "progress", taskId: "task-1", ...explore });
+    live.emit({
+      type: "subagent-progress",
+      phase: "notification",
+      taskId: "task-1",
+      taskStatus: "completed",
+      ...explore,
+    });
+    expect(shown(activities)).toEqual([
+      "subagent_activity: Subagent working (Explore)",
+      "subagent_activity: Subagent completed (Explore)",
+      "subagent_activity: Waiting for 1 background task",
+    ]);
+    activities.length = 0;
+    live.emit({
+      type: "subagent-progress",
+      phase: "notification",
+      taskId: "task-2",
+      taskStatus: "failed",
+      parentToolUseId: "toolu_bash",
+    });
+    expect(shown(activities)).toEqual(["subagent_activity: Subagent failed", "idle: Idle"]);
+    expect(runtime.busyAgents()).toEqual([]);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("only a terminal notification ends a background task", async () => {
+  const live = liveTurnProvider();
+  const { runtime, activities } = await harness(live.provider);
+  jest.useFakeTimers();
+  try {
+    startTaskTurn(live);
+    live.endTurn();
+    activities.length = 0;
+    live.emit({ type: "subagent-progress", phase: "notification", taskId: "task-1", ...explore });
+    // The next heartbeat finds the task still running and shows the wait again.
+    jest.advanceTimersByTime(60_000);
+    expect(shown(activities)).toEqual([
+      "subagent_activity: Subagent update (Explore)",
+      "subagent_activity: Waiting for 1 background task",
+    ]);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("the busy heartbeat keeps a background-task wait warm after the turn has ended", async () => {
+  const live = liveTurnProvider();
+  const { runtime, activities } = await harness(live.provider);
+  jest.useFakeTimers();
+  try {
+    // A repeated start for the same task (a resumed subagent) is still one task.
+    startTaskTurn(live);
+    live.emit({ type: "subagent-progress", phase: "started", taskId: "task-1", ...explore });
+    live.endTurn();
+    activities.length = 0;
+    jest.advanceTimersByTime(60_000);
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      detailKind: "subagent_activity",
+      detail: "Waiting for 1 background task",
+      isHeartbeat: true,
+    });
+    // A restart's runner hold waits for it like any busy Agent.
+    expect(runtime.busyAgents()).toMatchObject([
+      { agentId: "agent-a", detailKind: "subagent_activity" },
+    ]);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a turn found over without an outcome shows its wait for background tasks, not Idle", async () => {
+  const live = liveTurnProvider();
+  const { runtime, activities } = await harness(live.provider);
+  jest.useFakeTimers();
+  try {
+    startTaskTurn(live);
+    live.endTurn({ completed: false });
+    activities.length = 0;
+    jest.advanceTimersByTime(60_000);
+    expect(shown(activities)).toEqual(["subagent_activity: Waiting for 1 background task"]);
+    activities.length = 0;
+    jest.advanceTimersByTime(60_000);
+    expect(activities).toMatchObject([
+      { detail: "Waiting for 1 background task", isHeartbeat: true },
+    ]);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("an activity probe during a background-task wait replays the wait", async () => {
+  const live = liveTurnProvider();
+  const { runtime, activities } = await harness(live.provider);
+  try {
+    startTaskTurn(live);
+    live.endTurn();
+    activities.length = 0;
+    await runtime.handleAgentActivityProbe({
+      protocolMajor: 1,
+      requestId: "probe-request",
+      workspaceId: connection.workspaceId,
+      computerId: connection.computerId,
+      agentId: "agent-a",
+      probeId: "probe-1",
+    });
+    expect(activities).toMatchObject([
+      {
+        detailKind: "subagent_activity",
+        detail: "Waiting for 1 background task",
+        probeId: "probe-1",
+      },
+    ]);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a message during a background-task wait starts a new turn, which ends waiting again", async () => {
+  const live = liveTurnProvider();
+  const { runtime, activities } = await harness(live.provider);
+  try {
+    startTaskTurn(live);
+    live.endTurn();
+    await runtime.handleAgentMessage({
+      protocolMajor: 1,
+      requestId: "request",
+      messageId: "message",
+      deliveryId: "delivery",
+      sequence: 1,
+      workspaceId: connection.workspaceId,
+      conversationId: "conversation",
+      agentId: "agent-a",
+      body: "hello",
+      method: "agent:v1:message:deliver",
+      target: "@agent",
+    });
+    // Delivered as a notice now, not held for the wait to end.
+    expect(live.notices).toHaveLength(1);
+    expect(live.notices[0]).toContain("@agent  new: 1 message");
+    expect(activities.at(-1)).toMatchObject({ detailKind: "message_received" });
+    live.emit({ type: "progress" });
+    activities.length = 0;
+    live.endTurn();
+    expect(shown(activities)).toEqual(["subagent_activity: Waiting for 1 background task"]);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a new launch forgets the previous launch's outstanding background tasks", async () => {
+  const live = liveTurnProvider();
+  const { runtime, activities } = await harness(live.provider);
+  try {
+    startTaskTurn(live);
+    live.endTurn();
+    expect(activities.at(-1)).toMatchObject({ detail: "Waiting for 1 background task" });
+    await runtime.stopAgent("agent-a");
+    await runtime.startAgent("agent-a", config);
+    live.emit({ type: "progress" });
+    activities.length = 0;
+    live.endTurn();
+    expect(shown(activities)).toEqual(["idle: Idle"]);
   } finally {
     await runtime.stop();
   }
