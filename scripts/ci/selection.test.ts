@@ -72,6 +72,7 @@ test("documentation skips application checks, while shared and unknown inputs fa
     "installer-crate",
     "macos-lifecycle",
     "oss-cdn",
+    "reference-computer",
     "release",
     "web",
     "windows-installer",
@@ -131,6 +132,9 @@ test("documentation skips application checks, while shared and unknown inputs fa
   ]);
   expect(selectChecks(["infra/staging/caddy/Caddyfile"], "changes")).toEqual(["deploy", "web"]);
   expect(selectChecks(["scripts/ops/renew-cdn-certificates.sh"], "changes")).toEqual(["cdn-certs"]);
+  expect(selectChecks(["scripts/reference-computer/extract.ts"], "changes")).toEqual([
+    "reference-computer",
+  ]);
   expect(selectChecks(["scripts/release/compile-targets.ts"], "changes")).toEqual([
     "computer",
     "daemon",

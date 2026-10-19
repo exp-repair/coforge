@@ -21,7 +21,9 @@
     "test:ci": "bun test scripts/ci scripts/e2e/computer-setup-harness.test.ts",
     "check:ci": "actionlint && bunx oxfmt --check scripts/ci && bunx oxlint scripts/ci",
     "test:cdn-certs": "bun test scripts/ops/cdn-certificates.test.ts",
-    "check:cdn-certs": "bunx oxfmt --check scripts/ops/cdn-certificates.test.ts && bunx oxlint scripts/ops/cdn-certificates.test.ts && mise exec -- shellcheck scripts/ops/renew-cdn-certificates.sh"
+    "check:cdn-certs": "bunx oxfmt --check scripts/ops/cdn-certificates.test.ts && bunx oxlint scripts/ops/cdn-certificates.test.ts && mise exec -- shellcheck scripts/ops/renew-cdn-certificates.sh",
+    "test:reference-computer": "bun test ./scripts/reference-computer",
+    "check:reference-computer": "bunx oxfmt --check scripts/reference-computer && bunx oxlint scripts/reference-computer"
   },
   "devDependencies": {
     "@alicloud/credentials": "2.4.7",

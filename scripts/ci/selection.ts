@@ -10,6 +10,7 @@ const allChecks = [
   "installer-crate",
   "macos-lifecycle",
   "oss-cdn",
+  "reference-computer",
   "release",
   "web",
   "windows-installer",
@@ -24,9 +25,15 @@ export function selectChecks(paths: string[], track: "changes" | "web" | "local"
   }
   if (track === "local") {
     // Computer publication does not ship the installer crate, which has its own release.
-    return allChecks.filter(
-      (check) => !["cdn-certs", "deploy", "installer-crate", "oss-cdn", "web"].includes(check),
-    );
+    const excluded = [
+      "cdn-certs",
+      "deploy",
+      "installer-crate",
+      "oss-cdn",
+      "reference-computer",
+      "web",
+    ];
+    return allChecks.filter((check) => !excluded.includes(check));
   }
   const checks = new Set<string>();
   for (const path of paths) {
@@ -72,6 +79,9 @@ export function selectChecks(paths: string[], track: "changes" | "web" | "local"
       affected = ["oss-cdn"];
     } else if (path.startsWith("scripts/ops/")) {
       affected = ["cdn-certs"];
+    } else if (path.startsWith("scripts/reference-computer/")) {
+      // The reference Computer research tool: it ships nothing and no product code imports it.
+      affected = ["reference-computer"];
     } else {
       // SDK, toolchain, CI, lockfiles, and unclassified new paths get full coverage.
       affected = allChecks;
@@ -97,7 +107,7 @@ if (import.meta.main) {
   const checks = selectChecks(paths, track);
   const libraries = checks.filter((check) => ["coforge-sdk", "agent", "coforge"].includes(check));
   const contracts = checks.filter((check) =>
-    ["cdn-certs", "ci", "deploy", "release", "oss-cdn"].includes(check),
+    ["cdn-certs", "ci", "deploy", "release", "oss-cdn", "reference-computer"].includes(check),
   );
   const jobs = [
     "changes",

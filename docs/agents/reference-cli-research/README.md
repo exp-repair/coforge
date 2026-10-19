@@ -8,8 +8,7 @@ reusing a version from an earlier note. Do not substitute an npm package.
 The npm registry still hosts `@botiverse/raft-computer` (last 0.0.70) and
 `@botiverse/raft-daemon` (1.0.17). Those are older, differently packaged
 builds. Their command surface, lifecycle code, and contracts are not evidence
-for the current product. Use them only to confirm that the source is esbuild
-output with paths preserved.
+for the current product.
 
 The reference Computer is the closest shipped analogue to `coforge-computer`:
 one native executable that hosts the human-facing control-plane CLI, the
@@ -20,9 +19,11 @@ private, so the source is recovered from the shipped binary.
 
 ## Topics
 
-- [Recovering the binary and its source](recovering-the-binary.md): how to
-  resolve the latest release from the official metadata, verify its hash, cut
-  the JS bundle out of the single-executable file, and split it by path.
+- [Recovering the binary and its source](recovering-the-binary.md): the
+  `scripts/reference-computer/extract.ts` tool that resolves the latest release
+  from the official metadata, verifies its hashes, decodes the scripts out of
+  the single-executable file, splits them by path, and records provenance; and
+  the steps it performs.
 - [What the extracted tree contains](source-tree.md): the package layout, the
   agent-facing `raft` command tree, the human-facing `raft-computer` commands,
   and where to start reading.
