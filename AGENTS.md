@@ -163,12 +163,8 @@ These instructions apply to the entire repository.
 - The repository keeps no separate glossary. Do not create `CONTEXT.md`, even when `domain-modeling` suggests one.
 - Use `code-review` from an independent context with an explicit fixed point. The coordinator must include this instruction in every Standards and Spec reviewer brief: perform the assigned review directly; do not invoke `code-review` again or spawn additional reviewers.
 - Use `coforge-release` when inspecting or executing a cloud test deployment, publishing a local Computer installation candidate assembled from the `coforge-computer` and `coforge-daemon` packages, preparing or executing an exact-artifact production promotion, verifying release evidence, or rolling back. [`docs/release/README.md`](docs/release/README.md) is the overview of the canonical release contract, with one topic file per concern under `docs/release/`; the Skill is only its execution layer.
-- When comparing CoForge with the reference Computer, the reference is its
-  latest shipped binary, resolved when the research starts, not an npm release
-  or a version copied from an earlier note. Read
-  [the reference Computer research guide](docs/agents/reference-cli-research/README.md)
-  first; it records how to recover its source, and requires citing the version
-  examined.
+- Use `coforge-verify` before reporting a user-visible or runtime change done or pushing it to `main`: proof is the feature exercised in the running product with its outcome recorded under `.amp/e2e/<feature>/` and cited in the commit or CR, never a build, a test run, or self-report. Its Feature Map under `.agents/skills/coforge-verify/features/` says how to reach and drive each feature; update an entry in the same change that alters how its feature is reached or controlled.
+- When comparing CoForge with the reference Computer, the reference is its latest shipped binary, resolved when the research starts, not an npm release or a version copied from an earlier note. Read [the reference Computer research guide](docs/agents/reference-cli-research/README.md) first; it records how to recover its source, and requires citing the version examined.
 - The engineering skills do not yet have an approved issue-tracker configuration. Until `docs/agents/issue-tracker.md` exists, give `code-review` an explicit spec source; if none is available, ask the requester instead of invoking an unavailable setup skill or inferring a tracker workflow.
 
 ## Architecture invariants
