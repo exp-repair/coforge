@@ -53,7 +53,8 @@ Rules for one Workspace child's runtime in `src/daemon-runtime/`. They extend
   ACK. An observer failure must not reject accepted input.
 - `agent-activity-publisher.ts` is the one place Activity gets its launch and
   sequence metadata, the stopping-launch mute, and the busy heartbeat; its last
-  busy Activity is the daemon's mid-turn evidence (`busyAgents`, probes).
+  busy Activity is the daemon's mid-turn evidence (`busyAgents`, probes). A
+  probe reply is never busy evidence.
 - `runtime.ts` routes thread targets to the existing Agent session and
   canonicalizes short channel/DM thread targets. Threads never create sessions
   or processes.

@@ -464,6 +464,37 @@ test("busy Agent replies to an activity probe with the remembered activity and r
   }
 });
 
+test("a heartbeat after a busy probe reply re-sends the turn's own frame, without the probe id", async () => {
+  const { runtime, activities, emit } = await harness();
+  jest.useFakeTimers();
+  try {
+    activities.length = 0;
+    emit({ detailKind: "tool_started", level: "info", detail: "Read" });
+    const busySince = runtime.busyAgents()[0]!.busySinceMs;
+    jest.advanceTimersByTime(30_000);
+    await runtime.handleAgentActivityProbe({
+      protocolMajor: 1,
+      requestId: "probe-request-4",
+      workspaceId: connection.workspaceId,
+      computerId: connection.computerId,
+      agentId: "agent-a",
+      probeId: "probe-4",
+    });
+    expect(activities[1]).toMatchObject({ detailKind: "tool_started", probeId: "probe-4" });
+    // The reply is no new busy evidence: the turn is still busy since its own frame.
+    expect(runtime.busyAgents()).toEqual([
+      { agentId: "agent-a", detailKind: "tool_started", busySinceMs: busySince },
+    ]);
+
+    jest.advanceTimersByTime(60_000);
+    expect(activities).toHaveLength(3);
+    expect(activities[2]).toMatchObject({ detailKind: "tool_started", isHeartbeat: true });
+    expect(activities[2]!.probeId).toBeUndefined();
+  } finally {
+    await runtime.stop();
+  }
+});
+
 test("idle launched Agent replies to an activity probe with idle", async () => {
   const { runtime, activities, emit } = await harness();
   jest.useFakeTimers();

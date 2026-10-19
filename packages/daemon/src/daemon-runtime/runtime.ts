@@ -3139,10 +3139,12 @@ export class DaemonRuntime {
   }
 
   /**
-   * Answers a server-side liveness probe with the Agent's real current activity: the remembered
-   * last busy activity when one is live for the current launch, otherwise idle when the Agent is
-   * launched but not busy. An Agent that is not running at all gets no reply; the process presence
-   * lease already tells the server the process is gone. Never mutates any other runtime state.
+   * Answers a server-side liveness probe with the Agent's real current activity, first match wins:
+   * `Message received` while a message delivered to it waits unread in its attention (unless the
+   * fingerprint fence holds its deliveries), the starting frame while its launch starts, the
+   * remembered last busy activity when one is live for the current launch, otherwise idle. An
+   * Agent that is not running at all gets no reply; the process presence lease already tells the
+   * server the process is gone. Never mutates any other runtime state.
    */
   async handleAgentActivityProbe(probe: AgentActivityProbe): Promise<void> {
     this.#assertOwnIntent(probe);
@@ -3156,6 +3158,33 @@ export class DaemonRuntime {
         agent_id: probe.agentId,
         probe_id: probe.probeId,
         outcome: "skipped",
+      });
+      return;
+    }
+    const unread = this.#messageAttention.unreadDeliveries(probe.agentId);
+    const hold = this.#deliveryQueue.explicitHold(probe.agentId);
+    if (unread.length && hold !== "fingerprint_fence") {
+      logger.info("Activity probe answered for an Agent with unread messages", {
+        event: "agent_activity_probe:pending_delivery",
+        request_id: probe.requestId,
+        workspace_id: probe.workspaceId,
+        computer_id: probe.computerId,
+        agent_id: probe.agentId,
+        probe_id: probe.probeId,
+        launch_id: launch.launchId,
+        target_count: unread.length,
+        message_count: unread.reduce((sum, target) => sum + target.count, 0),
+        ...(hold ? { hold_reason: hold } : {}),
+      });
+      this.#activityPublisher.publish(probe.agentId, launch, {
+        ...this.#activity(
+          probe.agentId,
+          AGENT_ACTIVITY_DETAIL_KIND.MESSAGE_RECEIVED,
+          "info",
+          "Message received",
+          { entries: [] },
+        ),
+        probeId: probe.probeId,
       });
       return;
     }

@@ -171,6 +171,9 @@ export class AgentMessageAttentionIndex {
   readonly #conversationTargets = new Map<string, Map<string, Set<string>>>();
   readonly #attentionConversation = new Map<string, Map<string, string>>();
   readonly #pendingSequences = new Map<string, Map<string, Set<number>>>();
+  /** The pending sequences that are a Memory Agent's ordinary channel updates: observed in a
+   * batch, not delivered to the Agent as messages awaiting it. Pruned with `#pendingSequences`. */
+  readonly #observedSequences = new Map<string, Map<string, Set<number>>>();
   /** The newest unreviewed deliveries per Agent and target, with the moment the daemon learned
    * about each. Kept so a locally decided freshness hold can show the Agent the same bounded
    * window the server's hold would have shown — and so the hold can count that window as
@@ -280,6 +283,13 @@ export class AgentMessageAttentionIndex {
     }
     const current = this.#recordAttention(message);
     if (this.#isOrdinaryMemoryUpdate(message)) {
+      const observed =
+        this.#observedSequences.get(message.agentId) ?? new Map<string, Set<number>>();
+      observed.set(
+        message.target,
+        (observed.get(message.target) ?? new Set<number>()).add(message.sequence),
+      );
+      this.#observedSequences.set(message.agentId, observed);
       this.logDecision(message, "held");
       this.acknowledgeCustody(message);
       await this.#memoryUpdates.add(message);
@@ -1067,6 +1077,8 @@ export class AgentMessageAttentionIndex {
   #settlePending(agentId: string, target: string, settled: (sequence: number) => boolean): void {
     const pending = this.#pendingSequences.get(agentId)?.get(target);
     if (pending) for (const sequence of pending) if (settled(sequence)) pending.delete(sequence);
+    const observed = this.#observedSequences.get(agentId)?.get(target);
+    if (observed) for (const sequence of observed) if (settled(sequence)) observed.delete(sequence);
     const byTarget = this.#pendingWindow.get(agentId);
     const entries = byTarget?.get(target);
     if (byTarget && entries) {
@@ -1167,6 +1179,19 @@ export class AgentMessageAttentionIndex {
 
   modelSeenSequence(agentId: string, target: string): number {
     return this.#consumedState(agentId).targets.get(target)?.seq ?? 0;
+  }
+
+  /** How many messages delivered to the Agent wait unread, per target: pending attention without a
+   * Memory Agent's observed channel updates, which wait for its own batched read, not for it. */
+  unreadDeliveries(agentId: string): { target: string; count: number }[] {
+    const observed = this.#observedSequences.get(agentId);
+    const unread: { target: string; count: number }[] = [];
+    for (const [target, pending] of this.#pendingSequences.get(agentId) ?? []) {
+      let count = 0;
+      for (const sequence of pending) if (!observed?.get(target)?.has(sequence)) count++;
+      if (count) unread.push({ target, count });
+    }
+    return unread;
   }
 
   /** Messages the Agent has not been shown yet for this exact target. A target with no attention
@@ -1283,6 +1308,7 @@ export class AgentMessageAttentionIndex {
     this.#conversationTargets.delete(agentId);
     this.#attentionConversation.delete(agentId);
     this.#pendingSequences.delete(agentId);
+    this.#observedSequences.delete(agentId);
     this.#pendingWindow.delete(agentId);
   }
 
@@ -1303,6 +1329,7 @@ export class AgentMessageAttentionIndex {
     this.#memoryUpdates.clearTarget(agentId, target);
     this.#forgetConversation(agentId, target);
     this.#pendingSequences.get(agentId)?.delete(target);
+    this.#observedSequences.get(agentId)?.delete(target);
     this.#pendingWindow.get(agentId)?.delete(target);
     const byTarget = this.#attention.get(agentId);
     byTarget?.delete(target);

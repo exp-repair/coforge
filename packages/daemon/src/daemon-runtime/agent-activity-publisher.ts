@@ -121,6 +121,13 @@ export class AgentActivityPublisher<L extends PublishedActivityLaunch> {
     if (TERMINAL_ACTIVITY_DETAIL_KINDS.has(activity.detailKind)) {
       this.forgetBusy(agentId);
     } else if (BUSY_ACTIVITY_DETAIL_KINDS.has(activity.detailKind)) {
+      // A probe reply describes the Agent; it is no new busy evidence, and only re-arms the
+      // heartbeat of a busy turn already remembered for this launch.
+      if (activity.probeId) {
+        if (this.#lastBusy.get(agentId)?.launch === launch)
+          this.#scheduleHeartbeat(agentId, launch);
+        return;
+      }
       if (!activity.isHeartbeat) this.#lastBusy.set(agentId, { launch, activity, at: Date.now() });
       this.#scheduleHeartbeat(agentId, launch);
     }

@@ -21,6 +21,7 @@ import { tmpdir, userInfo } from "node:os";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { DaemonRuntime, USAGE_SCAN_READ_TIMEOUT_MS } from "#src/daemon-runtime/runtime";
+import { ACTIVITY_HEARTBEAT_MS } from "#src/daemon-runtime/agent-activity-publisher";
 import { ClaudeCodeProvider } from "#src/code-agent/claude-code/provider";
 import { RUNTIME_ERROR_DELIVERY_BACKOFF_BASE_MS } from "#src/agent-runtime/runtime-error-recovery";
 import { RuntimeExecutableNotFoundError } from "#src/platform/runtime-executable-not-found";
@@ -9598,6 +9599,7 @@ describe("Agent delivery queue", () => {
     acks = ackGate(0),
     stateDirectory?: string,
     onActivity?: (activity: import("@lrm/coforge-sdk/internal").AgentActivity) => void,
+    agentConfig: Partial<AgentRuntimeConfig> = {},
   ) {
     const credentials = new InMemoryDaemonCredentialStore();
     await credentials.save(connection.workspaceId, connection.computerId, "token-a");
@@ -9628,7 +9630,7 @@ describe("Agent delivery queue", () => {
       stateDirectory,
     );
     await runtime.start(connection);
-    await runtime.startAgent("agent-a", { ...config, provider });
+    await runtime.startAgent("agent-a", { ...config, provider, ...agentConfig });
     return {
       runtime,
       fake,
@@ -10000,6 +10002,234 @@ describe("Agent delivery queue", () => {
       await fake.waitForNotices(1);
       await acks.done;
       expect(fake.notices).toHaveLength(1);
+    });
+  });
+
+  describe("activity probe with messages the Agent has not read", () => {
+    afterEach(() => jest.useRealTimers());
+
+    const probe = (runtime: DaemonRuntime, probeId: string) =>
+      runtime.handleAgentActivityProbe({
+        protocolMajor: 1,
+        requestId: `request-${probeId}`,
+        workspaceId: connection.workspaceId,
+        computerId: connection.computerId,
+        agentId: "agent-a",
+        probeId,
+      });
+
+    /** A launched Agent that was told about one message, ended its turn, and has not read it. */
+    async function idleWithUnreadMessage() {
+      const acks = ackGate(1);
+      const activities: import("@lrm/coforge-sdk/internal").AgentActivity[] = [];
+      const harness = await deliveryQueueHarness("pi", acks, undefined, (activity) =>
+        activities.push(activity),
+      );
+      await harness.deliver(1);
+      await acks.done;
+      harness.fake.emit({ type: "completed", status: "completed" });
+      expect(activities.at(-1)?.detailKind).toBe(AGENT_ACTIVITY_DETAIL_KIND.IDLE);
+      return { ...harness, activities };
+    }
+
+    test("an idle Agent with an unread message answers Message received", async () => {
+      const { runtime, activities } = await idleWithUnreadMessage();
+      try {
+        await probe(runtime, "probe-1");
+        expect(activities.at(-1)).toMatchObject({
+          agentId: "agent-a",
+          detailKind: AGENT_ACTIVITY_DETAIL_KIND.MESSAGE_RECEIVED,
+          level: "info",
+          detail: "Message received",
+          probeId: "probe-1",
+          entries: [],
+        });
+      } finally {
+        await runtime.stop();
+      }
+    });
+
+    test("that answer is no busy evidence: no busy Agent is reported and no heartbeat follows", async () => {
+      const { runtime, activities } = await idleWithUnreadMessage();
+      jest.useFakeTimers();
+      try {
+        await probe(runtime, "probe-2");
+        expect(activities.at(-1)?.detailKind).toBe(AGENT_ACTIVITY_DETAIL_KIND.MESSAGE_RECEIVED);
+        const replied = activities.length;
+        expect(runtime.holdRunners(RUNNER_HOLD_REASONS.WORKSPACE_RESTART)).toEqual([]);
+        runtime.releaseRunners();
+        jest.advanceTimersByTime(ACTIVITY_HEARTBEAT_MS * 2);
+        expect(activities).toHaveLength(replied);
+      } finally {
+        await runtime.stop();
+      }
+    });
+
+    test("once the message no longer waits, the probe answers idle again", async () => {
+      const { runtime, activities } = await idleWithUnreadMessage();
+      try {
+        runtime.handleAgentInboxPurge({
+          protocolMajor: 1,
+          requestId: "purge-1",
+          workspaceId: connection.workspaceId,
+          computerId: connection.computerId,
+          agentId: "agent-a",
+          conversationIds: ["conversation-a"],
+          targets: ["@ada"],
+          reason: "member_removed",
+        });
+        await probe(runtime, "probe-3");
+        expect(activities.at(-1)).toMatchObject({
+          detailKind: AGENT_ACTIVITY_DETAIL_KIND.IDLE,
+          probeId: "probe-3",
+        });
+      } finally {
+        await runtime.stop();
+      }
+    });
+
+    test.each([
+      // The third identical failure trips the fingerprint fence: the Agent answers idle, as it
+      // did before it had anything unread, rather than looking busy with what the fence holds.
+      ["the fingerprint fence", "connect ECONNRESET", 3, AGENT_ACTIVITY_DETAIL_KIND.IDLE],
+      // A backoff hold is temporary: the held message is still debt the Agent will be given.
+      [
+        "a runtime error backoff",
+        "connect ECONNRESET",
+        1,
+        AGENT_ACTIVITY_DETAIL_KIND.MESSAGE_RECEIVED,
+      ],
+      [
+        "a rate limit backoff",
+        "429 Too Many Requests",
+        1,
+        AGENT_ACTIVITY_DETAIL_KIND.MESSAGE_RECEIVED,
+      ],
+    ] as const)("a message held behind %s", async (_hold, message, failures, expected) => {
+      const acks = ackGate(1);
+      const activities: import("@lrm/coforge-sdk/internal").AgentActivity[] = [];
+      const { runtime, fake, deliver } = await deliveryQueueHarness(
+        "pi",
+        acks,
+        undefined,
+        (activity) => activities.push(activity),
+      );
+      jest.useFakeTimers();
+      try {
+        for (let failure = 0; failure < failures; failure++) {
+          fake.emit({ type: "error", message });
+          fake.emit({ type: "completed", status: "failed" });
+        }
+        await deliver(1);
+        await acks.done;
+        expect(fake.notices).toEqual([]); // held, not told
+
+        await probe(runtime, "probe-4");
+        expect(activities.at(-1)).toMatchObject({
+          agentId: "agent-a",
+          detailKind: expected,
+          level: "info",
+          probeId: "probe-4",
+        });
+      } finally {
+        await runtime.stop();
+      }
+    });
+
+    test("unread wins over a remembered busy turn, whose heartbeat stays armed", async () => {
+      const acks = ackGate(1);
+      const activities: import("@lrm/coforge-sdk/internal").AgentActivity[] = [];
+      const { runtime, fake, deliver } = await deliveryQueueHarness(
+        "pi",
+        acks,
+        undefined,
+        (activity) => activities.push(activity),
+      );
+      jest.useFakeTimers();
+      try {
+        await deliver(1);
+        await acks.done;
+        fake.emit({
+          type: "activity",
+          activity: {
+            detailKind: AGENT_ACTIVITY_DETAIL_KIND.TOOL_STARTED,
+            level: "info",
+            detail: "Read",
+            observedAtMs: Date.now(),
+          },
+        });
+        expect(runtime.busyAgents()).toMatchObject([
+          { agentId: "agent-a", detailKind: AGENT_ACTIVITY_DETAIL_KIND.TOOL_STARTED },
+        ]);
+
+        await probe(runtime, "probe-5");
+        expect(activities.at(-1)).toMatchObject({
+          detailKind: AGENT_ACTIVITY_DETAIL_KIND.MESSAGE_RECEIVED,
+          probeId: "probe-5",
+        });
+        // The remembered turn is unchanged and its heartbeat still fires, without the probe id.
+        expect(runtime.busyAgents()).toMatchObject([
+          { agentId: "agent-a", detailKind: AGENT_ACTIVITY_DETAIL_KIND.TOOL_STARTED },
+        ]);
+        const replied = activities.length;
+        jest.advanceTimersByTime(ACTIVITY_HEARTBEAT_MS);
+        expect(activities).toHaveLength(replied + 1);
+        expect(activities.at(-1)).toMatchObject({
+          detailKind: AGENT_ACTIVITY_DETAIL_KIND.TOOL_STARTED,
+          isHeartbeat: true,
+        });
+        expect(activities.at(-1)?.probeId).toBeUndefined();
+      } finally {
+        await runtime.stop();
+      }
+    });
+
+    test("a Memory Agent's observed channel updates are not unread debt; a personal mention is", async () => {
+      const activities: import("@lrm/coforge-sdk/internal").AgentActivity[] = [];
+      const { runtime, fake } = await deliveryQueueHarness(
+        "pi",
+        ackGate(0),
+        undefined,
+        (activity) => activities.push(activity),
+        { memoryAgent: true },
+      );
+      // A Memory Agent opens each conversation's session under its control session's identity.
+      Object.assign(fake.session, {
+        readSessionIdentity: async () => ({ sessionId: "session-a", state: "resumable" as const }),
+      });
+      const channelMessage = (sequence: number, mentionsAgent: boolean) =>
+        runtime.handleAgentMessage({
+          protocolMajor: 1,
+          requestId: `request-${sequence}`,
+          messageId: `message-${sequence}`,
+          deliveryId: `delivery-${sequence}`,
+          sequence,
+          workspaceId: connection.workspaceId,
+          conversationId: "conversation-team",
+          agentId: "agent-a",
+          body: `body-${sequence}`,
+          method: "agent:v1:message:deliver",
+          target: "#team",
+          ...(mentionsAgent ? { mentionsAgent: true } : {}),
+        });
+      try {
+        // An ordinary channel update, possibly addressed to another Agent: observed in a batch.
+        await channelMessage(1, false);
+        await probe(runtime, "probe-6");
+        expect(activities.at(-1)).toMatchObject({
+          detailKind: AGENT_ACTIVITY_DETAIL_KIND.IDLE,
+          probeId: "probe-6",
+        });
+
+        await channelMessage(2, true);
+        await probe(runtime, "probe-7");
+        expect(activities.at(-1)).toMatchObject({
+          detailKind: AGENT_ACTIVITY_DETAIL_KIND.MESSAGE_RECEIVED,
+          probeId: "probe-7",
+        });
+      } finally {
+        await runtime.stop();
+      }
     });
   });
 });

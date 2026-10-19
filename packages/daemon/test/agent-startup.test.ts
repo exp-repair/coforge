@@ -328,6 +328,57 @@ test("a liveness probe preserves Starting until actual model readiness", async (
   }
 });
 
+test("a liveness probe answers Message received over Starting while a message waits unread", async () => {
+  const h = await harness();
+  const probe = (probeId: string) =>
+    h.runtime.handleAgentActivityProbe({
+      protocolMajor: 1,
+      requestId: `request-${probeId}`,
+      workspaceId: "workspace-a",
+      computerId: "computer-a",
+      agentId: "agent-a",
+      probeId,
+    });
+  try {
+    await h.start();
+    await h.runtime.handleAgentMessage({
+      protocolMajor: 1,
+      requestId: "request-1",
+      messageId: "message-1",
+      deliveryId: "delivery-1",
+      sequence: 1,
+      workspaceId: "workspace-a",
+      conversationId: "conversation-a",
+      agentId: "agent-a",
+      body: "body-1",
+      method: "agent:v1:message:deliver",
+      target: "@ada",
+    });
+    await probe("probe-1");
+    expect(h.activities.at(-1)).toMatchObject({
+      detailKind: "message_received",
+      detail: "Message received",
+      probeId: "probe-1",
+    });
+
+    // Without the unread message the same launch is still starting.
+    h.runtime.handleAgentInboxPurge({
+      protocolMajor: 1,
+      requestId: "purge-1",
+      workspaceId: "workspace-a",
+      computerId: "computer-a",
+      agentId: "agent-a",
+      conversationIds: ["conversation-a"],
+      targets: ["@ada"],
+      reason: "member_removed",
+    });
+    await probe("probe-2");
+    expect(h.activities.at(-1)).toMatchObject({ detailKind: "starting", probeId: "probe-2" });
+  } finally {
+    await h.runtime.stop();
+  }
+});
+
 test.each(["agent", "daemon"] as const)(
   "%s Stop cancels a startup still awaiting native input without waiting for admission",
   async (kind) => {
