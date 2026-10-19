@@ -84,11 +84,11 @@ These rules apply to `src/features/conversations/`.
   (a loading screen: the list column, the conversation and its composer as skeletons), and the
   sidebar's lists, the open conversation and Saved are read by loaders that run in the browser.
   No loader under `_chat` reads them on the server. A host the server does render that shows a
-  conversation mounts it under `ClientOnly`: the search preview, whose loader reads it with
-  `loadConversationPage` (which does nothing on the server), and the Tasks page's Task popup
-  (`OverviewTaskPopup`), which reads it through `useChannelConversation`. So a row needs no
-  cookie, assumed value or `suppressHydrationWarning` to match server markup, and a conversation
-  may read browser-only sources at render (TanStack DB collections, `localStorage`, the viewport).
+  conversation mounts it under `ClientOnly`: the hosted pane (its hosts' loaders read it with
+  `loadHostedConversation`, a no-op on the server) and the Tasks page's Task popup
+  (`OverviewTaskPopup`, through `useChannelConversation`). So a row needs no cookie, assumed
+  value or `suppressHydrationWarning` to match server markup, and a conversation may read
+  browser-only sources at render (TanStack DB collections, `localStorage`, the viewport).
   - A message time is formatted in the zone `useTimeZone()` gives (the viewer's saved zone, else
     the browser's): pass it to `dayLabel` and `clockLabel`, never omit it.
   - The rail and the loading screen are server-rendered, and a structure that differs between a
@@ -120,7 +120,7 @@ These rules apply to `src/features/conversations/`.
   stream; `use-conversation-sync.ts` owns browser-only deep-link and read-cursor
   synchronization.
 - `conversation-host.tsx` is what a conversation reads from the page hosting
-  it (Chat, the search preview): the viewer's open mode, the Workspace's
+  it (Chat, or the hosted pane): the viewer's open mode, the Workspace's
   channels and the Saved list. A host's loader reads `savedMessagesQuery` into
   the Query cache, which the store starts from. Once hydrated
   the list is a TanStack DB collection (`saved-messages-collection.ts`) on the
@@ -138,15 +138,15 @@ These rules apply to `src/features/conversations/`.
   `useDirectConversation` (`use-conversation-data.ts`), shared by the
   conversation pages and the Tasks page popup. Change a send or read path
   there, not in a route.
-- `conversation-page.tsx` (`ConversationPage`) is a conversation as Chat
-  opens it (tabs, Task board, files, reading), one page for channels and
-  direct messages: each kind supplies only its data, header, conversation and
-  read cursor, and both kinds of DM share one read cursor (`dm:<conversationId>`),
-  so a DM kind supplies only its name, header and conversation. The Chat
-  routes and the search preview both render it, so the two never differ;
-  a host only reads its params and loads through `loadConversationPage`
-  (`conversation-page-loader.ts`). Their address state is
-  `conversationPageSearchShape`, which every host's `validateSearch` spreads.
+- `conversation-page.tsx` (`ConversationPage`) is a conversation as Chat opens it (tabs, Task
+  board, files, reading), one page for channels and direct messages: each kind supplies only its
+  data, header, conversation and read cursor, and both kinds of DM share one read cursor
+  (`dm:<conversationId>`), so a DM kind supplies only its name, header and conversation. Chat's
+  routes and `HostedConversationPane` (`hosted-conversation-pane.tsx`: the search preview and the
+  Activity pane, beside their page's own content) render it, so they never differ. A host loads
+  through `conversation-page-loader.ts` (a pane's, `loadHostedConversation`, with channel names and
+  Saved) and its `validateSearch` spreads `conversationPageSearchShape` (a pane's host also
+  `hostedConversationSearchShape`: `open`, `msg`).
 - `mentionOutsiders` (the channel's people and public Agents outside it) is for
   @-completion only. Never merge it into `mentionables`, which also resolves
   plain `@handle` labels and stored mention tokens. `mentionables` lacks a deleted Agent, so a

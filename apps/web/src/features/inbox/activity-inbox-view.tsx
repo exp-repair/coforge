@@ -54,6 +54,8 @@ import { cn } from "#src/lib/utils";
 import { DeletedAgentBadge } from "#src/features/agents/deleted-agent";
 import { MemberAvatar } from "#src/features/workspaces/member-avatar";
 import { useWorkspaceSlug } from "#src/features/workspaces/workspace-route";
+import type { HostedConversationTarget } from "#src/features/conversations/conversation-page-search";
+import { useBreakpoint } from "#src/hooks/use-breakpoint";
 import { m } from "#src/paraglide/messages";
 import type { ActivityInboxItem } from "#src/server/inbox/activity-inbox.server";
 import {
@@ -69,20 +71,29 @@ import {
   type ActivityInboxPage,
 } from "./activity-inbox-queries";
 import type { ActivityInboxFilter } from "./activity-inbox.schemas";
+import { ActivityConversationEmpty, ActivityConversationPane } from "./activity-conversation-pane";
+import { activityChatLink, activityOpenTarget, openedItemKey } from "./activity-open-target";
 
 const appRoute = getRouteApi("/w/$workspaceSlug");
 
 /**
  * The Activity page: the viewer's channels, direct messages and followed threads with activity
- * they have not marked Done, newest first. A card opens its conversation or thread and reads it;
- * the check on a card marks it Done, which keeps it away until a newer message arrives.
+ * they have not marked Done, newest first. A card opens its conversation or thread and reads it:
+ * from `lg` up, beside the list, which stays on screen with the card marked as the open one (kept
+ * in the URL); below it, in Chat. Nothing opens on its own, since opening reads. The check on a
+ * card marks it Done, which keeps it away until a newer message arrives; the pane stays open.
  */
 export function ActivityInboxView({
   filter,
   onFilterChange,
+  opened,
+  onOpen,
 }: {
   filter: ActivityInboxFilter;
   onFilterChange: (filter: ActivityInboxFilter) => void;
+  /** The conversation the URL has open beside the list, at its jump message and open thread. */
+  opened: HostedConversationTarget | undefined;
+  onOpen: (target: HostedConversationTarget) => void;
 }) {
   const { user, currentWorkspace } = appRoute.useLoaderData();
   const workspaceId = currentWorkspace?.id ?? "";
@@ -104,6 +115,14 @@ export function ActivityInboxView({
       .filter((item) => !seen.has(item.key) && seen.add(item.key));
   }, [query.data]);
   const firstPage = query.data?.pages[0];
+
+  // List and conversation side by side need the width Chat pins them at (`lg`); narrower, a card
+  // opens Chat instead.
+  const wide = useBreakpoint("lg");
+  const currentKey = useMemo(
+    () => (wide ? openedItemKey(items, opened) : undefined),
+    [wide, items, opened],
+  );
 
   const refreshList = useCallback(
     () => queryClient.invalidateQueries({ queryKey: ACTIVITY_INBOX_QUERY_PREFIX }),
@@ -138,8 +157,8 @@ export function ActivityInboxView({
     run();
   }, [markAllRead, loadedAt, refresh]);
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
+  const list = (
+    <div className={cn("flex min-h-0 flex-col", wide ? "w-96 shrink-0" : "min-w-0 flex-1")}>
       <PageHeader
         heading={m.navigation_activity()}
         tabs={
@@ -181,7 +200,7 @@ export function ActivityInboxView({
         ) : items.length === 0 ? (
           <ActivityInboxEmpty filter={filter} onShowAll={() => onFilterChange("all")} />
         ) : (
-          <ol className="flex flex-col gap-2">
+          <ol aria-label={m.navigation_activity()} className="flex flex-col gap-2">
             {items.map((item) => (
               <ActivityInboxCard
                 key={item.key}
@@ -189,6 +208,8 @@ export function ActivityInboxView({
                 filter={filter}
                 actions={actions}
                 viewerId={user.id}
+                current={item.key === currentKey}
+                onOpen={wide ? onOpen : undefined}
               />
             ))}
           </ol>
@@ -200,6 +221,18 @@ export function ActivityInboxView({
           fetchNextPage={query.fetchNextPage}
         />
       </div>
+    </div>
+  );
+  // One tree at every width, so crossing `lg` keeps the list (and its scroll) mounted.
+  return (
+    <div className="flex h-full min-h-0 min-w-0">
+      {list}
+      {wide &&
+        (opened ? (
+          <ActivityConversationPane key={`${opened.kind}:${opened.id}`} target={opened} />
+        ) : (
+          <ActivityConversationEmpty />
+        ))}
     </div>
   );
 }
@@ -461,52 +494,6 @@ function withoutItem(
   };
 }
 
-/**
- * Where a card goes. A mention the viewer was notified of opens at that message, in its thread
- * when it is a reply. Any other item that mentions the viewer opens at its first mention, read or
- * not; otherwise a thread opens in its pane beside its root, scrolled to the first unread reply,
- * and a conversation opens at its first unread message, or its newest one when everything is read.
- */
-function openTarget(
-  workspaceSlug: string,
-  {
-    place,
-    thread,
-    firstUnreadMessageId,
-    firstMentionMessageId,
-    latest,
-    mentionAction,
-  }: ActivityInboxItem,
-) {
-  if (mentionAction)
-    return {
-      to: "/w/$workspaceSlug/channel/$channelId" as const,
-      params: { workspaceSlug, channelId: place.conversationId },
-      search: mentionAction.threadRootId
-        ? { threadRootId: mentionAction.threadRootId, message: mentionAction.threadRootId }
-        : { message: latest.id },
-      hash: mentionAction.threadRootId ? `message-${latest.id}` : undefined,
-    };
-  const anchor = firstMentionMessageId ?? firstUnreadMessageId;
-  const search = thread
-    ? { threadRootId: thread.root.id, message: thread.root.id }
-    : { message: anchor ?? latest.id };
-  const hash = thread && anchor ? `message-${anchor}` : undefined;
-  return place.kind === "channel"
-    ? {
-        to: "/w/$workspaceSlug/channel/$channelId" as const,
-        params: { workspaceSlug, channelId: place.conversationId },
-        search,
-        hash,
-      }
-    : {
-        to: "/w/$workspaceSlug/dm/$dmId" as const,
-        params: { workspaceSlug, dmId: place.conversationId },
-        search,
-        hash,
-      };
-}
-
 /** A message's text rendered as inline Markdown, or its first attachment's name. */
 function Preview({ message }: { message: ActivityInboxItem["latest"] }) {
   if (message.body) return <MessagePreview body={message.body} mentions={message.mentions} />;
@@ -518,16 +505,23 @@ const ActivityInboxCard = memo(function ActivityInboxCard({
   filter,
   actions,
   viewerId,
+  current,
+  onOpen,
 }: {
   item: ActivityInboxItem;
   filter: ActivityInboxFilter;
   actions: ActivityItemActions;
   viewerId: string;
+  /** This card stands for the conversation open beside the list. */
+  current: boolean;
+  /** Opens the card beside the list; undefined when there is no room, so the card opens Chat. */
+  onOpen: ((target: HostedConversationTarget) => void) | undefined;
 }) {
   const router = useRouter();
   const workspaceSlug = useWorkspaceSlug();
-  const target = openTarget(workspaceSlug, item);
-  const href = router.buildLocation(target).publicHref;
+  const target = activityOpenTarget(item);
+  const link = activityChatLink(workspaceSlug, target);
+  const href = router.buildLocation(link).publicHref;
   const unread = item.unreadCount > 0;
   const { place, thread } = item;
   // A DM, and a thread in one, goes by who is on the other side, whether an Agent or a member.
@@ -548,18 +542,42 @@ const ActivityInboxCard = memo(function ActivityInboxCard({
   }
 
   return (
-    <li className="group relative flex items-start gap-2 rounded-xl border border-secondary bg-primary p-3 transition-colors select-none [-webkit-touch-callout:none] hover:bg-secondary">
+    <li
+      className={cn(
+        "group relative flex items-start gap-2 rounded-xl border p-3 transition-colors select-none [-webkit-touch-callout:none] hover:bg-secondary",
+        current ? "border-brand bg-secondary" : "border-secondary bg-primary",
+      )}
+    >
       {/* The card is a React Aria link so the context menu (`MenuTrigger trigger="contextMenu"`)
           can use it as its trigger; `render` hands the element to TanStack's `Link`, which owns
           navigation. Opening a card reads it, like opening the conversation does. */}
       <Dropdown.Root trigger="contextMenu">
         <AriaLink
           href={href}
+          aria-current={current ? "true" : undefined}
           onPress={() => {
             if (unread) actions.read(item);
           }}
           render={(props) =>
-            "href" in props ? <Link {...props} {...target} /> : <span {...props} />
+            "href" in props ? (
+              <Link
+                {...props}
+                {...link}
+                onClick={(event) => {
+                  // With room beside the list a plain click (or Enter) opens the card there, so
+                  // neither `Link` nor React Aria navigates; a modified or middle click still
+                  // opens Chat. React Aria's handler still runs: it ends a keyboard press.
+                  const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+                  if (onOpen && event.button === 0 && !modified) {
+                    event.preventDefault();
+                    onOpen(target);
+                  }
+                  props.onClick?.(event);
+                }}
+              />
+            ) : (
+              <span {...props} />
+            )
           }
           className="min-w-0 flex-1 rounded-lg outline-focus-ring focus-visible:outline-2 focus-visible:outline-offset-2"
         >
