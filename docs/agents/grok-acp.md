@@ -118,22 +118,24 @@ Sources: [official ACP guide](https://docs.x.ai/build/cli/headless-scripting),
 `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`, including `extensions/interject.rs` and
 the `yoloMode` table in `xai-grok-pager/docs/user-guide/15-agent-mode.md`; native
 verification on `1.0.62`).
-Alignment reference: the [reference Computer](reference-cli-research/README.md) 1.0.47
-(artifact target darwin-arm64, release `38026b19-199f-4f13-b044-de5a8f9b5b50`, examined
-2026-10-19; binary sha256
-`34bb347a1f4c58b1bb6a2851f78079a4e7a742b7e832430478619ae8e59604e9`, extracted bundle
-`raft-computer-1.0.47.cjs` sha256
-`f0daae4d98de9138b10f6ce48b91b9ea82e0627c04562531c9b18a1fc988dd8d`). "Core" below is
-the daemon bundle module `packages/daemon/dist/core-D2FAeq9h.js`; "runtime" is
-`node_modules/.pnpm/@botiverse+oar@0.56.0_*/node_modules/@botiverse/oar/dist/runtimes/grok/session.js`
-in the extracted tree. Behaviours aligned with it:
+Alignment reference: the [reference Computer](reference-cli-research/README.md) 1.0.50
+(artifact target darwin-arm64, release `cd67c4a2-20c5-41f4-a59c-f089887d01f7`, examined
+2026-10-19 with `scripts/reference-computer/extract.ts`; SEA asset `computer.cjs`).
+Its Grok driver's protocol behaviour is unchanged from 1.0.47 (release
+`38026b19-199f-4f13-b044-de5a8f9b5b50`, binary sha256
+`34bb347a1f4c58b1bb6a2851f78079a4e7a742b7e832430478619ae8e59604e9`), where the
+alignment was first made. "Core" below is the module labelled
+`packages/daemon/src/drivers/grok.ts` and `grokEventNormalizer.ts` in `computer.cjs`
+(`packages/daemon/dist/core-D2FAeq9h.js` in 1.0.47). Behaviours aligned with it:
 
-- Missing-session replacement: only a `session/load` error whose `data.code` is
-  `FS_NOT_FOUND` starts a fresh session (core `isMissingSessionError`, used by
-  `GrokDriver`; runtime's Grok ACP profile resume-not-found check).
+- Missing-session replacement: a `session/load` error whose `data.code` is
+  `FS_NOT_FOUND` starts a fresh session. The reference's `isMissingSessionError` also
+  accepts "session not found" or "no such file" message text; CoForge deliberately
+  replaces only on the structured code Grok 1.0.62 sends, so a transient failure
+  never discards history.
 - Approval: launch with `--always-approve` plus `yoloMode: true` session metadata,
-  and answer a permission request with its allow-once option (runtime profile
-  arguments and session metadata; core `GrokDriver` auto-approval).
+  and answer a permission request with its allow-once option (core `GrokDriver`
+  launch arguments, session metadata and auto-approval).
 - Refused interjection: the reference reports it as a delivery failure and restores
   the notice for later delivery (core `GrokDriver`, then the process manager's
   async-rejection restore); CoForge sends it through `session/prompt` directly.
