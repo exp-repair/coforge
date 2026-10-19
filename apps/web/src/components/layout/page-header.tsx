@@ -46,11 +46,11 @@ export function PageHeader({
         identity={title}
         actions={actions && <div className="flex items-center gap-2">{actions}</div>}
         tabs={tabs}
-        className="sm:px-6"
+        className="px-page"
       />
     );
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-secondary px-4 sm:px-6">
+    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-secondary px-page">
       {title}
       {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
     </header>
