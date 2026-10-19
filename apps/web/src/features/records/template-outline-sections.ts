@@ -212,6 +212,20 @@ export function parseLevel2Blocks(markdown: string): Level2Block[] {
   return leadingBodyAndBlocks(markdown).blocks;
 }
 
+/** Empty the current H1 page's bodies; keep its H2 titles and every other page. */
+export function resetLeaderFormatPage(content: ReportContent, pageName: string): ReportContent {
+  const normalized = normalizeLeaderFormatTabs(content);
+  const tabs = { ...(normalized.tabs ?? {}) };
+  const current = tabs[pageName];
+  if (!current) return normalized;
+  const blocks = parseLevel2Blocks(current.markdown).map((block) => ({
+    ...block,
+    body: "",
+  }));
+  tabs[pageName] = { markdown: serializeLevel2Blocks(blocks) };
+  return { ...normalized, tabs };
+}
+
 export function serializeLevel2Blocks(blocks: Level2Block[]): string {
   const nodes: OutlineNode[] = [];
   let id = 0;
