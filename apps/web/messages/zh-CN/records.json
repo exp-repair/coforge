@@ -248,7 +248,6 @@
   "records_template_frequency_weekly": "周",
   "records_template_send_friday": "每周五 {time}",
   "records_template_save": "保存",
-  "records_template_create": "创建",
   "records_template_cancel": "取消",
   "records_template_recipients_more": "+{count}",
   "records_side_chat_pin": "钉住侧栏",

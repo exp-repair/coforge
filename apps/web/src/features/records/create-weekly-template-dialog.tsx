@@ -506,7 +506,7 @@ export function CreateWeeklyTemplateDialog({
                     className={RECORDS_PRIMARY_BUTTON_CLASSNAME}
                     isDisabled={saving}
                   >
-                    {editing ? m.records_template_save() : m.records_template_create()}
+                    {m.records_template_save()}
                   </Button>
                 </div>
               </form>
