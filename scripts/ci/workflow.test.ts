@@ -481,6 +481,23 @@ test("Computer withdrawal shares the publication lock and cannot publish a repla
   expect(withdraw.run).not.toContain("publish.ts");
 });
 
+test("a staging publication is numbered against production's latest, never a hand-kept line", async () => {
+  const release = Bun.YAML.parse(await Bun.file(".github/workflows/release-staging.yml").text());
+  expect(release.on.workflow_dispatch.inputs.line).toMatchObject({
+    required: false,
+    type: "string",
+  });
+  const publish = release.jobs.publish.steps.find((step: Step) =>
+    step.name?.startsWith("Build six platforms"),
+  );
+  expect(publish.env.INPUT_VERSION).toBe("${{ inputs.version }}");
+  expect(publish.env.INPUT_LINE).toBe("${{ inputs.line }}");
+  // Production's feed is public: reading its latest needs no credential beyond the staging role's.
+  expect(publish.run).toContain('--production-feed-url "https://releases.coforge.cn"');
+  expect(publish.run).toContain('--line "$INPUT_LINE"');
+  expect(publish.run).not.toContain("${{ inputs.");
+});
+
 test("withdrawal inputs cannot accidentally fall through to a publication", async () => {
   const release = Bun.YAML.parse(await Bun.file(".github/workflows/release-staging.yml").text());
   const guard = release.jobs.publish.steps.find(
@@ -491,6 +508,16 @@ test("withdrawal inputs cannot accidentally fall through to a publication", asyn
     [{}, true],
     [{ INPUT_RESTORE_VERSION: "0.1.3-dev.2" }, false],
     [{ INPUT_WITHDRAW_VERSION: "0.1.4-dev.1" }, false],
+    [
+      {
+        INPUT_LINE: "0.2.0",
+        INPUT_WITHDRAW_VERSION: "0.1.4-dev.1",
+        INPUT_MANIFEST_SHA256: "a".repeat(64),
+        INPUT_RESTORE_VERSION: "0.1.3-dev.2",
+        INPUT_RESTORE_MANIFEST_SHA256: "b".repeat(64),
+      },
+      false,
+    ],
     [
       {
         INPUT_WITHDRAW_VERSION: "0.1.4-dev.1",

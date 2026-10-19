@@ -159,10 +159,14 @@ test("the publishing job uploads every object, writes the manifest after them al
     { method: "PUT", key: MANIFEST },
     { method: "PUT", key: LATEST },
   ]);
-  // It asked whether the version was published before writing anything, and read every object
-  // back, and proved the origin private, before the pointer was touched.
-  expect(fake.calls[0]).toEqual({ method: "HEAD", key: MANIFEST });
-  const pointerCalls = fake.calls.findIndex((call) => call.key === LATEST);
+  // It asked whether the version was published, and read the pointer it must not move back,
+  // before writing anything; and read every object back, and proved the origin private, before the
+  // pointer was written.
+  expect(fake.calls.slice(0, 2)).toEqual([
+    { method: "HEAD", key: MANIFEST },
+    { method: "GET", key: LATEST },
+  ]);
+  const pointerCalls = fake.calls.findIndex((call) => call.method === "PUT" && call.key === LATEST);
   for (const kind of ["GET", "ANONYMOUS_GET"]) {
     for (const key of [...objectKeys, MANIFEST]) {
       const index = fake.calls.findIndex((call) => call.method === kind && call.key === key);

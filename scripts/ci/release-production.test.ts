@@ -149,6 +149,20 @@ test("publication waits for the staging evidence of the same commit and builds e
   }
 });
 
+test("a Computer candidate is checked, without credentials, against production's latest", () => {
+  const verify = computer.jobs.candidate!.steps!.find((step) =>
+    step.run?.includes("production-candidate.ts"),
+  )!;
+  expect(verify.run).toContain(`--production-feed-url=${PRODUCTION_FEED}`);
+  expect(verify.env?.INPUT_STAGING_VERSION).toBe("${{ inputs.staging_version }}");
+  expect(computer.jobs.candidate!.permissions).toEqual({ contents: "read" });
+  // The installer is not ordered against the Computer's production latest.
+  const installerVerify = installer.jobs.candidate!.steps!.find((step) =>
+    step.run?.includes("production-candidate.ts"),
+  )!;
+  expect(installerVerify.run).not.toContain("--production-feed-url");
+});
+
 test("a job that compiles the installer holds no token, and the builds match installer-crate's targets", () => {
   const { build } = installer.jobs;
   expect(build!.permissions).toEqual({ contents: "read" });

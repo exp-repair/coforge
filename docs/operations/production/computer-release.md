@@ -93,14 +93,15 @@ title names the exact version and commit.
    [release notes](../../release/release-notes.md), and test it there:
 
    ```sh
-   gh workflow run release-staging.yml --repo lrm-lab/coforge -f version=0.1.3-dev.1 \
+   gh workflow run release-staging.yml --repo lrm-lab/coforge \
      -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
    ```
 
-   Leave `version` empty to select the configured line's next unused development
-   number. Staging rejects stable or unnumbered version inputs.
-2. Read the commit staging published it from:
-   `curl -s https://releases-staging.coforge.cn/0.1.3-dev.1/manifest.json | jq -r .commit`.
+   The workflow numbers it by the [version rule](../../release/github-actions.md);
+   add `-f line=0.2.0` to start a new minor or major line.
+2. Read the version staging published (`curl -s https://releases-staging.coforge.cn/latest`,
+   say `0.1.5-dev.3`) and the commit it was published from:
+   `curl -s https://releases-staging.coforge.cn/0.1.5-dev.3/manifest.json | jq -r .commit`.
 3. Ensure a compatible installer is already published to production, because
    `install.sh` reads `installer/latest` from the same feed. If a new installer
    is required, publish it first. Its version is `crates/installer/Cargo.toml`'s at the
@@ -112,29 +113,27 @@ title names the exact version and commit.
      -f commit=<installer commit> -f version=<installer version>
    ```
 
-4. Publish the Computer with the approved stable version, the separate
-   staging evidence version, and the staging candidate's release notes (read
+4. Publish the Computer with the approved stable version (the staging version
+   without its `-dev.<N>` suffix), that staging version, and the staging
+   candidate's release notes (read
    from the staging catalog as
    [Release notes](../../release/release-notes.md#production-reuses-the-staging-candidates-notes)
    shows):
 
    ```sh
    gh workflow run release-production.yml --repo lrm-lab/coforge \
-     -f commit=<commit> -f version=0.1.2 -f staging_version=0.1.3-dev.1 \
+     -f commit=<commit> -f version=0.1.5 -f staging_version=0.1.5-dev.3 \
      -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
    ```
 
-Each workflow first checks, without credentials, that the commit is on `main`
-and that staging published that version from it; the Computer workflow also
-requires staging's `latest` to name the selected staging version. Its manifest
-must identify the same approved source commit. The production version need not
-match the staging version; without `staging_version`, the historical same-version
-comparison remains. A failed check stops the
-run before the approval gate.
+Each workflow first checks, without credentials, that the commit is on `main`,
+that staging published that version from it, and (for the Computer) that the
+versions follow the [version rule](../../release/github-actions.md). A failed
+check stops the run before the approval gate.
 
 A release Frank approves without a staging publication adds
-`-f without_staging=true` to both commands; the version must still be stable and
-the commit on `main`.
+`-f without_staging=true` to both commands and omits `staging_version`; the
+version must still be stable and in order, and the commit on `main`.
 
 Roll a bad installer back with
 `gh workflow run release-installer-production.yml -f pointer_only=<version>`.

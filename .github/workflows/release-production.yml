@@ -4,10 +4,11 @@ run-name: Publish Computer ${{ inputs.version }} from ${{ inputs.commit }} to pr
 # Production promotion of the local Computer distribution (docs/release/staging-to-production.md).
 # The feed a build trusts is compiled into it, so production never copies staging's binaries: it
 # builds the approved commit again against https://releases.coforge.cn. The `candidate` job checks
-# that staging's `latest` names the evidence version and that staging published it from this
-# commit. The optional staging_version separates a development candidate from the stable
-# production version. Staging publishes only from `main` and only after the release gates. The `production` GitHub
-# Environment carries the required human reviewer, who approves this exact commit and version.
+# that staging published staging_version from this commit and that version follows the version rule
+# (docs/release/github-actions.md); the run title names version because a run-name expression cannot
+# strip -dev.N. Staging publishes only from `main` and only after the release gates. The
+# `production` GitHub Environment carries the required human reviewer, who approves this exact
+# commit and version.
 # Publish the production installer (release-installer-production.yml) first: install.sh reads
 # `installer/latest` from the same feed.
 on:
@@ -18,17 +19,19 @@ on:
         required: true
         type: string
       version:
-        description: Stable production version, e.g. 0.1.2
+        description: Stable production version, staging_version without its -dev.N suffix (e.g. 0.1.5)
         required: true
         type: string
       staging_version:
-        description: Version staging's latest names; leave empty when it equals the production version
+        description: >-
+          Staging dev build this release promotes, which staging's latest names (e.g. 0.1.5-dev.3);
+          required unless without_staging
         required: false
         type: string
       without_staging:
         description: >-
-          Skip the staging comparison and check the commit and version for shape only. For a
-          release approved without a staging publication.
+          Skip the staging comparison: check the commit and version for shape, and the version against
+          production's latest, only. For a release approved without a staging publication.
         required: false
         type: boolean
         default: false
@@ -103,11 +106,13 @@ jobs:
           flags=()
           if [ "$WITHOUT_STAGING" = true ]; then flags=(--without-staging); fi
           if [ -n "$INPUT_STAGING_VERSION" ]; then flags+=("--staging-version=$INPUT_STAGING_VERSION"); fi
-          bun scripts/release/production-candidate.ts "${flags[@]}" computer \
+          # Production's feed is public: its latest is read anonymously.
+          bun scripts/release/production-candidate.ts "${flags[@]}" \
+            --production-feed-url=https://releases.coforge.cn computer \
             "$INPUT_VERSION" "$INPUT_COMMIT" https://releases-staging.coforge.cn
           # Validated above as 40 hex characters, so it cannot be read as an option.
           git merge-base --is-ancestor "$INPUT_COMMIT" HEAD
-          echo "- Candidate: Computer ${INPUT_VERSION} from ${INPUT_COMMIT}, staging evidence ${INPUT_STAGING_VERSION:-$INPUT_VERSION}, on main" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidate: Computer ${INPUT_VERSION} from ${INPUT_COMMIT}, staging evidence ${INPUT_STAGING_VERSION:-none}, on main" >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Build and publish Computer

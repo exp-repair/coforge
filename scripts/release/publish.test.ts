@@ -21,6 +21,7 @@ import {
   regionFromEndpoint,
   LATEST_OBJECT_KEY,
   manifestObjectKey,
+  movePointer,
   nextDevVersion,
   ossError,
   parseTargets,
@@ -137,6 +138,8 @@ test("publication uploads every object, verifies it by reading the bytes back, a
   const manifestKey = manifestObjectKey(tree.version);
   const expectedSequence = [
     { method: "HEAD", key: manifestKey },
+    // The forward-only gate reads `latest` before anything goes up.
+    { method: "GET", key: LATEST_OBJECT_KEY },
     ...tree.files.filter((key) => key !== manifestKey).map((key) => ({ method: "PUT", key })),
     { method: "PUT", key: manifestKey },
     ...tree.files.map((key) => ({ method: "GET", key })),
@@ -213,6 +216,7 @@ test("a failed object upload never writes latest, and stops before uploading lat
 
   expect(fake.calls).toEqual([
     { method: "HEAD", key: manifestObjectKey(tree.version) },
+    { method: "GET", key: LATEST_OBJECT_KEY },
     { method: "PUT", key: failingKey },
   ]);
   // A publish that dies mid-upload must not leave the manifest behind, or the version would be
@@ -220,7 +224,9 @@ test("a failed object upload never writes latest, and stops before uploading lat
   expect(
     fake.calls.some((call) => call.method === "PUT" && call.key.endsWith("manifest.json")),
   ).toBe(false);
-  expect(fake.calls.some((call) => call.key === LATEST_OBJECT_KEY)).toBe(false);
+  expect(fake.calls.some((call) => call.method === "PUT" && call.key === LATEST_OBJECT_KEY)).toBe(
+    false,
+  );
 });
 
 test("a stalled upload reports the timeout's name, not an opaque HTTP unknown", async () => {
@@ -245,7 +251,9 @@ test("a stalled upload reports the timeout's name, not an opaque HTTP unknown", 
   expect(rejection.message).toMatch(/ResponseTimeoutError/);
 
   // A failed publish must not have advanced `latest` or left the manifest behind.
-  expect(fake.calls.some((call) => call.key === LATEST_OBJECT_KEY)).toBe(false);
+  expect(fake.calls.some((call) => call.method === "PUT" && call.key === LATEST_OBJECT_KEY)).toBe(
+    false,
+  );
   expect(
     fake.calls.some((call) => call.method === "PUT" && call.key.endsWith("manifest.json")),
   ).toBe(false);
@@ -267,6 +275,46 @@ test("republishing a version that already completed is refused before anything i
   // The point of the guard is that a live version's bytes are never touched: the CDN caches
   // `<version>/*` for a year, so a second publish would leave different bytes on different edges.
   expect(fake.calls).toEqual([{ method: "HEAD", key: manifestObjectKey(tree.version) }]);
+});
+
+test("a publication never moves latest back: an older version is refused before anything is uploaded", async () => {
+  const outputDirectory = await tempDir("coforge-publish-backwards-");
+  const tree = await fixtureTree("0.1.4", outputDirectory);
+  const fake = startFakeOssServer({ previousLatest: "0.1.5-dev.2\n" });
+  const connection = fixtureConnection(fake);
+  const client = await createOssClient(connection, CREDENTIALS);
+
+  await expect(uploadReleaseTree(outputDirectory, tree, { client, connection })).rejects.toThrow(
+    /0\.1\.4 is older than the feed's latest 0\.1\.5-dev\.2/,
+  );
+  expect(fake.calls.filter((call) => call.method === "PUT")).toEqual([]);
+  expect(new TextDecoder().decode(fake.peek(LATEST_OBJECT_KEY))).toBe("0.1.5-dev.2\n");
+});
+
+test("a finalize rerun of the version latest already names is not a move back", async () => {
+  const outputDirectory = await tempDir("coforge-publish-finalize-rerun-");
+  const tree = await fixtureTree("0.1.5", outputDirectory);
+  const fake = startFakeOssServer({});
+  const connection = fixtureConnection(fake);
+  const client = await createOssClient(connection, CREDENTIALS);
+  await uploadReleaseTree(outputDirectory, tree, { client, connection });
+
+  await uploadReleaseTree(outputDirectory, tree, { client, connection, allowExisting: true });
+
+  expect(new TextDecoder().decode(fake.peek(LATEST_OBJECT_KEY))).toBe("0.1.5\n");
+});
+
+test("moving a pointer back on purpose (withdrawal, pointer_only) is not a publication", async () => {
+  const fake = startFakeOssServer({
+    previousLatest: "0.1.5\n",
+    preexistingObjects: { "0.1.4/manifest.json": "{}" },
+  });
+  const connection = fixtureConnection(fake);
+  const client = await createOssClient(connection, CREDENTIALS);
+
+  await movePointer({ client, connection, version: "0.1.4" });
+
+  expect(new TextDecoder().decode(fake.peek(LATEST_OBJECT_KEY))).toBe("0.1.4\n");
 });
 
 test("a version left half-uploaded by an earlier failure can still be published", async () => {
@@ -334,6 +382,16 @@ test("a release line takes the smallest dev number the feed has not published, n
   expect(await nextDevVersion("0.1.1", { client })).toBe("0.1.1-dev.2");
 });
 
+test("a release line's search starts at the number it is given, skipping the unused ones below it", async () => {
+  const fake = startFakeOssServer({
+    preexistingKeys: new Set([manifestObjectKey("0.1.5-dev.1"), manifestObjectKey("0.1.5-dev.4")]),
+  });
+  const client = await createOssClient(fixtureConnection(fake), CREDENTIALS);
+
+  expect(await nextDevVersion("0.1.5", { client, from: 5 })).toBe("0.1.5-dev.5");
+  expect(await nextDevVersion("0.1.5", { client })).toBe("0.1.5-dev.2");
+});
+
 test("a dev number left half-uploaded by a failed publish is reused, as a rerun would", async () => {
   const fake = startFakeOssServer({
     preexistingKeys: new Set(["0.1.1-dev.1/linux-x64/coforge-computer.gz"]),
@@ -382,7 +440,9 @@ test("a tampered read-back fails the publish and never writes latest", async () 
     /OSS read-back mismatch: .*manifest\.json/,
   );
 
-  expect(fake.calls.some((call) => call.key === LATEST_OBJECT_KEY)).toBe(false);
+  expect(fake.calls.some((call) => call.method === "PUT" && call.key === LATEST_OBJECT_KEY)).toBe(
+    false,
+  );
   // Every object was still uploaded before the mismatch was caught - only the read-back phase,
   // which runs after every upload, is where this fails.
   expect(
@@ -412,7 +472,7 @@ test("public origin blocks activation even after signed OSS verification succeed
 for (const previousLatest of ["0.1.0-rc.3\n", undefined]) {
   test(`latest OSS read-back failure restores ${previousLatest ? "previous version" : "empty bootstrap"}`, async () => {
     const directory = await tempDir("coforge-selector-gate-");
-    const tree = await fixtureTree("9.9.9-selector-gate", directory);
+    const tree = await fixtureTree("9.9.9-selector.gate", directory);
     const fake = startFakeOssServer({
       previousLatest,
       tamperReadbackKeys: new Set(["latest"]),
@@ -455,7 +515,7 @@ test("private origin network failures are sanitized", async () => {
 
 test("public activated and restored latest fails private origin verification", async () => {
   const directory = await tempDir("coforge-latest-origin-");
-  const tree = await fixtureTree("9.9.9-latest-origin", directory);
+  const tree = await fixtureTree("9.9.9-latest.origin", directory);
   const fake = startFakeOssServer({ previousLatest: "0.1.0-rc.3\n" });
   const connection = fixtureConnection(fake);
   const client = await createOssClient(connection, CREDENTIALS);
@@ -479,7 +539,7 @@ test("public activated and restored latest fails private origin verification", a
 
 test("rollback failure is reported instead of claiming the previous selector is restored", async () => {
   const directory = await tempDir("coforge-rollback-failure-");
-  const tree = await fixtureTree("9.9.9-rollback-failure", directory);
+  const tree = await fixtureTree("9.9.9-rollback.failure", directory);
   const fake = startFakeOssServer({
     previousLatest: "0.1.0-rc.3\n",
     failUploadKeys: new Set(["latest"]),
@@ -608,14 +668,140 @@ test("--dry-run makes no network calls and reports the objects it would publish"
   expect(outcome.latestKey).toBe(LATEST_OBJECT_KEY);
 });
 
-test("--line publishes the line's next dev number, compiled under it, and reports it to the workflow", async () => {
+const PRODUCTION_FEED = "https://releases-production-test.coforge.cn";
+
+/** Answers production's `latest` with `productionLatest`, and hands every other request - the
+ * anonymous private-origin checks - to the real fetch, which reaches the fake OSS. */
+function productionFeed(productionLatest: string): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input) === `${PRODUCTION_FEED}/latest`
+      ? new Response(productionLatest)
+      : fetch(input, init)) as typeof fetch;
+}
+
+/** A staging publication numbered against the production feed `fetchImpl` answers. */
+async function publishStagingBuild(
+  fake: ReturnType<typeof startFakeOssServer>,
+  fetchImpl: typeof fetch,
+  options: Partial<PublishOptions> = {},
+) {
+  const compiledVersions = new Set<string>();
+  const compile = stubCompile();
+  const outcome = await runPublish(
+    {
+      productionFeedUrl: PRODUCTION_FEED,
+      commit: "a".repeat(40),
+      feedUrl: "https://releases-test.coforge.cn",
+      targets: TEST_TARGETS as ReleaseTarget[],
+      bucket: BUCKET,
+      endpoint: fake.baseUrl,
+      region: REGION,
+      dryRun: false,
+      ...options,
+    },
+    {
+      compile: (async (input) => {
+        compiledVersions.add(input.version);
+        return compile(input);
+      }) as CompileFn,
+      resolvePhotonWasm: stubResolvePhotonWasm(),
+      credentials: CREDENTIALS,
+      connection: { endpoint: fake.baseUrl, cname: true, secure: false },
+      fetchImpl,
+    },
+  );
+  return { outcome, compiledVersions: [...compiledVersions] };
+}
+
+const stagingLatest = (fake: ReturnType<typeof startFakeOssServer>) =>
+  new TextDecoder().decode(fake.peek(LATEST_OBJECT_KEY)).trim();
+const uploads = (fake: ReturnType<typeof startFakeOssServer>) =>
+  fake.calls.filter((call) => call.method === "PUT");
+
+test("a staging build is the next dev number of the line after production's latest, compiled under it", async () => {
+  // dev.2 is unused, but below staging's latest dev.3: numbering starts above it.
   const fake = startFakeOssServer({
-    preexistingKeys: new Set([manifestObjectKey("0.1.1-dev.1")]),
+    previousLatest: "0.1.5-dev.3\n",
+    preexistingKeys: new Set([manifestObjectKey("0.1.5-dev.1"), manifestObjectKey("0.1.5-dev.3")]),
+  });
+
+  const { outcome, compiledVersions } = await publishStagingBuild(fake, productionFeed("0.1.4\n"));
+
+  // The version is chosen before compiling: it is baked into the Computer and Daemon binaries.
+  expect(compiledVersions).toEqual(["0.1.5-dev.4"]);
+  expect(outcome.version).toBe("0.1.5-dev.4");
+  expect(stagingLatest(fake)).toBe("0.1.5-dev.4");
+});
+
+test("an explicit line starts a new line, and an explicit version is published as named", async () => {
+  const raised = startFakeOssServer({ previousLatest: "0.1.5-dev.2\n" });
+  const fromLine = await publishStagingBuild(raised, productionFeed("0.1.4"), { line: "0.2.0" });
+  expect(fromLine.outcome.version).toBe("0.2.0-dev.1");
+
+  const explicit = startFakeOssServer({ previousLatest: "0.1.5-dev.2\n" });
+  await publishStagingBuild(explicit, productionFeed("0.1.4"), { version: "0.1.5-dev.11" });
+  expect(stagingLatest(explicit)).toBe("0.1.5-dev.11");
+});
+
+test("a staging build off its line or older than staging's latest is refused before it is compiled", async () => {
+  for (const [options, refusal] of [
+    // A stale line once published 0.1.3-dev.3 after 0.1.4-dev.2.
+    [{ version: "0.1.4-dev.3" }, /0\.1\.4-dev\.3 is not a dev build of line 0\.1\.5/],
+    [
+      { version: "0.1.5-dev.1" },
+      /0\.1\.5-dev\.1 is not newer than staging's latest 0\.1\.5-dev\.2/,
+    ],
+  ] as const) {
+    const fake = startFakeOssServer({ previousLatest: "0.1.5-dev.2\n" });
+    const compiled: string[] = [];
+    await expect(
+      runPublish(
+        {
+          productionFeedUrl: PRODUCTION_FEED,
+          commit: "a".repeat(40),
+          feedUrl: "https://releases-test.coforge.cn",
+          targets: TEST_TARGETS as ReleaseTarget[],
+          bucket: BUCKET,
+          endpoint: fake.baseUrl,
+          region: REGION,
+          dryRun: false,
+          ...options,
+        },
+        {
+          compile: (async ({ target }) => {
+            compiled.push(target);
+            throw new Error("compiled");
+          }) as CompileFn,
+          credentials: CREDENTIALS,
+          connection: { endpoint: fake.baseUrl, cname: true, secure: false },
+          fetchImpl: productionFeed("0.1.4"),
+        },
+      ),
+    ).rejects.toThrow(refusal);
+    expect(compiled).toEqual([]);
+    expect(uploads(fake)).toEqual([]);
+  }
+});
+
+test("a staging build is refused when production's latest cannot be read, with no fallback line", async () => {
+  const fake = startFakeOssServer({ previousLatest: "0.1.5-dev.2\n" });
+  const unreachable = (async () => new Response("missing", { status: 404 })) as typeof fetch;
+  await expect(publishStagingBuild(fake, unreachable)).rejects.toThrow(
+    new RegExp(`${PRODUCTION_FEED}/latest: HTTP 404`),
+  );
+  await expect(publishStagingBuild(fake, productionFeed("0.1.4-dev.2"))).rejects.toThrow(
+    /production latest must be a stable/,
+  );
+  expect(uploads(fake)).toEqual([]);
+});
+
+test("--production-feed-url numbers the staging build and reports it to the workflow", async () => {
+  const fake = startFakeOssServer({
+    previousLatest: "0.1.5-dev.1\n",
+    preexistingKeys: new Set([manifestObjectKey("0.1.5-dev.1")]),
   });
   const outputDirectory = await tempDir("coforge-publish-line-");
   const githubOutput = join(outputDirectory, "github-output");
-  const compiledVersions = new Set<string>();
-  const compile = stubCompile();
   const previousEnv = {
     id: process.env.ALIBABA_CLOUD_ACCESS_KEY_ID,
     secret: process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
@@ -631,8 +817,8 @@ test("--line publishes the line's next dev number, compiled under it, and report
   try {
     exitCode = await runCli(
       [
-        "--line",
-        "0.1.1",
+        "--production-feed-url",
+        PRODUCTION_FEED,
         "--feed-url",
         "https://releases-test.coforge.cn",
         "--bucket",
@@ -645,12 +831,10 @@ test("--line publishes the line's next dev number, compiled under it, and report
         "a".repeat(40),
       ],
       {
-        compile: (async (input) => {
-          compiledVersions.add(input.version);
-          return compile(input);
-        }) as CompileFn,
+        compile: stubCompile(),
         resolvePhotonWasm: stubResolvePhotonWasm(),
         connection: { endpoint: fake.baseUrl, cname: true, secure: false },
+        fetchImpl: productionFeed("0.1.4"),
       },
     );
   } finally {
@@ -661,32 +845,33 @@ test("--line publishes the line's next dev number, compiled under it, and report
   }
 
   expect(exitCode).toBe(0);
-  // The version is chosen before compiling: it is baked into the Computer and Daemon binaries.
-  expect([...compiledVersions]).toEqual(["0.1.1-dev.2"]);
-  expect(new TextDecoder().decode(fake.peek(LATEST_OBJECT_KEY)).trim()).toBe("0.1.1-dev.2");
-  expect(await readFile(githubOutput, "utf8")).toBe("version=0.1.1-dev.2\n");
+  expect(stagingLatest(fake)).toBe("0.1.5-dev.2");
+  expect(await readFile(githubOutput, "utf8")).toBe("version=0.1.5-dev.2\n");
 });
 
-test("--line names a release line, never alongside --version, and needs the feed to count", async () => {
+test("a line is numbered only against the production feed, which a dry run or split publication cannot read", async () => {
   const originalError = console.error;
   const errors: string[] = [];
   console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
   try {
     const feed = ["--feed-url", "https://releases-test.coforge.cn"];
-    expect(await runCli(["--line", "0.1.1", "--version", "0.1.1-dev.3", ...feed])).toBe(1);
-    expect(await runCli(["--line", "0.1.1-dev.3", ...feed])).toBe(1);
-    expect(await runCli(["--line", "0.1.1", ...feed, "--dry-run"])).toBe(1);
+    const production = ["--production-feed-url", PRODUCTION_FEED];
+    expect(await runCli(["--line", "0.1.1", ...feed])).toBe(1);
+    expect(await runCli([...production.slice(0, 1), "http://releases.coforge.cn", ...feed])).toBe(
+      1,
+    );
+    expect(await runCli([...production, ...feed, "--version", "0.1.1-dev.3", "--dry-run"])).toBe(1);
     // A split publication runs one job per platform; each would pick its own number.
-    expect(await runCli(["--line", "0.1.1", ...feed, "--no-activate"])).toBe(1);
-    expect(await runCli(["--line", "0.1.1", ...feed, "--allow-existing"])).toBe(1);
-    expect(await runCli([...feed])).toBe(1);
+    expect(await runCli([...production, ...feed, "--no-activate"])).toBe(1);
+    expect(await runCli([...production, ...feed, "--allow-existing"])).toBe(1);
+    expect(await runCli([...feed, "--dry-run"])).toBe(1);
     expect(errors).toEqual([
-      "publish failed: pass either --version or --line, not both",
-      "publish failed: --line must be a release line such as 0.1.1: 0.1.1-dev.3",
-      "publish failed: --line reads the feed to pick a dev number; a --dry-run needs --version",
+      "publish failed: a release line numbers a staging build: pass --production-feed-url with --line",
+      "publish failed: --production-feed-url must be an https:// URL",
+      "publish failed: a staging build reads both feeds; a --dry-run takes --version alone",
       "publish failed: a split publication names its version: use --version with --no-activate",
       "publish failed: a split publication names its version: use --version with --allow-existing",
-      "publish failed: --version or --line is required",
+      "publish failed: a publish needs a --version, or a --production-feed-url to number one",
     ]);
   } finally {
     console.error = originalError;
@@ -710,7 +895,7 @@ test("parseTargets defaults to all six release platforms and validates unknown o
   expect(() => parseTargets("linux-x64,bogus")).toThrow(/unsupported release target: bogus/);
 });
 
-test("runCli requires --version (or --line) and --feed-url, and rejects a non-https feed URL", async () => {
+test("runCli requires --version (or --production-feed-url) and --feed-url, and rejects a non-https feed URL", async () => {
   const originalError = console.error;
   const errors: string[] = [];
   console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
@@ -726,7 +911,7 @@ test("runCli requires --version (or --line) and --feed-url, and rejects a non-ht
         "--dry-run",
       ]),
     ).toBe(1);
-    expect(errors.some((line) => line.includes("--version or --line is required"))).toBe(true);
+    expect(errors.some((line) => line.includes("a publish needs a --version"))).toBe(true);
     expect(errors.some((line) => line.includes("--feed-url is required"))).toBe(true);
     expect(errors.some((line) => line.includes("https://"))).toBe(true);
   } finally {

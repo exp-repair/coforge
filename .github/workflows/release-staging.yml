@@ -1,16 +1,25 @@
 name: Publish Computer (staging)
-run-name: ${{ inputs.withdraw_version && format('Withdraw Computer {0} from staging', inputs.withdraw_version) || format('Publish Computer {0} to staging', inputs.version || 'the next dev build') }}
+run-name: ${{ inputs.withdraw_version && format('Withdraw Computer {0} from staging', inputs.withdraw_version) || format('Publish Computer {0} to staging', inputs.version || (inputs.line && format('the next {0} dev build', inputs.line)) || 'the next dev build') }}
 
 # Publishing a local Computer distribution is manual, never automatic on a push to main - see
 # docs/release/github-actions.md: a client release leaves a persistent artifact set behind, so a
 # build per merge is waste. Do not add a `push:` trigger here.
+#
+# publish.ts numbers each publication by the version rule in docs/release/github-actions.md, reading
+# production's and staging's `latest`, and refuses an out-of-order version before compiling.
 on:
   workflow_dispatch:
     inputs:
       version:
         description: >-
-          Numbered development version to publish (e.g. 0.1.3-dev.1). Leave empty to publish the release
-          line's next dev build (DEV_LINE below): the smallest unused <line>-dev.<N>.
+          Numbered development version of the release line to publish (e.g. 0.1.5-dev.3). Leave empty
+          to publish the line's next dev build: the smallest unused <line>-dev.<N>.
+        required: false
+        type: string
+      line:
+        description: >-
+          Start a new release line (e.g. 0.2.0) instead of the one production's latest implies. It must
+          be above production's latest and not below staging's line.
         required: false
         type: string
       notes_en:
@@ -43,11 +52,6 @@ on:
 
 permissions:
   contents: read
-
-env:
-  # The release line staging dev builds belong to. Each line counts its own dev builds from 1
-  # (scripts/release/publish.ts `nextDevVersion`); move it when a line ships as a stable version.
-  DEV_LINE: "0.1.4"
 
 concurrency:
   group: release-staging
@@ -127,16 +131,17 @@ jobs:
       - name: Validate withdrawal inputs
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_LINE: ${{ inputs.line }}
           INPUT_WITHDRAW_VERSION: ${{ inputs.withdraw_version }}
           INPUT_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
           INPUT_RESTORE_VERSION: ${{ inputs.restore_version }}
           INPUT_RESTORE_MANIFEST_SHA256: ${{ inputs.restore_manifest_sha256 }}
         run: |
           if [ -n "$INPUT_WITHDRAW_VERSION$INPUT_MANIFEST_SHA256$INPUT_RESTORE_VERSION$INPUT_RESTORE_MANIFEST_SHA256" ]; then
-            if [ -n "$INPUT_VERSION" ] || [ -z "$INPUT_WITHDRAW_VERSION" ] || [ -z "$INPUT_RESTORE_VERSION" ] ||
+            if [ -n "$INPUT_VERSION$INPUT_LINE" ] || [ -z "$INPUT_WITHDRAW_VERSION" ] || [ -z "$INPUT_RESTORE_VERSION" ] ||
                ! [[ "$INPUT_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
                ! [[ "$INPUT_RESTORE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "withdrawal requires both versions and manifest hashes, without a publish version" >&2
+              echo "withdrawal requires both versions and manifest hashes, without a publish version or line" >&2
               exit 1
             fi
           fi
@@ -184,11 +189,11 @@ jobs:
       - name: Build six platforms, upload, and verify release
         id: publish
         if: inputs.withdraw_version == ''
-        # inputs.version is passed through an env var, not substituted into the script body: a
-        # workflow_dispatch string input is caller-controlled, and substituting it inline would let
-        # its literal text be interpreted as shell syntax before publish.ts ever validates it. With
-        # no input, publish.ts picks the line's next dev number from the feed and writes the
-        # version it published to this step's outputs.
+        # inputs.version and inputs.line are passed through env vars, not substituted into the script
+        # body: a workflow_dispatch string input is caller-controlled, and substituting it inline
+        # would let its literal text be interpreted as shell syntax before publish.ts ever validates
+        # it. Without a version, publish.ts picks the line's next dev number from the feed; either
+        # way it writes the version it published to this step's outputs.
         env:
           ALIBABA_CLOUD_ROLE_ARN: acs:ram::1085194890307801:role/coforge-release-publisher
           ALIBABA_CLOUD_OIDC_PROVIDER_ARN: acs:ram::1085194890307801:oidc-provider/github-actions
@@ -198,19 +203,19 @@ jobs:
           # reporting the real error.
           ALIBABA_CLOUD_ECS_METADATA_DISABLED: "true"
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_LINE: ${{ inputs.line }}
           RELEASE_COMMIT: ${{ github.sha }}
         run: |
-          if [ -n "$INPUT_VERSION" ]; then
-            release=(--version "$INPUT_VERSION")
-          else
-            release=(--line "$DEV_LINE")
-          fi
+          release=()
+          if [ -n "$INPUT_VERSION" ]; then release+=(--version "$INPUT_VERSION"); fi
+          if [ -n "$INPUT_LINE" ]; then release+=(--line "$INPUT_LINE"); fi
           # GitHub-hosted runners reach oss-cn-beijing over the public cross-border path, measured
           # at 17-56 KB/s from dev.59 on, on both Linux and macOS runners. OSS transfer
           # acceleration routes the upload over Alibaba Cloud's backbone instead; the endpoint is
           # global, so the bucket's region is passed for V4 signing.
           bun scripts/release/publish.ts \
             "${release[@]}" \
+            --production-feed-url "https://releases.coforge.cn" \
             --commit "$RELEASE_COMMIT" \
             --feed-url "https://releases-staging.coforge.cn" \
             --endpoint oss-accelerate.aliyuncs.com \

@@ -39,6 +39,14 @@ import {
 import { compileTargetArtifacts, isReleaseTarget, type ReleaseTarget } from "./compile-targets";
 import { assertInstallerCoversRelease, productInstallerProtocol } from "./installer-feed";
 import { resolvePhotonWasmBytes } from "./photon-wasm";
+import { readFeedObject } from "./public-feed";
+import {
+  assertForward,
+  assertStagingDevVersion,
+  firstDevNumber,
+  requireStable,
+  stagingDevLine,
+} from "./release-line";
 
 /* -------------------------------------------------------------------------------------------- */
 /* OSS client and credentials                                                                    */
@@ -349,14 +357,18 @@ export async function assertVersionIsUnpublished(
 const MAX_DEV_NUMBER = 500;
 
 /**
- * The version a staging build of `line` publishes as: `<line>-dev.<N>` for the smallest N, from 1,
+ * The version a staging build of `line` publishes as: `<line>-dev.<N>` for the smallest N, from
+ * `from` (release-line.ts `firstDevNumber`: above staging's `latest` on the same line, else 1),
  * whose manifest the feed does not have. Each release line counts its own dev builds, as semver
  * pre-releases do (`1.0.0-beta.2 < 1.0.0-beta.11`); a number already published is skipped, and a
  * number left half-uploaded by a failed publish (no manifest) is reused, as a rerun would. The
  * staging workflow's `release-staging` concurrency group keeps two publishes from probing at once.
  */
-export async function nextDevVersion(line: string, options: { client: OSS }): Promise<string> {
-  for (let number = 1; number <= MAX_DEV_NUMBER; number += 1) {
+export async function nextDevVersion(
+  line: string,
+  options: { client: OSS; from?: number },
+): Promise<string> {
+  for (let number = options.from ?? 1; number <= MAX_DEV_NUMBER; number += 1) {
     const version = `${line}-dev.${number}`;
     if (!(await objectExists(options.client, manifestObjectKey(version)))) return version;
   }
@@ -583,6 +595,16 @@ export async function uploadReleaseTree(
   // A finalize pass is publishing a version the feed has already seen, so it must not assert.
   if (!plan.allowExisting)
     await assertVersionIsUnpublished(tree.version, { client: context.client, feed });
+  // A publication only moves `latest` forward, on every feed; the same version is a finalize rerun.
+  // Read before any object goes up, so a refusal leaves nothing behind. `movePointer` (withdrawal,
+  // installer `pointer_only`) moves it back on purpose and does not pass through here.
+  if (!plan.objectsOnly) {
+    const latest = await readObjectIfPresent(context.client, feed.latestKey);
+    assertForward(tree.version, {
+      latest: latest === undefined ? undefined : new TextDecoder().decode(latest).trim(),
+      feed: "the feed's",
+    });
+  }
 
   await uploadObjects(context, plan);
   await verifyUploadedBytes(context, plan.files);
@@ -627,6 +649,41 @@ export async function movePointer(options: {
   );
 }
 
+/**
+ * The version a staging publication goes out as (release-line.ts): `version`, or the next unused
+ * dev number of the line production's `latest` implies (or of the explicit `line`). Either way it
+ * must be a dev build of that line newer than this feed's `latest`; checked before compiling, so a
+ * refusal costs no six-platform build. Production's `latest` is read anonymously from its public
+ * feed, this feed's through `client`.
+ */
+async function stagingDevVersion(options: {
+  productionFeedUrl: string;
+  version?: string;
+  line?: string;
+  client: OSS;
+  fetchImpl: typeof fetch;
+  log: (line: string) => void;
+}): Promise<string> {
+  const { client } = options;
+  const [production, staging] = await Promise.all([
+    readFeedObject(options.productionFeedUrl, LATEST_OBJECT_KEY, options.fetchImpl),
+    readObjectIfPresent(client, LATEST_OBJECT_KEY),
+  ]);
+  const productionLatest = production.trim();
+  requireStable(productionLatest, "production latest");
+  const stagingLatest =
+    staging === undefined ? undefined : new TextDecoder().decode(staging).trim();
+  const line = stagingDevLine({ productionLatest, stagingLatest, line: options.line });
+  const version =
+    options.version ??
+    (await nextDevVersion(line, { client, from: firstDevNumber(line, stagingLatest) }));
+  assertStagingDevVersion(version, { line, stagingLatest });
+  options.log(
+    `staging line ${line} (production ${productionLatest}, staging ${stagingLatest ?? "empty"}): ${version}`,
+  );
+  return version;
+}
+
 /* -------------------------------------------------------------------------------------------- */
 /* Orchestration: compile every target, build the tree, upload it (or dry-run it)                */
 /* -------------------------------------------------------------------------------------------- */
@@ -648,9 +705,13 @@ export const DEFAULT_TARGETS: ReleaseTarget[] = [
 export type CompileFn = typeof compileTargetArtifacts;
 
 export interface PublishOptions {
-  /** The exact version to publish. Exactly one of `version` and `line` is set. */
+  /** The exact version to publish; required unless `productionFeedUrl` numbers a staging build. */
   version?: string;
-  /** A release line such as `0.1.1`: publish its next unused dev build (`nextDevVersion`). */
+  /** A staging publication: number it against this production feed's `latest`
+   * (`stagingDevVersion`), and refuse a version that would move this feed's `latest` back. */
+  productionFeedUrl?: string;
+  /** With `productionFeedUrl`: start this release line, such as `0.2.0`, instead of the one
+   * production's `latest` implies. */
   line?: string;
   commit: string;
   feedUrl: string;
@@ -703,6 +764,10 @@ export async function runPublish(
   options: PublishOptions,
   deps: PublishDependencies = {},
 ): Promise<PublishOutcome> {
+  if (options.line && !options.productionFeedUrl)
+    throw new Error(
+      "a release line numbers a staging build: pass --production-feed-url with --line",
+    );
   const compile = deps.compile ?? compileTargetArtifacts;
   const resolvePhotonWasm = deps.resolvePhotonWasm ?? resolvePhotonWasmBytes;
   const log = deps.log ?? ((): void => undefined);
@@ -721,12 +786,21 @@ export async function runPublish(
   };
   const client = options.dryRun ? null : await createOssClient(connection, deps.credentials);
   // The version is compiled into both roles, so a line's dev number is settled before compiling.
-  if (options.version && options.line)
-    throw new Error("a publish takes a version or a line, not both");
-  const version =
-    options.version ??
-    (client && options.line ? await nextDevVersion(options.line, { client }) : undefined);
-  if (!version) throw new Error("a publish needs a --version, or a --line and feed access");
+  let version = options.version;
+  if (options.productionFeedUrl) {
+    if (!client)
+      throw new Error("a staging build reads both feeds; a --dry-run takes --version alone");
+    version = await stagingDevVersion({
+      productionFeedUrl: options.productionFeedUrl,
+      version: options.version,
+      line: options.line,
+      client,
+      fetchImpl: deps.fetchImpl ?? fetch,
+      log,
+    });
+  }
+  if (!version)
+    throw new Error("a publish needs a --version, or a --production-feed-url to number one");
 
   const workDirectory = await mkdtemp(join(tmpdir(), "coforge-release-publish-"));
   try {
@@ -808,6 +882,7 @@ export async function runPublish(
 
 interface ParsedArgs {
   version?: string;
+  productionFeedUrl?: string;
   line?: string;
   activate?: boolean;
   allowExisting?: boolean;
@@ -842,6 +917,9 @@ function parseArgv(argv: string[]): ParsedArgs {
         break;
       case "--version":
         result.version = requireValue(argv, (index += 1), flag);
+        break;
+      case "--production-feed-url":
+        result.productionFeedUrl = requireValue(argv, (index += 1), flag);
         break;
       case "--line":
         result.line = requireValue(argv, (index += 1), flag);
@@ -894,38 +972,31 @@ async function currentGitCommit(): Promise<string> {
   return sha;
 }
 
-/** A release line: the `major.minor.patch` its dev builds are pre-releases of. */
-const RELEASE_LINE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
-
 export type CliDependencies = Omit<PublishDependencies, "log">;
 
 export async function runCli(argv: string[], deps: CliDependencies = {}): Promise<number> {
   try {
     const args = parseArgv(argv);
-    if (args.version && args.line) throw new Error("pass either --version or --line, not both");
-    if (args.line) {
-      if (!RELEASE_LINE.test(args.line))
-        throw new Error(`--line must be a release line such as 0.1.1: ${args.line}`);
-      if (args.dryRun)
-        throw new Error("--line reads the feed to pick a dev number; a --dry-run needs --version");
-      // Each job of a split publication would otherwise pick a dev number of its own.
-      for (const [flag, set] of [
-        ["--no-activate", args.activate === false],
-        ["--allow-existing", args.allowExisting === true],
-      ] as const)
-        if (set)
-          throw new Error(`a split publication names its version: use --version with ${flag}`);
-    } else if (!args.version) throw new Error("--version or --line is required");
-    else if (!isValidReleaseVersion(args.version)) {
-      throw new Error(`--version must be a valid version string: ${args.version}`);
-    }
     if (!args.feedUrl) throw new Error("--feed-url is required");
-    if (!args.feedUrl.startsWith("https://")) {
-      throw new Error("--feed-url must be an https:// URL");
-    }
+    for (const [flag, url] of [
+      ["--feed-url", args.feedUrl],
+      ["--production-feed-url", args.productionFeedUrl],
+    ] as const)
+      if (url !== undefined && !url.startsWith("https://"))
+        throw new Error(`${flag} must be an https:// URL`);
+    if (args.version !== undefined && !isValidReleaseVersion(args.version))
+      throw new Error(`--version must be a valid version string: ${args.version}`);
+    // Each job of a split publication would otherwise pick a dev number of its own.
+    for (const [flag, set] of [
+      ["--no-activate", args.activate === false],
+      ["--allow-existing", args.allowExisting === true],
+    ] as const)
+      if (set && !args.version)
+        throw new Error(`a split publication names its version: use --version with ${flag}`);
     const commit = args.commit ?? (await currentGitCommit());
     const options: PublishOptions = {
       version: args.version,
+      productionFeedUrl: args.productionFeedUrl,
       line: args.line,
       commit,
       feedUrl: args.feedUrl,
@@ -938,8 +1009,8 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     // console.log/console.error, not the injected `deps`, are the actual "script stdout/stderr":
     // this is what publish.test.ts's credential-leak test captures and asserts against.
     const outcome = await runPublish(options, { ...deps, log: (line) => console.log(line) });
-    // A GitHub Actions step reads the published version from its outputs file; with --line it is
-    // known only now.
+    // A GitHub Actions step reads the published version from its outputs file; numbered against
+    // the production feed, it is known only now.
     if (process.env.GITHUB_OUTPUT)
       await appendFile(process.env.GITHUB_OUTPUT, `version=${outcome.version}\n`);
     return 0;

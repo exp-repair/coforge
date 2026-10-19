@@ -130,6 +130,8 @@ gh workflow run release-installer-staging.yml --repo lrm-lab/coforge -f pointer_
   checksum, and the size and checksum of what it expands to (bounded). A sidecar
   that does not hold that checksum is refused, because the bootstrap scripts
   read only the sidecar.
+- A publication never moves `installer/latest` back: a version older than it is
+  refused before anything is uploaded ([version rule](github-actions.md)).
 - **`pointer_only: <iv>`** skips the build and publication. It moves
   `installer/latest` to `<iv>`, forward or back, and writes nothing else. It
   refuses a version with no manifest, or one that is not a complete installer

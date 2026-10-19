@@ -34,17 +34,15 @@ compiled into it, so a staging binary copied into the production feed would keep
 updating itself from staging. Promotion therefore rebuilds:
 
 1. An Agent verifies the staging feed's `latest` resolves the explicitly selected
-   development candidate, such as `0.1.3-dev.1`. It prepares that candidate's
-   source commit, staging version and test evidence, the intended stable production
-   version (such as `0.1.2`), and production's current `latest` for comparison.
-   The channels may use different version numbers, but their source commit must
-   match. `release-production.yml` accepts `staging_version` for this case;
-   omitting it retains the historical same-version comparison. The candidate
-   verifier still checks staging's pointer and manifest, and rejects a manifest
-   naming another source. Do not overwrite an existing immutable version to align
-   the channel labels, or use `without_staging` to bypass this comparison. The
-   Agent also reads that candidate's [release notes](release-notes.md) from the
-   staging catalog and passes the same English and Chinese text to production.
+   development candidate, such as `0.1.5-dev.3`. It prepares that candidate's
+   source commit, staging version and test evidence, and the production version,
+   which is the staging version without its `-dev.<N>` suffix (`0.1.5`), as
+   the [version rule](github-actions.md) that `release-production.yml` checks
+   requires. Do not overwrite an existing immutable
+   version to align the channel labels, or use `without_staging` to bypass this
+   comparison. The Agent also reads that candidate's
+   [release notes](release-notes.md) from the staging catalog and passes the same
+   English and Chinese text to production.
 2. A human approves or rejects that exact commit and production version. A filename,
    branch, channel name, or unspecified "latest build" approval is invalid.
 3. After approval, the Agent builds the approved commit against the production
@@ -73,7 +71,8 @@ Environment's required reviewer is step 2. The installer goes first, because
 [`operations/production/computer-release.md`](../operations/production/computer-release.md).
 
 Their `without_staging` input skips the staging comparison and checks only the
-commit's and version's shape. It exists for a release Frank approves without a
+commit's and version's shape, and that a Computer version is newer than
+production's `latest`. It exists for a release Frank approves without a
 staging publication (the first production release, `0.1.0` from `main`, on
 2026-10-12); the run title names it, so the approver sees it.
 

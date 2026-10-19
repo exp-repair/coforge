@@ -7,7 +7,7 @@
 | **Publish Computer (staging)** | Manually started from `main` with release notes | Check the notes and validate → build all six platforms → upload and verify release → update staging `latest` → register the notes |
 | **Publish installer (staging)** | Manually started from `main`       | Validate → plan → build each target natively → package, upload, and verify, write the manifest, and update `installer/latest`; or with `pointer_only` move that pointer alone |
 | **Publish installer (production)** | Manually started from `main` with an approved commit and version | Verify staging published it → approval → plan → build that commit natively against the production feed → package, upload, and verify, and update `installer/latest`; or with `pointer_only` move that pointer alone |
-| **Publish Computer (production)** | Manually started from `main` with an approved commit, stable version, and release notes | Check the notes and verify the selected staging version's `latest` and manifest identify that commit → approval → build that commit against the production feed → upload and verify → update production `latest` → register the notes |
+| **Publish Computer (production)** | Manually started from `main` with an approved commit, stable version, and release notes | Check the notes and verify the selected staging version's `latest` and manifest identify that commit and that the version follows the version rule below → approval → build that commit against the production feed → upload and verify → update production `latest` → register the notes |
 | **Edit Computer release notes** | Manually started from `main` with an environment, a published version, and notes; also called by both Computer publications | Replace that version's notes in the environment's release catalog and verify the read-back |
 
 Every staging workflow is manual. A Web deployment validates, builds, and
@@ -117,26 +117,40 @@ Publishing a local-distribution release is **manual**. The workflow exposes only
 leaves a persistent artifact set behind, and at the current user count a build
 per merge is waste.
 
-Each release line counts its own staging builds, as semver pre-releases do
-(`1.0.0-beta.2 < 1.0.0-beta.11`). The workflow's `DEV_LINE` names the current
-line; leaving the version input empty publishes the smallest
-`<line>-dev.<N>`, counting from 1, whose `manifest.json` the feed does not yet
-have (`nextDevVersion` in `scripts/release/publish.ts`), so the builds read
-`0.1.2-dev.1`, `0.1.2-dev.2`, and so on. A number already published is skipped
-(`0.1.1-dev.82`, published under the earlier run-number naming, is one). A
-number whose earlier publication failed before its manifest is reused by the
-next publication, which overwrites the leftover objects: without a manifest
-no installer or `latest` ever referenced them. An explicit version input is
-still refused once its manifest exists. The `release-staging` concurrency group keeps two publications from
-choosing a number at the same time. Move `DEV_LINE` when a line ships as a
-stable version. The source SHA and build time remain in the manifest rather
-than the version string. There is no nightly schedule or date-based version
-convention. Use only two routine forms: staging builds such as `0.1.2-dev.2`
-and stable production versions such as `0.1.2`. Staging always uses a numbered
-`-dev.N` suffix, including explicit version inputs; production uses the stable
-version input and may name a different staging evidence version with
-`staging_version`, while requiring the same source commit. No beta or
-release-candidate stage is required. Previously published
+Computer versions follow one rule, which the workflows enforce
+(`scripts/release/release-line.ts`); there are only two routine forms, staging
+dev builds such as `0.1.5-dev.3` and stable production versions such as `0.1.5`:
+
+- **Line.** Staging publishes `<line>-dev.<N>`. The line is staging's own while
+  staging's `latest` is above production's `latest`; otherwise it is
+  production's `latest` with the patch incremented (`0.1.4` gives `0.1.5`).
+  The `release-staging.yml` input `line` starts a new minor or major line such
+  as `0.2.0`; it must be above production's `latest` and not below staging's line.
+- **Staging number.** Each line counts its own dev builds by semver precedence
+  (`dev.2 < dev.11`). With the version input empty, staging publishes the
+  smallest `<line>-dev.<N>` above staging's `latest` (from 1 on a new line)
+  whose `manifest.json` the feed does not have (`nextDevVersion` in
+  `scripts/release/publish.ts`); a number whose publication failed before its
+  manifest is reused, overwriting objects nothing referenced. An explicit
+  version must be a dev build of the line and newer than staging's `latest`,
+  and is refused once its manifest exists. These checks run before compiling.
+- **Production.** `release-production.yml` promotes one staging build: its
+  `version` is `staging_version` without the `-dev.<N>` suffix, newer than
+  production's `latest`, from the same source commit; its candidate job checks
+  this without credentials, before the approval gate.
+- **Every feed.** Every publication through `scripts/release/publish.ts`,
+  staging, production and installer alike, refuses a version older than that feed's
+  `latest` (the same version is a finalize rerun): before uploading anything, or
+  in a split publication before the activating pass moves `latest`.
+  Only withdrawal and the installer's `pointer_only` move a pointer back.
+- Production's `latest` is read anonymously from
+  `https://releases.coforge.cn/latest`; if it cannot be read as a stable
+  version, the staging publication or the promotion fails rather than guessing.
+
+The `release-staging` concurrency group keeps two publications from choosing a
+number at the same time. The source SHA and build time remain in the manifest
+rather than the version string; there is no nightly schedule, date-based
+version, beta or release-candidate stage. Previously published
 versions, including historical `rc` versions, remain immutable and available
 by exact version; the next successful publication moves `latest` without
 renaming or deleting them. Explicitly authorized deletion of a mistaken staging

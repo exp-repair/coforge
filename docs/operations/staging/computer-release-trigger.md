@@ -9,10 +9,13 @@
 ```sh
 gh workflow run release-staging.yml --repo lrm-lab/coforge \
   -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
-# 或指定版本号；不填则发布当前版本线（workflow 的 DEV_LINE）下一个未用的 <line>-dev.<N>，从 1 开始
-gh workflow run release-staging.yml --repo lrm-lab/coforge -f version=0.1.3-dev.5 \
+# 或指定版本号；开新的 minor/major 版本线用 -f line=0.2.0
+gh workflow run release-staging.yml --repo lrm-lab/coforge -f version=0.1.5-dev.5 \
   -f notes_en="$(cat notes.en.md)" -f notes_zh_cn="$(cat notes.zh-CN.md)"
 ```
+
+不填版本号时，workflow 按[版本规则](../../release/github-actions.md)从 production 和 staging 的
+`latest` 推导版本线和下一个 `<line>-dev.<N>`，顺序不对的版本在编译前就被拒绝。
 
 发布后要改 notes，用 `release-notes.yml`，不要重发版本。只有最后的 `notes` job 失败时，
 版本已经上线、只是没有 notes：`gh run rerun <run-id> --failed` 只重跑这个 job。
