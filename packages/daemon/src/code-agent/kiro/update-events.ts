@@ -59,7 +59,7 @@ export function kiroUpdateEvents(update: SessionNotification["update"]): AgentRu
     case "compaction_update":
       // Report the raw CompactionUpdate.status transition every time; the daemon core de-dupes
       // repeated "in_progress" updates into a single reported episode
-      // (agent-runtime/compaction-tracker.ts). "failed"/"cancelled" are a provider-observed
+      // (agent-runtime/phase-tracker.ts). "failed"/"cancelled" are a provider-observed
       // interruption, distinct from a normal "completed" finish.
       if (update.status === "in_progress") return [{ type: "compaction-started" }];
       if (update.status === "completed") return [{ type: "compaction-finished" }];

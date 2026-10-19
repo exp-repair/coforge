@@ -202,6 +202,18 @@ test("compaction-started/-finished/-interrupted flush pending text first; a prog
   trajectory.dispose();
 });
 
+test("review-started/-finished flush pending text first, like compaction", () => {
+  for (const type of ["review-started", "review-finished"] as const) {
+    const output: AgentRuntimeEvent[] = [];
+    const trajectory = new ActivityTrajectory((event) => output.push(event));
+    trajectory.accept({ type: "text-delta", text: "before review" });
+    trajectory.accept({ type });
+    expect(output.map((event) => event.type)).toEqual(["activity", "activity", type]);
+    expect(output[1]).toMatchObject({ activity: { entries: [{ text: "before review" }] } });
+    trajectory.dispose();
+  }
+});
+
 test("redacts assembled split secrets, keeps Unicode/ellipsis within bound and flushes before errors", () => {
   jest.useFakeTimers();
   const output: AgentRuntimeEvent[] = [];
@@ -307,11 +319,13 @@ test("a thinking run ends before a tool-end", () => {
   trajectory.dispose();
 });
 
-test("context compaction ends a thinking run, and the next thinking run announces itself again", () => {
+test("context compaction or review mode ends a thinking run, and the next thinking run announces itself again", () => {
   for (const type of [
     "compaction-started",
     "compaction-finished",
     "compaction-interrupted",
+    "review-started",
+    "review-finished",
   ] as const) {
     const output: AgentRuntimeEvent[] = [];
     const trajectory = new ActivityTrajectory((event) => output.push(event));
@@ -562,4 +576,26 @@ test("flushes pending text before a raw error event, and before a reconnecting e
   trajectory.dispose();
   jest.advanceTimersByTime(1000);
   expect(output).toHaveLength(8);
+});
+
+test("an empty thinking delta announces thinking at once and flushes no entry", () => {
+  jest.useFakeTimers();
+  const output: AgentRuntimeEvent[] = [];
+  const trajectory = new ActivityTrajectory((event) => output.push(event));
+  // Codex's turn/started: the Agent shows thinking before any text arrives.
+  trajectory.accept({ type: "thinking-delta", text: "" });
+  jest.advanceTimersByTime(350);
+  expect(output).toMatchObject([{ activity: { detailKind: "thinking_started", detail: "" } }]);
+  expect(
+    (output[0] as Extract<AgentRuntimeEvent, { type: "activity" }>).activity.entries,
+  ).toBeUndefined();
+  trajectory.accept({ type: "text-delta", text: "Answer" });
+  jest.advanceTimersByTime(350);
+  expect(kinds(output)).toEqual([
+    "thinking_started",
+    "thinking_end",
+    "model_response_started",
+    "model_response_started",
+  ]);
+  trajectory.dispose();
 });

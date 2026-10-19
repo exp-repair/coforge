@@ -100,6 +100,7 @@ Rules for the provider seam and adapters in `src/code-agent/`. They extend
 - `codex/provider.ts` owns retry classification. Structured `willRetry: true`
   notifications stay internal diagnostics. Numbered stderr reconnect lines
   become informational `runtime_reconnecting` Activity.
+- Codex Activity follows the reference Computer; MCP tool names match Claude's `mcp__<server>__<tool>`.
 
 ## Per-turn providers (Cursor, OpenCode, Antigravity)
 

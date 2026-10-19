@@ -6,7 +6,7 @@ import type {
   UsageSnapshot,
 } from "@coforge/agent";
 import type { CodeAgentProvider } from "#src/code-agent/contract";
-import { codexDeltaEvent, codexItemStartedEvents } from "./item-events";
+import { CodexItemEvents } from "./item-events";
 import { codexTurnOutcome } from "./turn-outcome";
 import { readCodexUsage } from "./usage";
 import { agentEnvironment } from "#src/code-agent/environment";
@@ -176,6 +176,7 @@ class CodexAgentSession implements AgentSession {
   readonly #runtimeId: string | undefined;
   readonly #listeners = new Set<(event: AgentRuntimeEvent) => void>();
   readonly #commandOutputBytes = new Map<string, number>();
+  readonly #itemEvents = new CodexItemEvents();
   #state: CodexSessionState = { type: "idle" };
   #lastCompletedTurnId: string | undefined;
   #starting: Promise<void> | undefined;
@@ -367,16 +368,27 @@ class CodexAgentSession implements AgentSession {
       this.#emit({ type: "error", message: error.message, occurredAt: eventTime(record) });
       return;
     }
-    const delta = codexDeltaEvent(record);
-    if (delta) {
-      this.#emit(delta);
+    if (record.method === "turn/started") {
+      const turn = asRecord(params?.turn);
+      // Same fence as an item: only this thread's live turn opens a run.
+      if (
+        typeof turn?.id !== "string" ||
+        !this.#acceptsTurnItem({ threadId: params?.threadId, turnId: turn.id })
+      )
+        return;
+      this.#emitAll(this.#itemEvents.accept(record, params));
+      return;
+    }
+    const deltas = this.#itemEvents.delta(record, params);
+    if (deltas) {
+      this.#emitAll(deltas);
       return;
     }
     if (record.method === "item/started") {
       const item = asRecord(params?.item);
       if (item?.type === "commandExecution" && typeof item.id === "string")
         this.#commandOutputBytes.set(item.id, 0);
-      for (const started of codexItemStartedEvents(record)) this.#emit(started);
+      this.#emitAll(this.#itemEvents.accept(record, params));
       return;
     }
     if (
@@ -398,10 +410,6 @@ class CodexAgentSession implements AgentSession {
     }
     if (record.method === "item/completed") {
       const item = asRecord(params?.item);
-      // A reasoning item's completion needs no provider-specific signal: the daemon
-      // derives "thinking finished" for every provider from the normalized event
-      // stream (ActivityTrajectory), so there is nothing to report here.
-      if (item?.type === "reasoning") return;
       if (item?.type === "commandExecution" && typeof item.id === "string") {
         logger.info("Codex command completed", {
           event: "codex.command.completed",
@@ -412,12 +420,8 @@ class CodexAgentSession implements AgentSession {
           outcome: item.exitCode === 0 ? "ok" : "failed",
         });
         this.#commandOutputBytes.delete(item.id);
-        this.#emit({
-          type: "tool-end",
-          id: item.id,
-          isError: item.exitCode !== 0,
-        });
       }
+      this.#emitAll(this.#itemEvents.accept(record, params));
       return;
     }
     if (record.method === "turn/completed") {
@@ -434,6 +438,7 @@ class CodexAgentSession implements AgentSession {
         return;
       }
       this.#commandOutputBytes.clear();
+      this.#itemEvents.reset();
       this.#lastCompletedTurnId = turn.id;
       const { status, failure } = codexTurnOutcome(turn);
       if (failure) {
@@ -462,6 +467,10 @@ class CodexAgentSession implements AgentSession {
 
   #emit(event: AgentRuntimeEvent): void {
     for (const listener of this.#listeners) listener(event);
+  }
+
+  #emitAll(events: readonly AgentRuntimeEvent[]): void {
+    for (const event of events) this.#emit(event);
   }
 
   #acceptsTurnItem(params: Record<string, unknown> | undefined): boolean {

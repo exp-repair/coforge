@@ -25,7 +25,7 @@ stream 增量只作为不带内容的 `progress` 续租；单个 block 超过 20
 Activity timeline 是完整的按时间顺序工作记录，不是只读最新状态的
 展示层：除忙碌心跳（`is_heartbeat=true`）和 liveness probe 应答（带 `probe_id`）外，其余
 每条 Activity 都写入历史并出现在 timeline 里，`tool_end`/`thinking_end`/
-`compaction_finished` 也不例外，渲染为一行状态行（主标题沿用现有 activity-kind 分类，
+`compaction_finished`/`review_finished` 也不例外，渲染为一行状态行（主标题沿用现有 activity-kind 分类，
 副标题说明具体完成了什么）。`runtime_progress` 保持原状——只续租、不落库、不展示。
 `thinking_started`/`model_response_started` 会先以不带 `entries`、`detail` 为空的
 "run-start marker" 上报一次（只用于让展示状态立即翻转到 thinking/working，不代表有可读

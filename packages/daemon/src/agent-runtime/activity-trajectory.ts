@@ -7,23 +7,22 @@ import {
   type AgentActivityDetailKind,
 } from "@lrm/coforge-sdk/internal";
 import { createAgentActivity } from "./agent-activity";
+import { PHASE_BOUNDARY_EVENT_TYPES } from "./runtime-phases";
 
 /**
  * True when `event` means the model moved on from an open thinking run: a rendered
- * response resuming, a tool call starting or ending, context compaction, the turn
- * ending, or an error. `runtime_progress`, `session` and `usage` events never end
- * thinking, and neither does a further `thinking-delta` (it continues the same run).
+ * response resuming, a tool call starting or ending, a phase boundary (context compaction,
+ * review mode), the turn ending, or an error. `runtime_progress`, `session` and `usage` events
+ * never end thinking, and neither does a further `thinking-delta` (it continues the same run).
  */
 function endsThinking(event: AgentRuntimeEvent): boolean {
+  if (PHASE_BOUNDARY_EVENT_TYPES.has(event.type)) return true;
   switch (event.type) {
     case "text-delta":
     case "tool-start":
     case "tool-end":
     case "completed":
     case "error":
-    case "compaction-started":
-    case "compaction-finished":
-    case "compaction-interrupted":
       return true;
     case "activity":
       return event.activity.level === "error";
@@ -101,7 +100,8 @@ export class ActivityTrajectory {
       this.#timer = setTimeout(() => this.flush(), 350);
       return;
     }
-    // Compaction boundaries flush pending text first, like a tool call or a turn ending.
+    // Phase boundaries (compaction, review) flush pending text first, like a tool call or a
+    // turn ending.
     // A bare "progress" ping never flushes.
     // "error" flushing here (rather than in the runtime-error-activity conversion itself) is
     // also what lets a separate in-flight change treat `error` as a thinking-end trigger: by the
@@ -110,9 +110,7 @@ export class ActivityTrajectory {
       event.type === "tool-start" ||
       event.type === "activity" ||
       event.type === "completed" ||
-      event.type === "compaction-started" ||
-      event.type === "compaction-finished" ||
-      event.type === "compaction-interrupted" ||
+      PHASE_BOUNDARY_EVENT_TYPES.has(event.type) ||
       event.type === "subagent-progress" ||
       event.type === "error" ||
       event.type === "reconnecting"

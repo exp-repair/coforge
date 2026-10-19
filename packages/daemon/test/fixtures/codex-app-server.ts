@@ -358,6 +358,15 @@ function handle(request: Request): void {
       id: request.id,
       result: { turn: { id: turnId, status: "inProgress" } },
     });
+    if (textInput(request.params) === "foreign-turn-started") {
+      // Another thread's turn, and this thread's turn that already completed, start nothing.
+      write({ method: "turn/started", params: { threadId: "other-thread", turn: { id: turnId } } });
+      write({ method: "turn/started", params: { threadId, turn: { id: `turn-${turn - 1}` } } });
+    }
+    write({
+      method: "turn/started",
+      params: { threadId, turn: { id: turnId, status: "inProgress" } },
+    });
     if (
       textInput(request.params) === "retry-error" ||
       textInput(request.params) === "final-error"
@@ -394,7 +403,12 @@ function handle(request: Request): void {
         method: "item/completed",
         params: {
           turnId,
-          item: { id: "reasoning-1", type: "reasoning" },
+          item: {
+            id: "reasoning-1",
+            type: "reasoning",
+            summary: ["Plan the change"],
+            content: ["raw chain of thought"],
+          },
         },
       });
       write({
@@ -469,13 +483,34 @@ function handle(request: Request): void {
           item: {
             id: "item-2",
             type: "fileChange",
+            status: "inProgress",
             changes: [
-              { kind: "add", path: "src/new.ts" },
-              { kind: "update", path: "src/existing.ts" },
+              { kind: { type: "add" }, path: "src/new.ts", diff: "" },
+              { kind: { type: "update", move_path: null }, path: "src/existing.ts", diff: "" },
             ],
           },
         },
       });
+      write({
+        method: "item/completed",
+        params: { turnId, item: { id: "item-2", type: "fileChange", status: "completed" } },
+      });
+      write({
+        method: "turn/completed",
+        params: { turn: { id: turnId, status: "completed" } },
+      });
+    } else if (textInput(request.params) === "official-items") {
+      for (const [method, item] of officialItems())
+        write({ method, params: { threadId, turnId, item } });
+      write({
+        method: "item/agentMessage/delta",
+        params: { threadId, turnId, itemId: "commentary-1", delta: "Checking the docs" },
+      });
+      write({
+        method: "turn/completed",
+        params: { turn: { id: turnId, status: "completed" } },
+      });
+    } else if (textInput(request.params) === "foreign-turn-started") {
       write({
         method: "turn/completed",
         params: { turn: { id: turnId, status: "completed" } },
@@ -583,6 +618,36 @@ function finishWithLateEvents(turnId: string): void {
     method: "item/reasoning/textDelta",
     params: { threadId, turnId, delta: "late reasoning" },
   });
+}
+
+/** One of each official v2 item the Activity mapping reads, in the order a turn reports them. */
+function officialItems(): Array<[string, Record<string, unknown>]> {
+  const commentary = { type: "agentMessage", id: "commentary-1", text: "", phase: "commentary" };
+  const mcp = {
+    type: "mcpToolCall",
+    id: "mcp-1",
+    server: "docs",
+    tool: "search",
+    status: "inProgress",
+    arguments: { query: "retry policy" },
+    result: null,
+    error: null,
+  };
+  const review = { type: "enteredReviewMode", id: "review-1", review: "current changes" };
+  return [
+    ["item/started", commentary],
+    ["item/started", mcp],
+    ["item/completed", { ...mcp, status: "completed", result: { content: [] } }],
+    ["item/started", { type: "contextCompaction", id: "compaction-1" }],
+    ["item/completed", { type: "contextCompaction", id: "compaction-1" }],
+    ["item/started", review],
+    ["item/completed", review],
+    ["item/completed", { type: "exitedReviewMode", id: "review-2", review: "Looks good" }],
+    [
+      "item/completed",
+      { type: "agentMessage", id: "answer-1", text: "All done", phase: "final_answer" },
+    ],
+  ];
 }
 
 function hasAgentInstructions(value: unknown): boolean {

@@ -14,6 +14,7 @@ import { InMemoryDaemonCredentialStore } from "#src/credentials/credential-store
 import { CodexProvider } from "#src/code-agent/codex/provider";
 import { PROCESS_TREE_EXIT_GRACE_MS } from "#src/code-agent/process-tree-cleanup";
 import { DAEMON_SHUTDOWN_NOTICE_TIMEOUT_MS } from "#src/connection/shutdown-notice-timeout";
+import { COMPACTION_STALE_MS, REVIEW_STALE_MS } from "#src/agent-runtime/runtime-phases";
 import type { AgentActivity, AgentActivityDetailKind } from "@lrm/coforge-sdk/internal";
 
 // macOS tmpdir lives under /var, a symlink; the state store rejects linked ancestors.
@@ -667,13 +668,13 @@ test("compaction-finished ends an open compaction, and without one is a no-op", 
   }
 });
 
-test("a compaction still open after 5 minutes broadcasts compaction_stale once", async () => {
+test("a compaction still open after its stale window broadcasts compaction_stale once", async () => {
   const { runtime, activities, emitEvent } = await harness();
   jest.useFakeTimers();
   try {
     emitEvent({ type: "compaction-started" });
     activities.length = 0;
-    jest.advanceTimersByTime(5 * 60_000);
+    jest.advanceTimersByTime(COMPACTION_STALE_MS);
     // Heartbeats re-send the last busy activity; the stale notice itself is not a heartbeat.
     const staleNotices = activities.filter(
       (a) => a.detailKind === "compaction_stale" && !a.isHeartbeat,
@@ -684,7 +685,7 @@ test("a compaction still open after 5 minutes broadcasts compaction_stale once",
       detail: "Context compaction still running; no finish event observed",
     });
     // One-shot: the same episode never re-arms the notice; only a fresh start would.
-    jest.advanceTimersByTime(5 * 60_000);
+    jest.advanceTimersByTime(COMPACTION_STALE_MS);
     expect(
       activities.filter((a) => a.detailKind === "compaction_stale" && !a.isHeartbeat),
     ).toHaveLength(1);
@@ -700,7 +701,7 @@ test("a finished compaction never broadcasts compaction_stale", async () => {
     emitEvent({ type: "compaction-started" });
     emitEvent({ type: "compaction-finished" });
     activities.length = 0;
-    jest.advanceTimersByTime(10 * 60_000);
+    jest.advanceTimersByTime(2 * COMPACTION_STALE_MS);
     expect(activities.filter((a) => a.detailKind === "compaction_stale")).toHaveLength(0);
   } finally {
     await runtime.stop();
@@ -809,9 +810,128 @@ test("stopping the Agent's launch clears its compaction watchdog without leaking
   }
 });
 
-// tool_end/thinking_end/compaction_finished are busy-but-filler,
+test("review-started reports Reviewing changes once, and a repeat is deduped", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "review-started" });
+    emitEvent({ type: "review-started" });
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      agentId: "agent-a",
+      detailKind: "reviewing_changes",
+      level: "info",
+      detail: "Reviewing changes",
+    });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("review-finished ends an open review, and without one is a no-op", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    activities.length = 0;
+    emitEvent({ type: "review-finished" });
+    expect(activities).toHaveLength(0);
+    emitEvent({ type: "review-started" });
+    activities.length = 0;
+    emitEvent({ type: "review-finished" });
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      agentId: "agent-a",
+      detailKind: "review_finished",
+      level: "info",
+      detail: "Review finished",
+    });
+    emitEvent({ type: "review-finished" });
+    expect(activities).toHaveLength(1);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("review mode does not end on the tool calls and output it is made of", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  try {
+    emitEvent({ type: "review-started" });
+    activities.length = 0;
+    emitEvent({ type: "tool-start", id: "tool-1", name: "Bash", input: { command: "git diff" } });
+    emitEvent({ type: "tool-end", id: "tool-1", isError: false });
+    expect(activities.map((a) => a.detailKind)).toEqual(["running_command", "tool_end"]);
+    emitEvent({ type: "review-finished" });
+    expect(activities.at(-1)).toMatchObject({ detailKind: "review_finished" });
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a review still open after its longer stale window broadcasts review_stale once", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  jest.useFakeTimers();
+  try {
+    emitEvent({ type: "review-started" });
+    activities.length = 0;
+    // Past the compaction window, a review is not stale yet.
+    jest.advanceTimersByTime(COMPACTION_STALE_MS);
+    expect(activities.filter((a) => a.detailKind === "review_stale")).toHaveLength(0);
+    jest.advanceTimersByTime(REVIEW_STALE_MS - COMPACTION_STALE_MS);
+    const staleNotices = activities.filter(
+      (a) => a.detailKind === "review_stale" && !a.isHeartbeat,
+    );
+    expect(staleNotices).toHaveLength(1);
+    expect(staleNotices[0]).toMatchObject({
+      level: "info",
+      detail: "Review mode still active; no finish event observed",
+    });
+    jest.advanceTimersByTime(REVIEW_STALE_MS);
+    expect(
+      activities.filter((a) => a.detailKind === "review_stale" && !a.isHeartbeat),
+    ).toHaveLength(1);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("a turn ending closes an open review without a row, so it never goes stale while idle", async () => {
+  const { runtime, activities, emitEvent } = await harness();
+  jest.useFakeTimers();
+  try {
+    emitEvent({ type: "review-started" });
+    activities.length = 0;
+    emitEvent({ type: "completed", status: "completed" });
+    expect(activities.map((a) => a.detailKind)).toEqual(["idle"]);
+    jest.advanceTimersByTime(2 * REVIEW_STALE_MS);
+    expect(activities.map((a) => a.detailKind)).toEqual(["idle"]);
+    // Closed: a late finish reports nothing.
+    emitEvent({ type: "review-finished" });
+    expect(activities.map((a) => a.detailKind)).toEqual(["idle"]);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("stopping the Agent's launch clears its review watchdog without leaking a timer", async () => {
+  const { runtime, emitEvent } = await harness();
+  jest.useFakeTimers();
+  try {
+    emitEvent({ type: "review-started" });
+    expect(jest.getTimerCount()).toBeGreaterThan(0);
+    await runtime.stopAgent("agent-a");
+    expect(jest.getTimerCount()).toBe(0);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+// tool_end/thinking_end/compaction_finished/review_finished are busy-but-filler,
 // exactly like runtime_progress — they re-arm the heartbeat.
-for (const detailKind of ["tool_end", "thinking_end", "compaction_finished"] as const) {
+for (const detailKind of [
+  "tool_end",
+  "thinking_end",
+  "compaction_finished",
+  "review_finished",
+] as const) {
   test(`${detailKind} is busy-but-filler: it re-arms the heartbeat`, async () => {
     const { runtime, activities, emit } = await harness();
     jest.useFakeTimers();

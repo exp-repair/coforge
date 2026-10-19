@@ -1,6 +1,8 @@
 import { isRecord } from "@lrm/coforge-sdk/internal";
 
-/** Narrowing helpers for the loosely typed JSON records provider processes emit. */
+/** A loosely typed JSON record a provider process emits; the helpers below narrow its fields. */
+export type JsonRecord = Readonly<Record<string, unknown>>;
+
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }

@@ -527,7 +527,7 @@ test("Kiro waits for a steer injected just before the turn end instead of report
 
 test("Kiro reports a compaction-started event per in_progress update, and compaction-finished from CompactionUpdate.status=completed", async () => {
   // The adapter relays the raw signal as-is; de-duping repeated "in_progress" updates into a
-  // single reported episode is the daemon core's job now (agent-runtime/compaction-tracker.ts,
+  // single reported episode is the daemon core's job now (agent-runtime/phase-tracker.ts,
   // exercised in activity-heartbeat.test.ts), not the adapter's.
   const cwd = await mkdtemp(join(tempRoot, "kiro-compaction-"));
   const session = await new KiroProvider({ command }).createAgentSession({

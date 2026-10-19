@@ -152,12 +152,16 @@ export type AgentRuntimeEvent = { readonly conversation?: AgentConversationScope
   | { type: "completed"; status: "completed" | "interrupted" | "failed" }
   // Normalized signals a provider reports; the daemon core (not the provider) decides what
   // Activity, if any, each one becomes - see daemon-runtime/runtime.ts and
-  // agent-runtime/compaction-tracker.ts.
+  // agent-runtime/phase-tracker.ts.
   | { type: "compaction-started"; occurredAt?: string }
   | { type: "compaction-finished"; occurredAt?: string }
   // Only providers that can observe an aborted compaction report this; a provider with no such
   // signal never emits it.
   | { type: "compaction-interrupted"; occurredAt?: string }
+  // A provider's review mode entered or exited, relayed the same way as compaction: the daemon
+  // core alone decides what Activity each one becomes.
+  | { type: "review-started"; occurredAt?: string }
+  | { type: "review-finished"; occurredAt?: string }
   // A subagent's lifecycle as its provider reports it (Claude Code's `task_*` system messages):
   // started, still working, or a terminal/update notification. `subagentType` and
   // `parentToolUseId` are raw provider facts; the daemon core alone formats the row and decides

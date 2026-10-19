@@ -112,6 +112,8 @@ test("Codex loads skills before running app-server behind the code-agent seam", 
     await session.sendMessage("finish");
     await waitForEvent(events, "completed");
     expect(events.filter((event) => event.type !== "session")).toEqual([
+      // turn/started opens a thinking run at once.
+      { type: "thinking-delta", text: "" },
       { type: "text-delta", text: "Codex response" },
       {
         type: "tool-start",
@@ -139,6 +141,7 @@ test("Codex loads skills before running app-server behind the code-agent seam", 
     await session.sendMessage("files");
     await waitForEvent(events, "completed");
     expect(events.filter((event) => event.type !== "session")).toEqual([
+      { type: "thinking-delta", text: "" },
       { type: "text-delta", text: "Codex response" },
       {
         type: "tool-start",
@@ -154,6 +157,8 @@ test("Codex loads skills before running app-server behind the code-agent seam", 
         input: { file_path: "src/existing.ts" },
         occurredAt: "2026-01-02T03:04:05.000Z",
       },
+      { type: "tool-end", id: "item-2:0", isError: false },
+      { type: "tool-end", id: "item-2:1", isError: false },
       { type: "completed", status: "completed" },
     ]);
 
@@ -438,7 +443,7 @@ test("Codex reports progress for a raw (non-summary) reasoning text delta", asyn
 
 // "Thinking finished" is derived centrally by ActivityTrajectory from the normalized event
 // stream (packages/daemon/test/activity-trajectory.test.ts), not reported by this provider.
-test("Codex reports no thinking_end when a reasoning item completes", async () => {
+test("Codex reports an unstreamed reasoning item's summary, never its raw content", async () => {
   const session = await fixtureAdapter().createAgentSession({
     agentWorkspaceDirectory: tmpdir(),
     instructions: TEST_AGENT_INSTRUCTIONS,
@@ -448,10 +453,68 @@ test("Codex reports no thinking_end when a reasoning item completes", async () =
   try {
     await session.sendMessage("reasoning-item");
     await waitForEvent(events, "completed");
-    const kinds = events
-      .filter((event) => event.type === "activity")
-      .map((event) => event.activity.detailKind);
-    expect(kinds).not.toContain("thinking_end");
+    expect(events.filter((event) => event.type === "thinking-delta")).toEqual([
+      { type: "thinking-delta", text: "" },
+      { type: "thinking-delta", text: "Plan the change" },
+    ]);
+    expect(events.some((event) => event.type === "activity")).toBe(false);
+  } finally {
+    await session.dispose();
+  }
+});
+
+test("Codex maps the official v2 items to normalized events behind the code-agent seam", async () => {
+  const session = await fixtureAdapter().createAgentSession({
+    agentWorkspaceDirectory: tmpdir(),
+    instructions: TEST_AGENT_INSTRUCTIONS,
+  });
+  const events: AgentRuntimeEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.sendMessage("official-items");
+    await waitForEvent(events, "completed");
+    expect(events.filter((event) => event.type !== "session")).toEqual([
+      { type: "thinking-delta", text: "" },
+      { type: "text-delta", text: "Codex response" },
+      {
+        type: "tool-start",
+        id: "mcp-1",
+        name: "mcp__docs__search",
+        input: { query: "retry policy" },
+        occurredAt: expect.any(String),
+      },
+      { type: "tool-end", id: "mcp-1", isError: false },
+      { type: "compaction-started", occurredAt: expect.any(String) },
+      { type: "compaction-finished", occurredAt: expect.any(String) },
+      { type: "review-started", occurredAt: expect.any(String) },
+      { type: "review-finished", occurredAt: expect.any(String) },
+      // A final answer that never streamed is reported from its completed item.
+      { type: "text-delta", text: "All done" },
+      // Commentary is not the answer: progress only.
+      { type: "progress", source: "codex_agent_message_non_final", occurredAt: expect.any(String) },
+      { type: "completed", status: "completed" },
+    ]);
+  } finally {
+    await session.dispose();
+  }
+});
+
+test("Codex opens a thinking run only for its own thread's live turn", async () => {
+  const session = await fixtureAdapter().createAgentSession({
+    agentWorkspaceDirectory: tmpdir(),
+    instructions: TEST_AGENT_INSTRUCTIONS,
+  });
+  const events: AgentRuntimeEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.sendMessage("finish");
+    await waitForEvent(events, "completed");
+    events.length = 0;
+    await session.sendMessage("foreign-turn-started");
+    await waitForEvent(events, "completed");
+    expect(events.filter((event) => event.type === "thinking-delta")).toEqual([
+      { type: "thinking-delta", text: "" },
+    ]);
   } finally {
     await session.dispose();
   }

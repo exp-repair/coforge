@@ -1009,7 +1009,7 @@ test("Claude Code retains notifications during compaction until the compact boun
 
 test("Claude Code reports a compaction-started event per status=compacting line, and compaction-finished at the boundary", async () => {
   // The adapter relays the raw signal as-is; de-duping repeated "compacting" lines into a
-  // single reported episode is the daemon core's job now (agent-runtime/compaction-tracker.ts,
+  // single reported episode is the daemon core's job now (agent-runtime/phase-tracker.ts,
   // exercised in activity-heartbeat.test.ts), not the adapter's.
   const fixture = await controlledClaude();
   const { session, emit } = fixture;
