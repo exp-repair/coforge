@@ -15,6 +15,7 @@ import {
   XClose as X,
 } from "@untitledui/icons";
 import { useHydrated } from "@tanstack/react-router";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Heading, Text } from "react-aria-components";
 import type { RuntimeProvider, AgentDisplaySnapshot } from "@lrm/coforge-sdk/internal";
 
@@ -37,7 +38,6 @@ import { humanLabel } from "#src/lib/human-label";
 import { m } from "#src/paraglide/messages";
 import { BackToComputers } from "./back-to-computers";
 import { DeleteConfirmDialog, formatWorkspaceSize } from "./confirm-delete-dialog";
-import { useUpgradingComputer } from "./computer-layout";
 import {
   computerKind,
   computerLabel,
@@ -48,11 +48,15 @@ import {
 } from "./computer-identity";
 import { cloudImageUpdateConsequences } from "./cloud-image-update";
 import {
-  ComputerUpgradeFailureView,
-  describeComputerUpgradeFailure,
-  describeComputerUpgradeSuccess,
+  computerUpgradeStatusQuery,
+  followComputerUpgrade,
+  upgradeRunning,
+} from "./computer-upgrade-status";
+import {
   describeUpgradeRequestError,
-  type UpgradeFailureView,
+  upgradeOutcome,
+  type ComputerUpgradeOutcome,
+  type UpgradeRequestErrorCopy,
 } from "./upgrade-failure";
 import { ComputerTile } from "./computer-tile";
 import { RuntimeUsage, UsageHealthDot, type UsageHealth } from "./runtime-usage";
@@ -78,17 +82,6 @@ import type { AgentWorkspaceScanSnapshot } from "./agent-workspace-scan.query";
 export const RESTART_POLL_INTERVAL_MS = 2_000;
 export const RESTART_MAX_POLLS = 31;
 
-/**
- * An upgrade is an external one-shot job, not an in-process restart, and it takes far longer than
- * one: on a real machine `upgrade-results/<id>.request.json` -> `.result.json` took about two
- * minutes. The restart window above is sized for a restart, and reusing it here made a perfectly
- * healthy upgrade look like a failure - the panel gave up while the job was still running, the
- * Upgrade button came back, and the second click was refused with `UPGRADE_OPERATION_PENDING` and
- * rendered as a failure. Three minutes covers the observed job with margin.
- */
-export const UPGRADE_POLL_INTERVAL_MS = 3_000;
-export const UPGRADE_MAX_POLLS = 60;
-
 export type ComputerDetailView = ComputerIdentity & {
   id: string;
   ownedByCurrentUser: boolean;
@@ -99,6 +92,8 @@ export type ComputerDetailView = ComputerIdentity & {
   connectedAt: Date | string;
   computerVersion?: string | null;
   imageUpdate?: { version: string } | null;
+  /** This Computer's latest upgrade while the server keeps its record; `null` when none. */
+  upgrade?: ComputerUpgradeStatus | null;
   platform?: string | null;
   osVersion?: string | null;
   creator?: {
@@ -158,12 +153,9 @@ export function ComputerDetail({
   onRestart,
   onReadRestartStatus,
   onUpgrade,
-  onReadUpgradeStatus,
   latestComputerVersion,
   restartPollIntervalMs = RESTART_POLL_INTERVAL_MS,
   restartMaxPolls = RESTART_MAX_POLLS,
-  upgradePollIntervalMs = UPGRADE_POLL_INTERVAL_MS,
-  upgradeMaxPolls = UPGRADE_MAX_POLLS,
   agentWorkspaceScan = null,
   onScanAgentWorkspaces,
   onDeleteAgentWorkspace,
@@ -182,7 +174,6 @@ export function ComputerDetail({
   onRestart?: (requestId: string) => Promise<ComputerRestartStatus>;
   onReadRestartStatus?: (requestId: string) => Promise<ComputerRestartStatus>;
   onUpgrade?: (requestId: string) => Promise<ComputerUpgradeStatus>;
-  onReadUpgradeStatus?: (requestId: string) => Promise<ComputerUpgradeStatus>;
   /** The last Agent workspace scan the owner took (kept across reloads); `null` when none. */
   agentWorkspaceScan?: AgentWorkspaceScanSnapshot | null;
   /** Scans the Computer and records the result as `agentWorkspaceScan`. */
@@ -200,8 +191,6 @@ export function ComputerDetail({
   latestComputerVersion?: string | null;
   restartPollIntervalMs?: number;
   restartMaxPolls?: number;
-  upgradePollIntervalMs?: number;
-  upgradeMaxPolls?: number;
 }) {
   const [editingDisplayName, setEditingDisplayName] = useState(false);
   const [displayNameDraft, setDisplayNameDraft] = useState(computer.displayName);
@@ -249,24 +238,58 @@ export function ComputerDetail({
   };
   const workspaceSlug = useWorkspaceSlug();
   const toast = useAppToast();
+  const queryClient = useQueryClient();
   const creatorName = computer.creator ? humanLabel(computer.creator) : "";
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set again on mount: StrictMode unmounts and remounts once in development.
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
   const [restartState, setRestartState] = useState<
     "idle" | "pending" | "accepted" | "completed" | "error"
   >("idle");
-  const { upgradingComputerIds, setUpgradingComputer } = useUpgradingComputer();
-  const [upgrade, setUpgrade] = useState<
+  // A request this panel made: in flight, held by the server, or refused before the server held
+  // it (offline, release feed), which leaves no record a reload could find.
+  const [upgradeRequest, setUpgradeRequest] = useState<
     | { state: "idle" }
-    | { state: "running" }
-    | ({ state: "failed"; errorId?: string } & UpgradeFailureView)
+    | { state: "requesting" }
+    | { state: "accepted"; requestId: string }
+    | ({ state: "refused" } & UpgradeRequestErrorCopy)
   >({ state: "idle" });
-  const upgrading = upgrade.state === "running" || upgradingComputerIds.has(computer.id);
+  // The Computer's latest upgrade as the server holds it, so a reload keeps one running or failed.
+  // It is polled by `ComputerUpgradeWatcher`; this panel only reads its live status.
+  const storedUpgrade = computer.upgrade ?? undefined;
+  const followedUpgradeId =
+    upgradeRequest.state === "accepted"
+      ? upgradeRequest.requestId
+      : storedUpgrade && upgradeRunning(storedUpgrade)
+        ? storedUpgrade.requestId
+        : null;
+  const [liveStatus] = useQueries({
+    queries: (followedUpgradeId ? [followedUpgradeId] : []).map((requestId) => ({
+      ...computerUpgradeStatusQuery(computer.id, requestId),
+      enabled: false,
+    })),
+  });
+  const liveUpgrade: ComputerUpgradeOutcome | undefined = !liveStatus
+    ? undefined
+    : liveStatus.isError
+      ? { state: "failed", failure: describeUpgradeRequestError(liveStatus.error) }
+      : liveStatus.data
+        ? upgradeOutcome(liveStatus.data)
+        : { state: "running" };
+  const upgrade: ComputerUpgradeOutcome | { state: "idle" } =
+    upgradeRequest.state === "requesting"
+      ? { state: "running" }
+      : upgradeRequest.state === "refused"
+        ? { state: "failed", failure: upgradeRequest }
+        : (liveUpgrade ?? (storedUpgrade ? upgradeOutcome(storedUpgrade) : { state: "idle" }));
+  const upgrading = upgrade.state === "running";
+  const upgradeFailure: UpgradeRequestErrorCopy | undefined =
+    upgrade.state === "failed" ? upgrade.failure : undefined;
   const canUpgrade = Boolean(onUpgrade) && computer.ownedByCurrentUser;
   const cloudImageVersion = computer.imageUpdate?.version;
   const offeredVersion = cloudImageVersion ?? latestComputerVersion;
@@ -279,57 +302,17 @@ export function ComputerDetail({
   const runUpgrade = async () => {
     if (!onUpgrade) return;
     const requestId = crypto.randomUUID();
-    setUpgrade({ state: "running" });
-    setUpgradingComputer(computer.id, true);
-    const settle = (update: () => void) => {
-      if (mountedRef.current) update();
-    };
+    setUpgradeRequest({ state: "requesting" });
     try {
-      const accepted = await onUpgrade(requestId);
-      if (accepted.status !== "accepted")
-        throw new ComputerUpgradeFailureView(
-          describeComputerUpgradeFailure({ reason: "publication" }),
-        );
-      if (!onReadUpgradeStatus) return;
-      for (let poll = 0; poll < upgradeMaxPolls; poll += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, upgradePollIntervalMs));
-        const status = await onReadUpgradeStatus(requestId);
-        if (status.status === "completed" && status.computerVersion) {
-          // The version itself moves to the Version row (the caller invalidates the loader); the
-          // toast is only the one-line confirmation that the action just taken succeeded.
-          settle(() => {
-            toast.success(describeComputerUpgradeSuccess(status.computerVersion));
-            setUpgrade({ state: "idle" });
-          });
-          return;
-        }
-        if (status.status === "completed")
-          throw new ComputerUpgradeFailureView(
-            describeComputerUpgradeFailure({ reason: "evidence" }),
-          );
-        if (status.status === "failed")
-          throw new ComputerUpgradeFailureView(describeComputerUpgradeFailure(status));
-        if (status.status === "unknown")
-          throw new ComputerUpgradeFailureView(
-            describeComputerUpgradeFailure({ reason: "evidence" }),
-          );
+      const outcome = upgradeOutcome(await onUpgrade(requestId));
+      if (outcome.state === "failed") {
+        setUpgradeRequest({ state: "refused", ...outcome.failure });
+        return;
       }
-      throw new ComputerUpgradeFailureView(describeComputerUpgradeFailure({ reason: "timeout" }));
+      followComputerUpgrade(queryClient, { computerId: computer.id, requestId, startedHere: true });
+      setUpgradeRequest({ state: "accepted", requestId });
     } catch (error) {
-      settle(() => {
-        const copy = describeUpgradeRequestError(error);
-        setUpgrade({
-          state: "failed",
-          headline: copy.headline,
-          steps: copy.steps,
-          errorId: copy.errorId,
-        });
-      });
-    } finally {
-      // The shared indicator clears whether or not this panel is still mounted: navigating to
-      // another Computer unmounts this one, and a stale "upgrading" badge must not outlive the
-      // operation it describes.
-      setUpgradingComputer(computer.id, false);
+      setUpgradeRequest({ state: "refused", ...describeUpgradeRequestError(error) });
     }
   };
   const scanWorkspaces = async () => {
@@ -533,12 +516,12 @@ export function ComputerDetail({
                 value={<span className="font-mono">{computerVersionLabel(computer)}</span>}
                 action={upgradeButton}
                 footer={
-                  upgrade.state === "failed" ? (
+                  upgradeFailure ? (
                     <div role="alert" className="mt-1.5 text-sm text-error-primary">
-                      <p>{upgrade.headline}</p>
-                      {upgrade.steps.length > 0 && (
+                      <p>{upgradeFailure.headline}</p>
+                      {upgradeFailure.steps.length > 0 && (
                         <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-sm text-tertiary">
-                          {upgrade.steps.map((step, index) => (
+                          {upgradeFailure.steps.map((step, index) => (
                             <li key={index}>
                               {step.text}
                               {step.command && (
@@ -551,9 +534,9 @@ export function ComputerDetail({
                           ))}
                         </ol>
                       )}
-                      {upgrade.errorId && (
+                      {upgradeFailure.errorId && (
                         <p className="mt-1.5 text-xs text-tertiary">
-                          {m.error_reference({ errorId: upgrade.errorId })}
+                          {m.error_reference({ errorId: upgradeFailure.errorId })}
                         </p>
                       )}
                     </div>
